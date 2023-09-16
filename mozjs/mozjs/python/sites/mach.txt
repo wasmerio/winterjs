@@ -38,10 +38,12 @@ pth:testing/mozbase/mozprocess
 pth:testing/mozbase/mozprofile
 pth:testing/mozbase/mozproxy
 pth:testing/mozbase/mozrunner
+pth:testing/mozbase/mozserve
 pth:testing/mozbase/mozsystemmonitor
 pth:testing/mozbase/mozscreenshot
 pth:testing/mozbase/moztest
 pth:testing/mozbase/mozversion
+pth:testing/mozharness
 pth:testing/raptor
 pth:testing/talos
 pth:testing/web-platform
@@ -104,7 +106,6 @@ vendored:third_party/python/pylru
 vendored:third_party/python/pyparsing
 vendored:third_party/python/pyrsistent
 vendored:third_party/python/python-hglib
-vendored:third_party/python/pytoml
 vendored:third_party/python/PyYAML/lib3/
 vendored:third_party/python/redo
 vendored:third_party/python/requests

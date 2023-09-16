@@ -2,26 +2,25 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import logging
 import os
-import six
-from six import StringIO
 
+import six
+from mozboot.util import MINIMUM_RUST_VERSION
+from mozpack import path as mozpath
 from mozunit import main
+from six import StringIO
+from test_toolchain_helpers import CompilerResult, FakeCompiler, PrependFlags
 
 from common import BaseConfigureTest
 from mozbuild.configure.util import Version
-from mozbuild.util import memoize, ReadOnlyNamespace
-from mozboot.util import MINIMUM_RUST_VERSION
-from mozpack import path as mozpath
-from test_toolchain_helpers import FakeCompiler, CompilerResult, PrependFlags
-
+from mozbuild.util import ReadOnlyNamespace, memoize
 
 DEFAULT_C99 = {"__STDC_VERSION__": "199901L"}
 
 DEFAULT_C11 = {"__STDC_VERSION__": "201112L"}
+
+DEFAULT_C17 = {"__STDC_VERSION__": "201710L"}
 
 DEFAULT_CXX_97 = {"__cplusplus": "199711L"}
 
@@ -94,9 +93,11 @@ GCC_7 = GCC("7.3.0") + DEFAULT_C11
 GXX_7 = GXX("7.3.0") + DEFAULT_CXX_14 + SUPPORTS_GNUXX17 + SUPPORTS_CXX17
 GCC_8 = GCC("8.3.0") + DEFAULT_C11
 GXX_8 = GXX("8.3.0") + DEFAULT_CXX_14 + SUPPORTS_GNUXX17 + SUPPORTS_CXX17
+GCC_10 = GCC("10.2.1") + DEFAULT_C17
+GXX_10 = GXX("10.2.1") + DEFAULT_CXX_14 + SUPPORTS_GNUXX17 + SUPPORTS_CXX17
 
-DEFAULT_GCC = GCC_7
-DEFAULT_GXX = GXX_7
+DEFAULT_GCC = GCC_8
+DEFAULT_GXX = GXX_8
 
 GCC_PLATFORM_LITTLE_ENDIAN = {
     "__ORDER_LITTLE_ENDIAN__": 1234,
@@ -172,8 +173,8 @@ CLANG_3_3 = CLANG("3.3.0") + DEFAULT_C99
 CLANGXX_3_3 = CLANGXX("3.3.0")
 CLANG_4_0 = CLANG("4.0.2") + DEFAULT_C11
 CLANGXX_4_0 = CLANGXX("4.0.2") + SUPPORTS_GNUXX1Z
-CLANG_5_0 = CLANG("5.0.1") + DEFAULT_C11
-CLANGXX_5_0 = CLANGXX("5.0.1") + SUPPORTS_GNUXX17
+CLANG_7_0 = CLANG("7.0.0") + DEFAULT_C11
+CLANGXX_7_0 = CLANGXX("7.0.0") + DEFAULT_CXX_14 + SUPPORTS_GNUXX17
 XCODE_CLANG_3_3 = (
     CLANG("5.0")
     + DEFAULT_C99
@@ -187,12 +188,12 @@ XCODE_CLANG_4_0 = CLANG("9.0.0") + DEFAULT_C11 + {"__apple_build_version__": "1"
 XCODE_CLANGXX_4_0 = (
     CLANGXX("9.0.0") + SUPPORTS_GNUXX1Z + {"__apple_build_version__": "1"}
 )
-XCODE_CLANG_5_0 = CLANG("9.1.0") + DEFAULT_C11 + {"__apple_build_version__": "1"}
-XCODE_CLANGXX_5_0 = (
-    CLANGXX("9.1.0") + SUPPORTS_GNUXX17 + {"__apple_build_version__": "1"}
+XCODE_CLANG_7_0 = CLANG("10.0.1") + DEFAULT_C11 + {"__apple_build_version__": "1"}
+XCODE_CLANGXX_7_0 = (
+    CLANGXX("10.0.1") + SUPPORTS_GNUXX17 + {"__apple_build_version__": "1"}
 )
-DEFAULT_CLANG = CLANG_5_0
-DEFAULT_CLANGXX = CLANGXX_5_0
+DEFAULT_CLANG = CLANG_7_0
+DEFAULT_CLANGXX = CLANGXX_7_0
 
 
 def CLANG_PLATFORM(gcc_platform):
@@ -252,8 +253,8 @@ CLANG_CL_3_9 = (
     + SUPPORTS_GNUXX11
     + SUPPORTS_CXX14
 ) + {"*.cpp": {"__STDC_VERSION__": False, "__cplusplus": "201103L"}}
-CLANG_CL_8_0 = (
-    CLANG_BASE("8.0.0")
+CLANG_CL_9_0 = (
+    CLANG_BASE("9.0.0")
     + VS("18.00.00000")
     + DEFAULT_C11
     + SUPPORTS_GNU99
@@ -294,13 +295,21 @@ LIBRARY_NAME_INFOS = {
         "IMPORT_LIB_SUFFIX": "a",
         "OBJ_SUFFIX": "o",
     },
-    "msvc": {
+    "windows-msvc": {
         "DLL_PREFIX": "",
         "DLL_SUFFIX": ".dll",
         "LIB_PREFIX": "",
         "LIB_SUFFIX": "lib",
         "IMPORT_LIB_SUFFIX": "lib",
         "OBJ_SUFFIX": "obj",
+    },
+    "windows-gnu": {
+        "DLL_PREFIX": "",
+        "DLL_SUFFIX": ".dll",
+        "LIB_PREFIX": "lib",
+        "LIB_SUFFIX": "a",
+        "IMPORT_LIB_SUFFIX": "a",
+        "OBJ_SUFFIX": "o",
     },
     "openbsd6.1": {
         "DLL_PREFIX": "lib",
@@ -381,7 +390,7 @@ class BaseToolchainTest(BaseConfigureTest):
         if target_os == "mingw32":
             compiler_type = sandbox._value_for(sandbox["c_compiler"]).type
             if compiler_type == "clang-cl":
-                target_os = "msvc"
+                target_os = "windows-msvc"
         elif target_os == "linux-gnuabi64":
             target_os = "linux-gnu"
 
@@ -390,7 +399,7 @@ class BaseToolchainTest(BaseConfigureTest):
         # Try again on artifact builds. In that case, we always get library
         # name info for msvc on Windows
         if target_os == "mingw32":
-            target_os = "msvc"
+            target_os = "windows-msvc"
 
         sandbox = self.get_sandbox(
             paths, {}, args + ["--enable-artifact-builds"], environ, logger=self.logger
@@ -415,7 +424,7 @@ class BaseToolchainTest(BaseConfigureTest):
 
 
 def old_gcc_message(old_ver):
-    return "Only GCC 7.1 or newer is supported (found version {}).".format(old_ver)
+    return "Only GCC 8.1 or newer is supported (found version {}).".format(old_ver)
 
 
 class LinuxToolchainTest(BaseToolchainTest):
@@ -432,10 +441,12 @@ class LinuxToolchainTest(BaseToolchainTest):
         "/usr/bin/g++-7": GXX_7 + GCC_PLATFORM_X86_64_LINUX,
         "/usr/bin/gcc-8": GCC_8 + GCC_PLATFORM_X86_64_LINUX,
         "/usr/bin/g++-8": GXX_8 + GCC_PLATFORM_X86_64_LINUX,
+        "/usr/bin/gcc-10": GCC_10 + GCC_PLATFORM_X86_64_LINUX,
+        "/usr/bin/g++-10": GXX_10 + GCC_PLATFORM_X86_64_LINUX,
         "/usr/bin/clang": DEFAULT_CLANG + CLANG_PLATFORM_X86_64_LINUX,
         "/usr/bin/clang++": DEFAULT_CLANGXX + CLANG_PLATFORM_X86_64_LINUX,
-        "/usr/bin/clang-5.0": CLANG_5_0 + CLANG_PLATFORM_X86_64_LINUX,
-        "/usr/bin/clang++-5.0": CLANGXX_5_0 + CLANG_PLATFORM_X86_64_LINUX,
+        "/usr/bin/clang-7.0": CLANG_7_0 + CLANG_PLATFORM_X86_64_LINUX,
+        "/usr/bin/clang++-7.0": CLANGXX_7_0 + CLANG_PLATFORM_X86_64_LINUX,
         "/usr/bin/clang-4.0": CLANG_4_0 + CLANG_PLATFORM_X86_64_LINUX,
         "/usr/bin/clang++-4.0": CLANGXX_4_0 + CLANG_PLATFORM_X86_64_LINUX,
         "/usr/bin/clang-3.3": CLANG_3_3 + CLANG_PLATFORM_X86_64_LINUX,
@@ -450,20 +461,8 @@ class LinuxToolchainTest(BaseToolchainTest):
     GXX_5_RESULT = GCC_5_RESULT
     GCC_6_RESULT = old_gcc_message("6.4.0")
     GXX_6_RESULT = GCC_6_RESULT
-    GCC_7_RESULT = CompilerResult(
-        flags=["-std=gnu99"],
-        version="7.3.0",
-        type="gcc",
-        compiler="/usr/bin/gcc-7",
-        language="C",
-    )
-    GXX_7_RESULT = CompilerResult(
-        flags=["-std=gnu++17"],
-        version="7.3.0",
-        type="gcc",
-        compiler="/usr/bin/g++-7",
-        language="C++",
-    )
+    GCC_7_RESULT = old_gcc_message("7.3.0")
+    GXX_7_RESULT = GCC_7_RESULT
     GCC_8_RESULT = CompilerResult(
         flags=["-std=gnu99"],
         version="8.3.0",
@@ -478,37 +477,37 @@ class LinuxToolchainTest(BaseToolchainTest):
         compiler="/usr/bin/g++-8",
         language="C++",
     )
-    DEFAULT_GCC_RESULT = GCC_7_RESULT + {"compiler": "/usr/bin/gcc"}
-    DEFAULT_GXX_RESULT = GXX_7_RESULT + {"compiler": "/usr/bin/g++"}
+    DEFAULT_GCC_RESULT = GCC_8_RESULT + {"compiler": "/usr/bin/gcc"}
+    DEFAULT_GXX_RESULT = GXX_8_RESULT + {"compiler": "/usr/bin/g++"}
 
     CLANG_3_3_RESULT = (
-        "Only clang/llvm 5.0 or newer is supported (found version 3.3.0)."
+        "Only clang/llvm 7.0 or newer is supported (found version 3.3.0)."
     )
     CLANGXX_3_3_RESULT = (
-        "Only clang/llvm 5.0 or newer is supported (found version 3.3.0)."
+        "Only clang/llvm 7.0 or newer is supported (found version 3.3.0)."
     )
     CLANG_4_0_RESULT = (
-        "Only clang/llvm 5.0 or newer is supported (found version 4.0.2)."
+        "Only clang/llvm 7.0 or newer is supported (found version 4.0.2)."
     )
     CLANGXX_4_0_RESULT = (
-        "Only clang/llvm 5.0 or newer is supported (found version 4.0.2)."
+        "Only clang/llvm 7.0 or newer is supported (found version 4.0.2)."
     )
-    CLANG_5_0_RESULT = CompilerResult(
+    CLANG_7_0_RESULT = CompilerResult(
         flags=["-std=gnu99"],
-        version="5.0.1",
+        version="7.0.0",
         type="clang",
-        compiler="/usr/bin/clang-5.0",
+        compiler="/usr/bin/clang-7.0",
         language="C",
     )
-    CLANGXX_5_0_RESULT = CompilerResult(
+    CLANGXX_7_0_RESULT = CompilerResult(
         flags=["-std=gnu++17"],
-        version="5.0.1",
+        version="7.0.0",
         type="clang",
-        compiler="/usr/bin/clang++-5.0",
+        compiler="/usr/bin/clang++-7.0",
         language="C++",
     )
-    DEFAULT_CLANG_RESULT = CLANG_5_0_RESULT + {"compiler": "/usr/bin/clang"}
-    DEFAULT_CLANGXX_RESULT = CLANGXX_5_0_RESULT + {"compiler": "/usr/bin/clang++"}
+    DEFAULT_CLANG_RESULT = CLANG_7_0_RESULT + {"compiler": "/usr/bin/clang"}
+    DEFAULT_CLANGXX_RESULT = CLANGXX_7_0_RESULT + {"compiler": "/usr/bin/clang++"}
 
     def test_default(self):
         # We'll try clang and gcc, and find clang first.
@@ -568,12 +567,12 @@ class LinuxToolchainTest(BaseToolchainTest):
             {
                 "c_compiler": self.DEFAULT_GCC_RESULT,
                 "cxx_compiler": (
-                    "The target C compiler is version 7.3.0, while the target "
-                    "C++ compiler is version 8.3.0. Need to use the same compiler "
+                    "The target C compiler is version 8.3.0, while the target "
+                    "C++ compiler is version 10.2.1. Need to use the same compiler "
                     "version."
                 ),
             },
-            environ={"CC": "gcc", "CXX": "g++-8"},
+            environ={"CC": "gcc", "CXX": "g++-10"},
         )
 
         self.do_toolchain_test(
@@ -583,12 +582,12 @@ class LinuxToolchainTest(BaseToolchainTest):
                 "cxx_compiler": self.DEFAULT_GXX_RESULT,
                 "host_c_compiler": self.DEFAULT_GCC_RESULT,
                 "host_cxx_compiler": (
-                    "The host C compiler is version 7.3.0, while the host "
-                    "C++ compiler is version 8.3.0. Need to use the same compiler "
+                    "The host C compiler is version 8.3.0, while the host "
+                    "C++ compiler is version 10.2.1. Need to use the same compiler "
                     "version."
                 ),
             },
-            environ={"CC": "gcc", "HOST_CXX": "g++-8"},
+            environ={"CC": "gcc", "HOST_CXX": "g++-10"},
         )
 
     def test_mismatched_compiler(self):
@@ -658,10 +657,10 @@ class LinuxToolchainTest(BaseToolchainTest):
         self.do_toolchain_test(
             self.PATHS,
             {
-                "c_compiler": self.CLANG_5_0_RESULT,
-                "cxx_compiler": self.CLANGXX_5_0_RESULT,
+                "c_compiler": self.CLANG_7_0_RESULT,
+                "cxx_compiler": self.CLANGXX_7_0_RESULT,
             },
-            environ={"CC": "clang-5.0"},
+            environ={"CC": "clang-7.0"},
         )
 
     def test_unsupported_clang(self):
@@ -844,10 +843,10 @@ class OSXToolchainTest(BaseToolchainTest):
     PATHS = {
         "/usr/bin/gcc-5": GCC_5 + GCC_PLATFORM_X86_64_OSX,
         "/usr/bin/g++-5": GXX_5 + GCC_PLATFORM_X86_64_OSX,
-        "/usr/bin/gcc-7": GCC_7 + GCC_PLATFORM_X86_64_OSX,
-        "/usr/bin/g++-7": GXX_7 + GCC_PLATFORM_X86_64_OSX,
-        "/usr/bin/clang": XCODE_CLANG_5_0 + CLANG_PLATFORM_X86_64_OSX,
-        "/usr/bin/clang++": XCODE_CLANGXX_5_0 + CLANG_PLATFORM_X86_64_OSX,
+        "/usr/bin/gcc-8": GCC_8 + GCC_PLATFORM_X86_64_OSX,
+        "/usr/bin/g++-8": GXX_8 + GCC_PLATFORM_X86_64_OSX,
+        "/usr/bin/clang": XCODE_CLANG_7_0 + CLANG_PLATFORM_X86_64_OSX,
+        "/usr/bin/clang++": XCODE_CLANGXX_7_0 + CLANG_PLATFORM_X86_64_OSX,
         "/usr/bin/clang-4.0": XCODE_CLANG_4_0 + CLANG_PLATFORM_X86_64_OSX,
         "/usr/bin/clang++-4.0": XCODE_CLANGXX_4_0 + CLANG_PLATFORM_X86_64_OSX,
         "/usr/bin/clang-3.3": XCODE_CLANG_3_3 + CLANG_PLATFORM_X86_64_OSX,
@@ -855,35 +854,35 @@ class OSXToolchainTest(BaseToolchainTest):
         "/usr/bin/xcrun": xcrun,
     }
     CLANG_3_3_RESULT = (
-        "Only clang/llvm 5.0 or newer is supported (found version 4.0.0.or.less)."
+        "Only clang/llvm 7.0 or newer is supported (found version 4.0.0.or.less)."
     )
     CLANGXX_3_3_RESULT = (
-        "Only clang/llvm 5.0 or newer is supported (found version 4.0.0.or.less)."
+        "Only clang/llvm 7.0 or newer is supported (found version 4.0.0.or.less)."
     )
     CLANG_4_0_RESULT = (
-        "Only clang/llvm 5.0 or newer is supported (found version 4.0.0.or.less)."
+        "Only clang/llvm 7.0 or newer is supported (found version 4.0.0.or.less)."
     )
     CLANGXX_4_0_RESULT = (
-        "Only clang/llvm 5.0 or newer is supported (found version 4.0.0.or.less)."
+        "Only clang/llvm 7.0 or newer is supported (found version 4.0.0.or.less)."
     )
     DEFAULT_CLANG_RESULT = CompilerResult(
         flags=["-std=gnu99"],
-        version="5.0.2",
+        version="7.0.0",
         type="clang",
         compiler="/usr/bin/clang",
         language="C",
     )
     DEFAULT_CLANGXX_RESULT = CompilerResult(
         flags=["-stdlib=libc++", "-std=gnu++17"],
-        version="5.0.2",
+        version="7.0.0",
         type="clang",
         compiler="/usr/bin/clang++",
         language="C++",
     )
     GCC_5_RESULT = LinuxToolchainTest.GCC_5_RESULT
     GXX_5_RESULT = LinuxToolchainTest.GXX_5_RESULT
-    GCC_7_RESULT = LinuxToolchainTest.GCC_7_RESULT
-    GXX_7_RESULT = LinuxToolchainTest.GXX_7_RESULT
+    GCC_8_RESULT = LinuxToolchainTest.GCC_8_RESULT
+    GXX_8_RESULT = LinuxToolchainTest.GXX_8_RESULT
     SYSROOT_FLAGS = {
         "flags": PrependFlags(
             [
@@ -939,10 +938,10 @@ class OSXToolchainTest(BaseToolchainTest):
         self.do_toolchain_test(
             self.PATHS,
             {
-                "c_compiler": self.GCC_7_RESULT + self.SYSROOT_FLAGS,
-                "cxx_compiler": self.GXX_7_RESULT + self.SYSROOT_FLAGS,
+                "c_compiler": self.GCC_8_RESULT + self.SYSROOT_FLAGS,
+                "cxx_compiler": self.GXX_8_RESULT + self.SYSROOT_FLAGS,
             },
-            environ={"CC": "gcc-7", "CXX": "g++-7"},
+            environ={"CC": "gcc-8", "CXX": "g++-8"},
         )
 
     def test_forced_unsupported_gcc(self):
@@ -953,7 +952,7 @@ class OSXToolchainTest(BaseToolchainTest):
         )
 
 
-class WindowsToolchainTest(BaseToolchainTest):
+class MingwToolchainTest(BaseToolchainTest):
     HOST = "i686-pc-mingw32"
 
     # For the purpose of this test, it doesn't matter that the paths are not
@@ -961,7 +960,7 @@ class WindowsToolchainTest(BaseToolchainTest):
     PATHS = {
         "/usr/bin/cl": VS_2017u8 + VS_PLATFORM_X86,
         "/usr/bin/clang-cl-3.9": CLANG_CL_3_9 + CLANG_CL_PLATFORM_X86,
-        "/usr/bin/clang-cl": CLANG_CL_8_0 + CLANG_CL_PLATFORM_X86,
+        "/usr/bin/clang-cl": CLANG_CL_9_0 + CLANG_CL_PLATFORM_X86,
         "/usr/bin/gcc": DEFAULT_GCC + GCC_PLATFORM_X86_WIN + MINGW32,
         "/usr/bin/g++": DEFAULT_GXX + GCC_PLATFORM_X86_WIN + MINGW32,
         "/usr/bin/gcc-4.9": GCC_4_9 + GCC_PLATFORM_X86_WIN + MINGW32,
@@ -974,8 +973,8 @@ class WindowsToolchainTest(BaseToolchainTest):
         "/usr/bin/g++-7": GXX_7 + GCC_PLATFORM_X86_WIN + MINGW32,
         "/usr/bin/clang": DEFAULT_CLANG + CLANG_PLATFORM_X86_WIN,
         "/usr/bin/clang++": DEFAULT_CLANGXX + CLANG_PLATFORM_X86_WIN,
-        "/usr/bin/clang-5.0": CLANG_5_0 + CLANG_PLATFORM_X86_WIN,
-        "/usr/bin/clang++-5.0": CLANGXX_5_0 + CLANG_PLATFORM_X86_WIN,
+        "/usr/bin/clang-7.0": CLANG_7_0 + CLANG_PLATFORM_X86_WIN,
+        "/usr/bin/clang++-7.0": CLANGXX_7_0 + CLANG_PLATFORM_X86_WIN,
         "/usr/bin/clang-4.0": CLANG_4_0 + CLANG_PLATFORM_X86_WIN,
         "/usr/bin/clang++-4.0": CLANGXX_4_0 + CLANG_PLATFORM_X86_WIN,
         "/usr/bin/clang-3.3": CLANG_3_3 + CLANG_PLATFORM_X86_WIN,
@@ -983,20 +982,20 @@ class WindowsToolchainTest(BaseToolchainTest):
     }
 
     CLANG_CL_3_9_RESULT = (
-        "Only clang-cl 8.0 or newer is supported (found version 3.9.0)"
+        "Only clang-cl 9.0 or newer is supported (found version 3.9.0)"
     )
-    CLANG_CL_8_0_RESULT = CompilerResult(
-        version="8.0.0",
+    CLANG_CL_9_0_RESULT = CompilerResult(
+        version="9.0.0",
         flags=["-Xclang", "-std=gnu99"],
         type="clang-cl",
         compiler="/usr/bin/clang-cl",
         language="C",
     )
     CLANGXX_CL_3_9_RESULT = (
-        "Only clang-cl 8.0 or newer is supported (found version 3.9.0)"
+        "Only clang-cl 9.0 or newer is supported (found version 3.9.0)"
     )
-    CLANGXX_CL_8_0_RESULT = CompilerResult(
-        version="8.0.0",
+    CLANGXX_CL_9_0_RESULT = CompilerResult(
+        version="9.0.0",
         flags=["-Xclang", "-std=c++17"],
         type="clang-cl",
         compiler="/usr/bin/clang-cl",
@@ -1008,16 +1007,6 @@ class WindowsToolchainTest(BaseToolchainTest):
     CLANGXX_4_0_RESULT = LinuxToolchainTest.CLANGXX_4_0_RESULT
     DEFAULT_CLANG_RESULT = LinuxToolchainTest.DEFAULT_CLANG_RESULT
     DEFAULT_CLANGXX_RESULT = LinuxToolchainTest.DEFAULT_CLANGXX_RESULT
-    GCC_4_9_RESULT = LinuxToolchainTest.GCC_4_9_RESULT
-    GXX_4_9_RESULT = LinuxToolchainTest.GXX_4_9_RESULT
-    GCC_5_RESULT = LinuxToolchainTest.GCC_5_RESULT
-    GXX_5_RESULT = LinuxToolchainTest.GXX_5_RESULT
-    GCC_6_RESULT = LinuxToolchainTest.GCC_6_RESULT
-    GXX_6_RESULT = LinuxToolchainTest.GXX_6_RESULT
-    GCC_7_RESULT = LinuxToolchainTest.GCC_7_RESULT
-    GXX_7_RESULT = LinuxToolchainTest.GXX_7_RESULT
-    DEFAULT_GCC_RESULT = LinuxToolchainTest.DEFAULT_GCC_RESULT
-    DEFAULT_GXX_RESULT = LinuxToolchainTest.DEFAULT_GXX_RESULT
 
     def test_unsupported_msvc(self):
         self.do_toolchain_test(
@@ -1037,8 +1026,8 @@ class WindowsToolchainTest(BaseToolchainTest):
         self.do_toolchain_test(
             self.PATHS,
             {
-                "c_compiler": self.CLANG_CL_8_0_RESULT,
-                "cxx_compiler": self.CLANGXX_CL_8_0_RESULT,
+                "c_compiler": self.CLANG_CL_9_0_RESULT,
+                "cxx_compiler": self.CLANGXX_CL_9_0_RESULT,
             },
         )
 
@@ -1047,7 +1036,7 @@ class WindowsToolchainTest(BaseToolchainTest):
         paths = {
             k: v
             for k, v in six.iteritems(self.PATHS)
-            if os.path.basename(k) not in ("cl", "clang-cl")
+            if os.path.basename(k) != "clang-cl"
         }
         self.do_toolchain_test(
             paths,
@@ -1079,7 +1068,7 @@ class WindowsToolchainTest(BaseToolchainTest):
         paths = {
             k: v
             for k, v in six.iteritems(self.PATHS)
-            if os.path.basename(k) not in ("cl", "clang-cl", "gcc")
+            if os.path.basename(k) not in ("clang-cl", "gcc")
         }
         self.do_toolchain_test(
             paths,
@@ -1101,14 +1090,14 @@ class WindowsToolchainTest(BaseToolchainTest):
         )
 
 
-class Windows64ToolchainTest(WindowsToolchainTest):
+class Mingw64ToolchainTest(MingwToolchainTest):
     HOST = "x86_64-pc-mingw32"
 
     # For the purpose of this test, it doesn't matter that the paths are not
     # real Windows paths.
     PATHS = {
         "/usr/bin/cl": VS_2017u8 + VS_PLATFORM_X86_64,
-        "/usr/bin/clang-cl": CLANG_CL_8_0 + CLANG_CL_PLATFORM_X86_64,
+        "/usr/bin/clang-cl": CLANG_CL_9_0 + CLANG_CL_PLATFORM_X86_64,
         "/usr/bin/clang-cl-3.9": CLANG_CL_3_9 + CLANG_CL_PLATFORM_X86_64,
         "/usr/bin/gcc": DEFAULT_GCC + GCC_PLATFORM_X86_64_WIN + MINGW32,
         "/usr/bin/g++": DEFAULT_GXX + GCC_PLATFORM_X86_64_WIN + MINGW32,
@@ -1122,13 +1111,161 @@ class Windows64ToolchainTest(WindowsToolchainTest):
         "/usr/bin/g++-7": GXX_7 + GCC_PLATFORM_X86_64_WIN + MINGW32,
         "/usr/bin/clang": DEFAULT_CLANG + CLANG_PLATFORM_X86_64_WIN,
         "/usr/bin/clang++": DEFAULT_CLANGXX + CLANG_PLATFORM_X86_64_WIN,
-        "/usr/bin/clang-5.0": CLANG_5_0 + CLANG_PLATFORM_X86_64_WIN,
-        "/usr/bin/clang++-5.0": CLANGXX_5_0 + CLANG_PLATFORM_X86_64_WIN,
+        "/usr/bin/clang-7.0": CLANG_7_0 + CLANG_PLATFORM_X86_64_WIN,
+        "/usr/bin/clang++-7.0": CLANGXX_7_0 + CLANG_PLATFORM_X86_64_WIN,
         "/usr/bin/clang-4.0": CLANG_4_0 + CLANG_PLATFORM_X86_64_WIN,
         "/usr/bin/clang++-4.0": CLANGXX_4_0 + CLANG_PLATFORM_X86_64_WIN,
         "/usr/bin/clang-3.3": CLANG_3_3 + CLANG_PLATFORM_X86_64_WIN,
         "/usr/bin/clang++-3.3": CLANGXX_3_3 + CLANG_PLATFORM_X86_64_WIN,
     }
+
+
+class WindowsToolchainTest(BaseToolchainTest):
+    HOST = "i686-pc-windows-msvc"
+
+    PATHS = MingwToolchainTest.PATHS
+
+    def test_unsupported_msvc(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {"c_compiler": "Unknown compiler or compiler not supported."},
+            environ={"CC": "/usr/bin/cl"},
+        )
+
+    def test_unsupported_clang_cl(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {"c_compiler": MingwToolchainTest.CLANG_CL_3_9_RESULT},
+            environ={"CC": "/usr/bin/clang-cl-3.9"},
+        )
+
+    def test_clang_cl(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {
+                "c_compiler": MingwToolchainTest.CLANG_CL_9_0_RESULT,
+                "cxx_compiler": MingwToolchainTest.CLANGXX_CL_9_0_RESULT,
+            },
+        )
+
+    def test_unsupported_gcc(self):
+        paths = {
+            k: v
+            for k, v in six.iteritems(self.PATHS)
+            if os.path.basename(k) != "clang-cl"
+        }
+        self.do_toolchain_test(
+            paths,
+            {"c_compiler": "Cannot find the target C compiler"},
+        )
+
+    def test_overridden_unsupported_gcc(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {"c_compiler": "Unknown compiler or compiler not supported."},
+            environ={"CC": "gcc-5", "CXX": "g++-5"},
+        )
+
+    def test_unsupported_clang(self):
+        paths = {
+            k: v
+            for k, v in six.iteritems(self.PATHS)
+            if os.path.basename(k) not in ("clang-cl", "gcc")
+        }
+        self.do_toolchain_test(
+            paths,
+            {"c_compiler": "Cannot find the target C compiler"},
+        )
+
+    def test_overridden_unsupported_clang(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {"c_compiler": "Unknown compiler or compiler not supported."},
+            environ={"CC": "clang-3.3", "CXX": "clang++-3.3"},
+        )
+
+
+class Windows64ToolchainTest(WindowsToolchainTest):
+    HOST = "x86_64-pc-windows-msvc"
+
+    PATHS = Mingw64ToolchainTest.PATHS
+
+
+class WindowsGnuToolchainTest(BaseToolchainTest):
+    HOST = "i686-pc-windows-gnu"
+
+    PATHS = MingwToolchainTest.PATHS
+
+    def test_unsupported_msvc(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {"c_compiler": "Unknown compiler or compiler not supported."},
+            environ={"CC": "/usr/bin/cl"},
+        )
+
+    def test_unsupported_clang_cl(self):
+        paths = {
+            k: v
+            for k, v in six.iteritems(self.PATHS)
+            if os.path.basename(k) == "clang-cl"
+        }
+        self.do_toolchain_test(
+            paths,
+            {"c_compiler": "Cannot find the target C compiler"},
+        )
+
+    def test_overridden_unsupported_clang_cl(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {"c_compiler": "Unknown compiler or compiler not supported."},
+            environ={"CC": "clang-cl", "CXX": "clang-cl"},
+        )
+
+    def test_unsupported_gcc(self):
+        paths = {
+            k: v for k, v in six.iteritems(self.PATHS) if os.path.basename(k) == "gcc"
+        }
+        self.do_toolchain_test(
+            paths,
+            {"c_compiler": "Cannot find the target C compiler"},
+        )
+
+    def test_overridden_unsupported_gcc(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {"c_compiler": "Unknown compiler or compiler not supported."},
+            environ={"CC": "gcc-5", "CXX": "g++-5"},
+        )
+
+    def test_clang(self):
+        paths = {
+            k: v
+            for k, v in six.iteritems(self.PATHS)
+            if os.path.basename(k) not in ("clang-cl", "gcc")
+        }
+        self.do_toolchain_test(
+            paths,
+            {
+                "c_compiler": MingwToolchainTest.DEFAULT_CLANG_RESULT,
+                "cxx_compiler": MingwToolchainTest.DEFAULT_CLANGXX_RESULT,
+            },
+        )
+
+    def test_overridden_unsupported_clang(self):
+        self.do_toolchain_test(
+            self.PATHS,
+            {
+                "c_compiler": MingwToolchainTest.CLANG_3_3_RESULT,
+                "cxx_compiler": MingwToolchainTest.CLANGXX_3_3_RESULT,
+            },
+            environ={"CC": "clang-3.3", "CXX": "clang++-3.3"},
+        )
+
+
+class WindowsGnu64ToolchainTest(WindowsGnuToolchainTest):
+    HOST = "x86_64-pc-windows-gnu"
+
+    PATHS = Mingw64ToolchainTest.PATHS
 
 
 class LinuxCrossCompileToolchainTest(BaseToolchainTest):
@@ -1154,12 +1291,8 @@ class LinuxCrossCompileToolchainTest(BaseToolchainTest):
     ARM_DEFAULT_GXX_RESULT = LinuxToolchainTest.DEFAULT_GXX_RESULT + {
         "compiler": "/usr/bin/arm-linux-gnu-g++"
     }
-    ARM_GCC_7_RESULT = LinuxToolchainTest.GCC_7_RESULT + {
-        "compiler": "/usr/bin/arm-linux-gnu-gcc-7"
-    }
-    ARM_GXX_7_RESULT = LinuxToolchainTest.GXX_7_RESULT + {
-        "compiler": "/usr/bin/arm-linux-gnu-g++-7"
-    }
+    ARM_GCC_7_RESULT = LinuxToolchainTest.GCC_7_RESULT
+    ARM_GXX_7_RESULT = LinuxToolchainTest.GXX_7_RESULT
     DEFAULT_CLANG_RESULT = LinuxToolchainTest.DEFAULT_CLANG_RESULT
     DEFAULT_CLANGXX_RESULT = LinuxToolchainTest.DEFAULT_CLANGXX_RESULT
     DEFAULT_GCC_RESULT = LinuxToolchainTest.DEFAULT_GCC_RESULT
@@ -1428,20 +1561,20 @@ class OSXCrossToolchainTest(BaseToolchainTest):
     PATHS = dict(LinuxToolchainTest.PATHS)
     PATHS.update(
         {
-            "/usr/bin/clang": CLANG_5_0 + CLANG_PLATFORM_X86_64_LINUX,
-            "/usr/bin/clang++": CLANGXX_5_0 + CLANG_PLATFORM_X86_64_LINUX,
+            "/usr/bin/clang": CLANG_7_0 + CLANG_PLATFORM_X86_64_LINUX,
+            "/usr/bin/clang++": CLANGXX_7_0 + CLANG_PLATFORM_X86_64_LINUX,
         }
     )
     DEFAULT_CLANG_RESULT = CompilerResult(
         flags=["-std=gnu99"],
-        version="5.0.1",
+        version="7.0.0",
         type="clang",
         compiler="/usr/bin/clang",
         language="C",
     )
     DEFAULT_CLANGXX_RESULT = CompilerResult(
         flags=["-std=gnu++17"],
-        version="5.0.1",
+        version="7.0.0",
         type="clang",
         compiler="/usr/bin/clang++",
         language="C++",
@@ -1478,18 +1611,18 @@ class OSXCrossToolchainTest(BaseToolchainTest):
 
 
 class WindowsCrossToolchainTest(BaseToolchainTest):
-    TARGET = "x86_64-pc-mingw32"
+    TARGET = "x86_64-pc-windows-msvc"
     DEFAULT_CLANG_RESULT = LinuxToolchainTest.DEFAULT_CLANG_RESULT
     DEFAULT_CLANGXX_RESULT = LinuxToolchainTest.DEFAULT_CLANGXX_RESULT
 
     def test_clang_cl_cross(self):
-        paths = {"/usr/bin/clang-cl": CLANG_CL_8_0 + CLANG_CL_PLATFORM_X86_64}
+        paths = {"/usr/bin/clang-cl": CLANG_CL_9_0 + CLANG_CL_PLATFORM_X86_64}
         paths.update(LinuxToolchainTest.PATHS)
         self.do_toolchain_test(
             paths,
             {
-                "c_compiler": WindowsToolchainTest.CLANG_CL_8_0_RESULT,
-                "cxx_compiler": WindowsToolchainTest.CLANGXX_CL_8_0_RESULT,
+                "c_compiler": MingwToolchainTest.CLANG_CL_9_0_RESULT,
+                "cxx_compiler": MingwToolchainTest.CLANGXX_CL_9_0_RESULT,
                 "host_c_compiler": self.DEFAULT_CLANG_RESULT,
                 "host_cxx_compiler": self.DEFAULT_CLANGXX_RESULT,
             },
@@ -1792,6 +1925,11 @@ class RustTest(BaseConfigureTest):
             "mips64el-unknown-linux-gnuabi64",
             "powerpc64-unknown-linux-gnu",
             "powerpc64le-unknown-linux-gnu",
+            "i686-pc-windows-msvc",
+            "x86_64-pc-windows-msvc",
+            "aarch64-pc-windows-msvc",
+            "i686-pc-windows-gnu",
+            "x86_64-pc-windows-gnu",
         ):
             self.assertEqual(self.get_rust_target(straightforward), straightforward)
 
@@ -1812,10 +1950,8 @@ class RustTest(BaseConfigureTest):
 
         # Windows
         for autoconf, building_with_gcc, rust in (
-            ("i686-pc-mingw32", "cl", "i686-pc-windows-msvc"),
-            ("x86_64-pc-mingw32", "cl", "x86_64-pc-windows-msvc"),
-            ("i686-pc-mingw32", "gcc", "i686-pc-windows-gnu"),
-            ("x86_64-pc-mingw32", "gcc", "x86_64-pc-windows-gnu"),
+            ("i686-pc-mingw32", "clang-cl", "i686-pc-windows-msvc"),
+            ("x86_64-pc-mingw32", "clang-cl", "x86_64-pc-windows-msvc"),
             ("i686-pc-mingw32", "clang", "i686-pc-windows-gnu"),
             ("x86_64-pc-mingw32", "clang", "x86_64-pc-windows-gnu"),
             ("i686-w64-mingw32", "clang", "i686-pc-windows-gnu"),

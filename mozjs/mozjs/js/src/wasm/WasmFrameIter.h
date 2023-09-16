@@ -33,11 +33,11 @@ enum class FrameType;
 
 namespace wasm {
 
+class CallIndirectId;
 class Code;
 class CodeRange;
 class DebugFrame;
 class Instance;
-class TypeIdDesc;
 class Instance;
 
 struct CallableOffsets;
@@ -66,8 +66,8 @@ class WasmFrameIter {
   unsigned lineOrBytecode_;
   Frame* fp_;
   Instance* instance_;
-  uint8_t* unwoundJitCallerFP_;
-  jit::FrameType unwoundJitFrameType_;
+  uint8_t* unwoundCallerFP_;
+  mozilla::Maybe<jit::FrameType> unwoundJitFrameType_;
   Unwind unwind_;
   void** unwoundAddressOfReturnAddress_;
   uint8_t* resumePCinCurrentFrame_;
@@ -93,7 +93,8 @@ class WasmFrameIter {
   bool debugEnabled() const;
   DebugFrame* debugFrame() const;
   jit::FrameType unwoundJitFrameType() const;
-  uint8_t* unwoundJitCallerFP() const { return unwoundJitCallerFP_; }
+  bool hasUnwoundJitFrame() const;
+  uint8_t* unwoundCallerFP() const { return unwoundCallerFP_; }
   Frame* frame() const { return fp_; }
   Instance* instance() const { return instance_; }
 
@@ -235,7 +236,7 @@ void GenerateJitEntryEpilogue(jit::MacroAssembler& masm,
                               CallableOffsets* offsets);
 
 void GenerateFunctionPrologue(jit::MacroAssembler& masm,
-                              const TypeIdDesc& funcTypeId,
+                              const CallIndirectId& callIndirectId,
                               const mozilla::Maybe<uint32_t>& tier1FuncIndex,
                               FuncOffsets* offsets);
 void GenerateFunctionEpilogue(jit::MacroAssembler& masm, unsigned framePushed,

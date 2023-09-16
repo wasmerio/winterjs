@@ -33,9 +33,11 @@ struct MediaSampleMarker {
   }
   static void StreamJSONMarkerData(SpliceableJSONWriter& aWriter,
                                    int64_t aSampleStartTimeUs,
-                                   int64_t aSampleEndTimeUs) {
+                                   int64_t aSampleEndTimeUs,
+                                   int64_t aQueueLength) {
     aWriter.IntProperty("sampleStartTimeUs", aSampleStartTimeUs);
     aWriter.IntProperty("sampleEndTimeUs", aSampleEndTimeUs);
+    aWriter.IntProperty("queueLength", aQueueLength);
   }
   static MarkerSchema MarkerTypeDisplay() {
     using MS = MarkerSchema;
@@ -43,6 +45,29 @@ struct MediaSampleMarker {
     schema.AddKeyLabelFormat("sampleStartTimeUs", "Sample start time",
                              MS::Format::Microseconds);
     schema.AddKeyLabelFormat("sampleEndTimeUs", "Sample end time",
+                             MS::Format::Microseconds);
+    schema.AddKeyLabelFormat("queueLength", "Queue length",
+                             MS::Format::Integer);
+    return schema;
+  }
+};
+
+struct VideoFallingBehindMarker {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("VideoFallingBehind");
+  }
+  static void StreamJSONMarkerData(SpliceableJSONWriter& aWriter,
+                                   int64_t aVideoFrameStartTimeUs,
+                                   int64_t aMediaCurrentTimeUs) {
+    aWriter.IntProperty("videoFrameStartTimeUs", aVideoFrameStartTimeUs);
+    aWriter.IntProperty("mediaCurrentTimeUs", aMediaCurrentTimeUs);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    schema.AddKeyLabelFormat("videoFrameStartTimeUs", "Video frame start time",
+                             MS::Format::Microseconds);
+    schema.AddKeyLabelFormat("mediaCurrentTimeUs", "Media current time",
                              MS::Format::Microseconds);
     return schema;
   }
@@ -56,6 +81,41 @@ struct ContentBuildMarker {
   static MarkerSchema MarkerTypeDisplay() {
     using MS = MarkerSchema;
     MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    return schema;
+  }
+};
+
+struct MediaEngineMarker {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("MediaEngine");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   uint64_t aMediaEngineId) {
+    aWriter.IntProperty("id", aMediaEngineId);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    schema.AddKeyLabelFormat("id", "Id", MS::Format::Integer);
+    return schema;
+  }
+};
+
+struct MediaEngineTextMarker {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("MediaEngineText");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   uint64_t aMediaEngineId,
+                                   const ProfilerString8View& aText) {
+    aWriter.IntProperty("id", aMediaEngineId);
+    aWriter.StringProperty("text", aText);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    schema.AddKeyLabelFormat("id", "Id", MS::Format::Integer);
+    schema.AddKeyLabelFormat("text", "Details", MS::Format::String);
     return schema;
   }
 };

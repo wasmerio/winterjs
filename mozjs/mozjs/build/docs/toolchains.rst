@@ -128,12 +128,20 @@ attempt was made to work around it, but `more work is needed`_.
 .. _tools we require: https://searchfox.org/mozilla-central/rev/168c45a7acc44e9904cfd4eebcb9eb080e05699c/taskcluster/scripts/misc/repack_rust.py#398
 .. _more work is needed: https://github.com/rust-lang/rust/issues/79249
 
+Python
+------
+
+Python is built from source by ``taskcluster/scripts/misc/build-cpython.sh`` on
+Linux and OSX. We use the upstream installer on Windows, through
+``taskcluster/scripts/misc/pack-cpython.sh``. In order to ensure consistency, we
+use the same version for both approaches. Note however that the Windows installer is
+not packaged for all patch versions, so there might be a slight delta there.
 
 Windows
 =======
 
-The ``build/vs/generate_yaml.py`` and ``build/vs/pack_vs.py`` scripts are
-used to manage and build Windows toolchain archives containing Visual
+The ``build/vs/generate_yaml.py`` and ``taskcluster/scripts/misc/get_vs.py``
+scripts are used to manage and get Windows toolchains containing Visual
 Studio executables, SDKs, etc.
 
 The ``build/vs/generate_yaml.py`` script is used to generate one of the
@@ -142,11 +150,73 @@ used to generate the file is stored in the header of the YAML file itself.
 Each YAML file records the necessary downloads from Microsoft servers to
 install the required Visual Studio components given on the command line.
 
-The ``build/vs/pack_vs.py`` script takes a YAML file as input and generates
-the corresponding toolchain artifact.
+The ``taskcluster/scripts/misc/get_vs.py`` script takes a YAML file as
+input and fills a directory with the corresponding Visual Studio components.
 
-Both scripts should be run via ``mach python``.
+Both scripts should be run via ``mach python --virtualenv build``. The
+latter is automatically invoked by the bootstrapping mechanism.
 
+
+MacOS
+=====
+
+The ``build/macosx/catalog.py`` and ``taskcluster/scripts/misc/unpack-sdk.py``
+scripts are used to manage and get macOS SDKs.
+
+The ``build/macosx/catalog.py`` script is used to explore the Apple
+software update catalog. Running the script with no argument will show
+a complete list of "products". You probably don't want that, but rather
+start with a filter:
+
+.. code-block:: shell
+
+    $ ./mach python build/macosx/catalog.py --filter SDK
+    061-44071 Beats Updater 1.0
+    071-29699 Command Line Tools for Xcode 12.5
+    001-89745 Command Line Tools for Xcode 12.4
+    071-54303 Command Line Tools for Xcode 12.5
+    002-41708 Command Line Tools for Xcode 13.2
+    002-83793 Command Line Tools for Xcode 13.4
+    012-92431 Command Line Tools for Xcode 14.2
+    032-64167 Command Line Tools for Xcode 14.3
+
+From there, pick the id of the product you're interested in, and run the
+script again with that id:
+
+.. code-block:: shell
+
+    $ ./mach python build/macosx/catalog.py 032-64167
+    com.apple.pkg.CLTools_Executables https://swcdn.apple.com/content/downloads/38/61/032-64167-A_F8LL7XSTW6/k3kg0uip4kxd3qupgy6y8fzp27mnxdpt6y/CLTools_Executables.pkg
+    com.apple.pkg.CLTools_SDK_macOS13 https://swcdn.apple.com/content/downloads/38/61/032-64167-A_F8LL7XSTW6/k3kg0uip4kxd3qupgy6y8fzp27mnxdpt6y/CLTools_macOSNMOS_SDK.pkg
+    com.apple.pkg.CLTools_SDK_macOS12 https://swcdn.apple.com/content/downloads/38/61/032-64167-A_F8LL7XSTW6/k3kg0uip4kxd3qupgy6y8fzp27mnxdpt6y/CLTools_macOSLMOS_SDK.pkg
+    com.apple.pkg.CLTools_macOS_SDK https://swcdn.apple.com/content/downloads/38/61/032-64167-A_F8LL7XSTW6/k3kg0uip4kxd3qupgy6y8fzp27mnxdpt6y/CLTools_macOS_SDK.pkg
+    com.apple.pkg.CLTools_SwiftBackDeploy https://swcdn.apple.com/content/downloads/38/61/032-64167-A_F8LL7XSTW6/k3kg0uip4kxd3qupgy6y8fzp27mnxdpt6y/CLTools_SwiftBackDeploy.pkg
+
+From there, pick the id of the package you're interested in, and run the
+script again with a combination of both product and package ids to inspect
+its content and ensure that's what you're looking for.
+
+.. code-block:: shell
+
+    $ ./mach python build/macosx/catalog.py 032-64167/com.apple.pkg.CLTools_SDK_macOS13
+    Library
+    Library/Developer
+    Library/Developer/CommandLineTools
+    Library/Developer/CommandLineTools/SDKs
+    Library/Developer/CommandLineTools/SDKs/MacOSX13.sdk
+    Library/Developer/CommandLineTools/SDKs/MacOSX13.3.sdk
+    Library/Developer/CommandLineTools/SDKs/MacOSX13.3.sdk/usr
+    (...)
+
+Once you have found the SDK you want, you can create or update toolchain tasks
+in ``taskcluster/ci/toolchain/macosx-sdk.yml``.
+
+The ``taskcluster/scripts/misc/unpack-sdk.py`` script takes the url of a SDK
+package, the sha256 hash for its content, the path to the SDK in the package,
+and an output directory, and extracts the package in that directory.
+
+Both scripts should be run via ``mach python``. The latter is automatically
+invoked by the bootstrapping mechanism.
 
 Firefox for Android with Gradle
 ===============================

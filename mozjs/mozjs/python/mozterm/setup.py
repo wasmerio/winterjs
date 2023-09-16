@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
 from setuptools import setup
 
 VERSION = "1.0.0"
@@ -11,7 +9,7 @@ DEPS = ["six >= 1.13.0"]
 
 setup(
     name="mozterm",
-    description="Terminal abstractions built around the blessings module.",
+    description="Terminal abstractions built around the blessed module.",
     license="MPL 2.0",
     author="Andrew Halberstadt",
     author_email="ahalberstadt@mozilla.com",

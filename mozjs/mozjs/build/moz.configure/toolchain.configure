@@ -68,12 +68,6 @@ with only_when(target_is_osx):
         return value[0]
 
 
-@depends(host)
-def host_is_osx(host):
-    if host.os == "OSX":
-        return True
-
-
 with only_when(host_is_osx | target_is_osx):
     # MacOS SDK
     # =========
@@ -101,16 +95,23 @@ with only_when(host_is_osx | target_is_osx):
             )
         return Version(obj["Version"])
 
-    @depends("--with-macos-sdk", host)
+    def sdk_min_version():
+        return "13.3"
+
+    @depends(
+        "--with-macos-sdk",
+        host,
+        bootstrap_path(
+            "MacOSX{}.sdk".format(sdk_min_version()),
+            when=depends("--with-macos-sdk")(lambda x: not x),
+        ),
+    )
     @imports(_from="__builtin__", _import="Exception")
     @imports(_from="os.path", _import="isdir")
     @imports(_from="os", _import="listdir")
-    def macos_sdk(sdk, host):
-        # When we change the SDK we build with, please update the manual SDK
-        # installation docs:
-        # https://firefox-source-docs.mozilla.org/setup/macos_build.html#macos-sdk-is-unsupported
-        sdk_min_version = Version("11.3")
-
+    def macos_sdk(sdk, host, bootstrapped):
+        if bootstrapped:
+            sdk = [bootstrapped]
         if sdk:
             sdk = sdk[0]
             try:
@@ -150,13 +151,10 @@ with only_when(host_is_osx | target_is_osx):
                 "tools are selected during the Xcode/Developer Tools installation."
                 % sdk
             )
-        sdk_installation_docs_url = "https://firefox-source-docs.mozilla.org/setup/macos_build.html#macos-sdk-is-unsupported"
-        if version < sdk_min_version:
+        if version < Version(sdk_min_version()):
             die(
                 'SDK version "%s" is too old. Please upgrade to at least %s. Try '
-                "updating your system Xcode. If that's not sufficient, see the manual "
-                "SDK installation docs: %s"
-                % (version, sdk_min_version, sdk_installation_docs_url)
+                "updating your system Xcode." % (version, sdk_min_version())
             )
         return sdk
 
@@ -246,8 +244,12 @@ add_old_configure_assignment("TOOLCHAIN_PREFIX", first_toolchain_prefix)
 include("compilers-util.configure")
 
 
-def try_preprocess(compiler, language, source, onerror=None):
-    return try_invoke_compiler(compiler, language, source, ["-E"], onerror)
+def try_preprocess(
+    configure_cache, compiler, language, source, onerror=None, wrapper=[]
+):
+    return try_invoke_compiler(
+        configure_cache, compiler, language, source, ["-E"], onerror, wrapper
+    )
 
 
 @imports(_from="mozbuild.configure.constants", _import="CompilerType")
@@ -256,7 +258,7 @@ def try_preprocess(compiler, language, source, onerror=None):
 @imports(_from="mozbuild.configure.constants", _import="OS_preprocessor_checks")
 @imports(_from="textwrap", _import="dedent")
 @imports(_from="__builtin__", _import="Exception")
-def get_compiler_info(compiler, language):
+def get_compiler_info(configure_cache, compiler, language):
     """Returns information about the given `compiler` (command line in the
     form of a list or tuple), in the given `language`.
 
@@ -330,7 +332,7 @@ def get_compiler_info(compiler, language):
     """
     )
 
-    result = try_preprocess(compiler, language, check)
+    result = try_preprocess(configure_cache, compiler, language, check)
 
     if not result:
         raise FatalCheckError("Unknown compiler or compiler not supported.")
@@ -378,8 +380,12 @@ def get_compiler_info(compiler, language):
                 version = Version("11.1.0")
             elif version < "13.0.1":
                 version = Version("12.0.0")
+            elif version < "14.0":
+                version = Version("13.0.0")
+            elif version < "15.0":
+                version = Version("14.0.0")
             else:
-                version = Version("12.0.0.or.more")
+                version = Version("14.0.0.or.more")
 
     return namespace(
         type=type,
@@ -404,8 +410,8 @@ def same_arch_different_bits():
 
 @imports(_from="mozbuild.shellutil", _import="quote")
 @imports(_from="mozbuild.configure.constants", _import="OS_preprocessor_checks")
-def check_compiler(compiler, language, target):
-    info = get_compiler_info(compiler, language)
+def check_compiler(configure_cache, compiler, language, target, android_version):
+    info = get_compiler_info(configure_cache, compiler, language)
 
     flags = []
 
@@ -439,6 +445,13 @@ def check_compiler(compiler, language, target):
     # Check compiler target
     # --------------------------------------------------------------------
     has_target = False
+    if target.os == "Android" and android_version:
+        # This makes clang define __ANDROID_API__ and use versioned library
+        # directories from the NDK.
+        toolchain = "%s%d" % (target.toolchain, android_version)
+    else:
+        toolchain = target.toolchain
+
     if info.type == "clang":
         # Add the target explicitly when the target is aarch64 macosx, because
         # the Xcode clang target is named differently, and we need to work around
@@ -457,7 +470,7 @@ def check_compiler(compiler, language, target):
             or not info.endianness
             or info.endianness != target.endianness
         ):
-            flags.append("--target=%s" % target.toolchain)
+            flags.append("--target=%s" % toolchain)
             has_target = True
 
         # Add target flag when there is an OS mismatch (e.g. building for Android on
@@ -466,7 +479,7 @@ def check_compiler(compiler, language, target):
         elif target.os in OS_preprocessor_checks and (
             not info.os or info.os != target.os
         ):
-            flags.append("--target=%s" % target.toolchain)
+            flags.append("--target=%s" % toolchain)
             has_target = True
 
     if not has_target and (not info.cpu or info.cpu != target.cpu):
@@ -476,9 +489,9 @@ def check_compiler(compiler, language, target):
         elif (info.cpu, target.cpu) in same_arch:
             flags.append("-m64")
         elif info.type == "clang-cl" and target.cpu == "aarch64":
-            flags.append("--target=%s" % target.toolchain)
+            flags.append("--target=%s" % toolchain)
         elif info.type == "clang":
-            flags.append("--target=%s" % target.toolchain)
+            flags.append("--target=%s" % toolchain)
 
     return namespace(
         type=info.type,
@@ -531,67 +544,75 @@ def get_vc_paths(topsrcdir):
         yield (Version(install["installationVersion"]), tools_path)
 
 
-@depends(host)
-def host_is_windows(host):
-    if host.kernel == "WINNT":
-        return True
+@depends(target, host)
+def is_windows(target, host):
+    return host.kernel == "WINNT" or target.kernel == "WINNT"
 
 
+# Calling this a sysroot is a little weird, but it's the terminology clang went
+# with with its -winsysroot flag.
 option(
-    "--with-visual-studio-version",
+    env="WINSYSROOT",
     nargs=1,
-    choices=("2017",),
-    when=host_is_windows,
-    help="Select a specific Visual Studio version to use",
+    when=is_windows,
+    help='Path to a Windows "sysroot" (directory containing MSVC, SDKs)',
 )
 
 
-@depends("--with-visual-studio-version", when=host_is_windows)
-def vs_major_version(value):
-    if value:
-        return {"2017": 15}[value[0]]
+@depends(
+    "WINSYSROOT",
+    bootstrap_path(
+        "vs",
+        when=depends("WINSYSROOT", when=is_windows)(lambda x: not x),
+    ),
+    when=is_windows,
+)
+def winsysroot(winsysroot, bootstrapped):
+    if bootstrapped:
+        return bootstrapped
+    if winsysroot:
+        return winsysroot[0]
 
 
 option(
     env="VC_PATH",
     nargs=1,
-    when=host_is_windows,
+    when=is_windows,
     help="Path to the Microsoft Visual C/C++ compiler",
 )
 
 
 @depends(
     host,
-    vs_major_version,
     build_environment,
     "VC_PATH",
-    "--with-visual-studio-version",
-    when=host_is_windows,
+    winsysroot,
+    when=is_windows,
 )
+@imports("os")
 @imports(_from="operator", _import="itemgetter")
-def vc_compiler_paths_for_version(
-    host, vs_major_version, env, vc_path, vs_release_name
-):
-    if vc_path and vs_release_name:
-        die("VC_PATH and --with-visual-studio-version cannot be used together.")
+def vc_compiler_paths_for_version(host, env, vc_path, winsysroot):
+    if winsysroot:
+        if vc_path:
+            die("WINSYSROOT and VC_PATH cannot be set together.")
+        base_vc_path = os.path.join(winsysroot, "VC", "Tools", "MSVC")
+        versions = os.listdir(base_vc_path)
+        vc_path = [os.path.join(base_vc_path, str(max(Version(v) for v in versions)))]
     if vc_path:
         # Use an arbitrary version, it doesn't matter.
         all_versions = [(Version("15"), vc_path[0])]
+    elif host.kernel != "WINNT":
+        # Don't try to do anything when VC_PATH is not set on cross-compiles.
+        return
     else:
         all_versions = sorted(get_vc_paths(env.topsrcdir), key=itemgetter(0))
     if not all_versions:
         return
-    if vs_major_version:
-        versions = [d for (v, d) in all_versions if v.major == vs_major_version]
-        if not versions:
-            die("Visual Studio %s could not be found!" % vs_release_name)
-        path = versions[0]
-    else:
-        # Choose the newest version.
-        path = all_versions[-1][1]
+    # Choose the newest version.
+    path = all_versions[-1][1]
     host_dir = {
-        "x86_64": "HostX64",
-        "x86": "HostX86",
+        "x86_64": "Hostx64",
+        "x86": "Hostx86",
     }.get(host.cpu)
     if host_dir:
         path = os.path.join(path, "bin", host_dir)
@@ -603,7 +624,7 @@ def vc_compiler_paths_for_version(
         }
 
 
-@depends(target, vc_compiler_paths_for_version, when=host_is_windows)
+@depends(target, vc_compiler_paths_for_version, when=is_windows)
 def vc_compiler_path(target, paths):
     vc_target = {
         "x86": "x86",
@@ -634,6 +655,43 @@ def vc_toolchain_search_path(vc_compiler_path, original_path):
     return result
 
 
+@depends_if(vc_compiler_path, when=is_windows)
+def vc_compiler_version(vc_compiler_path):
+    version = Version(
+        os.path.basename(
+            os.path.dirname(os.path.dirname(os.path.dirname(vc_compiler_path[0])))
+        )
+    )
+    # MSVC path with version 14.x is actually version 19.x
+    if version.major == 14:
+        return Version(f"19.{version.minor}")
+
+
+@depends_if(vc_compiler_version)
+def is_vs2019_or_more(vc_compiler_version):
+    return vc_compiler_version >= Version("19.20")
+
+
+add_old_configure_assignment("IS_VS2019_OR_MORE", is_vs2019_or_more)
+
+
+@depends_if(vc_compiler_version)
+def msvs_version(vc_compiler_version):
+    # clang-cl emulates the same version scheme as cl. And MSVS_VERSION needs to
+    # be set for GYP on Windows.
+    if vc_compiler_version >= Version("19.30"):
+        return "2022"
+    if vc_compiler_version >= Version("19.20"):
+        return "2019"
+    if vc_compiler_version >= Version("19.10"):
+        return "2017"
+
+    return ""
+
+
+set_config("MSVS_VERSION", msvs_version)
+
+
 clang_search_path = bootstrap_search_path("clang/bin")
 
 
@@ -660,14 +718,20 @@ def rust_search_path(rust_path, search_order, original_path):
     return result
 
 
-# As a workaround until bug 1516228 and bug 1516253 are fixed, set the PATH
-# variable for the build to contain the toolchain search path.
-@depends(vc_toolchain_search_path)
+# Prepend the mozilla-build msys2 path, since otherwise we can get mismatched
+# cygwin dll errors during configure if we get called from another msys2
+# environment, see bug 1801826.
+@depends(mozillabuild_bin_paths, clang_search_path, target, original_path)
 @imports("os")
-@imports(_from="os", _import="environ")
-def altered_path(vc_toolchain_search_path):
-    path = environ["PATH"].split(os.pathsep)
-    altered_path = list(vc_toolchain_search_path)
+def altered_path(mozillabuild_bin_paths, clang_search_path, target, original_path):
+    altered_path = mozillabuild_bin_paths
+    if target.kernel == "Darwin":
+        # The rust compiler wants to execute dsymutil, but it does so in a
+        # non-configurable way (https://github.com/rust-lang/rust/issues/52728)
+        # so we add the clang path.
+        path = clang_search_path
+    else:
+        path = original_path
     for p in path:
         if p not in altered_path:
             altered_path.append(p)
@@ -835,7 +899,13 @@ def default_c_compilers(host_or_target, other_c_compiler=None):
         host_or_target, target, toolchain_prefix, *other_c_compiler
     ):
         if host_or_target.kernel == "WINNT":
-            supported = types = ("clang-cl", "clang")
+            if host_or_target.abi:
+                if host_or_target.abi == "msvc":
+                    supported = types = ("clang-cl",)
+                elif host_or_target.abi == "mingw":
+                    supported = types = ("clang",)
+            else:
+                supported = types = ("clang-cl", "clang")
         elif host_or_target.kernel == "Darwin":
             types = ("clang",)
             supported = ("clang", "gcc")
@@ -1069,7 +1139,7 @@ host_multiarch_dir = multiarch_dir(host)
 
 
 def minimum_gcc_version():
-    return Version("7.1.0")
+    return Version("8.1.0")
 
 
 @template
@@ -1153,25 +1223,35 @@ def compiler(
     )
 
     @depends(
+        configure_cache,
         compiler,
         provided_compiler,
         compiler_wrapper,
         host_or_target,
         sysroot,
         macos_target,
+        android_version,
+        vc_compiler_version,
         multiarch_dir,
+        winsysroot,
+        host,
     )
     @checking("whether %s can be used" % what, lambda x: bool(x))
     @imports(_from="mozbuild.shellutil", _import="quote")
     @imports("os")
     def valid_compiler(
+        configure_cache,
         compiler,
         provided_compiler,
         compiler_wrapper,
         host_or_target,
         sysroot,
         macos_target,
+        android_version,
+        vc_compiler_version,
         multiarch_dir,
+        winsysroot,
+        host,
     ):
         wrapper = list(compiler_wrapper or ())
         flags = []
@@ -1189,7 +1269,23 @@ def compiler(
             wrapper.extend(provided_compiler.wrapper)
             flags.extend(provided_compiler.flags)
 
-        info = check_compiler(wrapper + [compiler] + flags, language, host_or_target)
+        info = check_compiler(
+            configure_cache,
+            wrapper + [compiler] + flags,
+            language,
+            host_or_target,
+            android_version,
+        )
+
+        # When not given an explicit compatibility version, clang-cl tries
+        # to get one from MSVC, which might not even be the one used by the
+        # build. And when it can't find one, its default might also not match
+        # what the build is using. So if we were able to figure out the version
+        # we're building with, explicitly use that.
+        # This also means that, as a side effect, clang-cl will not try to find
+        # MSVC, which saves a little overhead.
+        if info.type == "clang-cl" and vc_compiler_version:
+            flags.append(f"-fms-compatibility-version={vc_compiler_version}")
 
         if info.type == "clang" and language == "C++" and host_or_target.os == "OSX":
             flags.append("-stdlib=libc++")
@@ -1203,7 +1299,11 @@ def compiler(
             if info.flags:
                 flags += info.flags
                 info = check_compiler(
-                    wrapper + [compiler] + flags, language, host_or_target
+                    configure_cache,
+                    wrapper + [compiler] + flags,
+                    language,
+                    host_or_target,
+                    android_version,
                 )
         except FatalCheckError:
             pass
@@ -1279,17 +1379,42 @@ def compiler(
                     flags.extend(("-isystem", os.path.join(sysroot.path, path)))
 
         if info.type == "clang-cl":
-            if info.version < "8.0.0":
+            if info.version < "9.0.0":
                 raise FatalCheckError(
-                    "Only clang-cl 8.0 or newer is supported (found version %s)"
+                    "Only clang-cl 9.0 or newer is supported (found version %s)"
                     % info.version
                 )
+            if winsysroot and host.os != "WINNT":
+                overlay = os.path.join(winsysroot, "overlay.yaml")
+                if os.path.exists(overlay):
+                    overlay_flags = ["-Xclang", "-ivfsoverlay", "-Xclang", overlay]
+                    if info.version >= "16.0" or (
+                        # clang-cl 15 normally doesn't support the root-relative
+                        # overlay we use, but the bootstrapped clang-cl 15 is patched
+                        # to support it, so check we're using a patched version.
+                        info.version >= "15.0"
+                        and try_preprocess(
+                            configure_cache,
+                            [compiler] + flags + overlay_flags,
+                            language,
+                            "",
+                            onerror=lambda: False,
+                            wrapper=wrapper,
+                        )
+                    ):
+                        flags.extend(overlay_flags)
+
+        if (info.type, host_or_target.abi) in (
+            ("clang", "msvc"),
+            ("clang-cl", "mingw"),
+        ):
+            raise FatalCheckError("Unknown compiler or compiler not supported.")
 
         # If you want to bump the version check here ensure the version
         # is known for Xcode in get_compiler_info.
-        if info.type == "clang" and info.version < "5.0":
+        if info.type == "clang" and info.version < "7.0":
             raise FatalCheckError(
-                "Only clang/llvm 5.0 or newer is supported (found version %s)."
+                "Only clang/llvm 7.0 or newer is supported (found version %s)."
                 % info.version
             )
 
@@ -1304,13 +1429,16 @@ def compiler(
                     % (host_or_target.alias, info.version)
                 )
 
+        if host_or_target.os == "Android":
+            # Need at least clang 13 for compiler-rt/libunwind being the default.
+            if info.type == "clang" and info.version < "13.0":
+                raise FatalCheckError(
+                    "Only clang/llvm 13.0 or newer is supported for %s (found version %s)."
+                    % (host_or_target.alias, info.version)
+                )
+
         if info.flags:
             raise FatalCheckError("Unknown compiler or compiler not supported.")
-
-        # Recent clang defaults to compiler-rt, but we want libgcc for compat
-        # with the older NDKs we use.
-        if host_or_target.os == "Android":
-            flags.append("--rtlib=libgcc")
 
         return namespace(
             wrapper=wrapper,
@@ -1455,6 +1583,32 @@ host_cxx_compiler = compiler(
     other_c_compiler=c_compiler,
 )
 
+
+@template
+def windows_abi(host_or_target, c_compiler):
+    @depends(host_or_target)
+    def windows_abi(host_or_target):
+        if host_or_target.os == "WINNT":
+            return host_or_target.abi
+
+    @depends(host_or_target, windows_abi)
+    def need_windows_abi_from_compiler(host_or_target, windows_abi):
+        return host_or_target.os == "WINNT" and windows_abi is None
+
+    @depends(host_or_target, c_compiler, when=need_windows_abi_from_compiler)
+    def windows_abi_from_compiler(host_or_target, c_compiler):
+        if host_or_target.os == "WINNT":
+            if c_compiler.type == "clang-cl":
+                return "msvc"
+            return "mingw"
+
+    return windows_abi | windows_abi_from_compiler
+
+
+target_windows_abi = windows_abi(target, c_compiler)
+host_windows_abi = windows_abi(host, host_c_compiler)
+
+
 # Generic compiler-based conditions.
 building_with_gcc = depends(c_compiler)(lambda info: info.type == "gcc")
 
@@ -1481,22 +1635,32 @@ set_config("CXX_IS_ICECREAM", cxx_is_icecream)
 # - the linker is picked via the LINKER environment variable per windows.configure,
 #   but ought to be llvm-lld in any case.
 # For macOS:
-# - the linker is lld on local developer builds if the clang used is >= 13 (per LLVM
+# - the linker is lld if the clang used is >= 15 (per LLVM version, not Xcode version).
+# - the linker is also lld on local developer builds if the clang used is >= 13 (per LLVM
 #   version, not Xcode version)
 # - otherwise the linker is ld64, either from XCode on macOS, or from cctools-ports when
 #   cross-compiling.
 # For other OSes:
 # - on local developer builds: lld is used if present. Otherwise gold is used if present
 #   otherwise, BFD ld is used.
-# - on release/official builds: whatever "ld" resolves to is used, except on Android x86/x86_64
-#   where BFD ld is used. Usually, "ld" resolves to BFD ld, except with the Android NDK,
-#   where it resolves to gold. lld is not used by default on Linux and Android because
-#   it introduces layout changes that prevent elfhack from working. See e.g.
+# - on release/official builds: whatever the compiler uses by default, except on Android
+#   (see enable_linker_default below). Usually what the compiler uses by default is BFD
+#   ld, except with the Android NDK compiler, where the default varies depending on the
+#   NDK version. The default also varies by platform and clang version.
+#   lld is not used by default on Linux and Android because it introduces layout changes
+#   that prevent elfhack from working. See e.g.
 #   https://bugzilla.mozilla.org/show_bug.cgi?id=1563654#c2.
-@depends(target)
-def is_linker_option_enabled(target):
-    if target.kernel not in ("WINNT", "SunOS"):
-        return True
+@template
+def is_not_winnt_or_sunos(host_or_target):
+    @depends(host_or_target)
+    def is_not_winnt_or_sunos(host_or_target):
+        if host_or_target.kernel not in ("WINNT", "SunOS"):
+            return True
+
+    return is_not_winnt_or_sunos
+
+
+is_linker_option_enabled = is_not_winnt_or_sunos(target)
 
 
 @deprecated_option("--enable-gold", env="MOZ_FORCE_GOLD", when=is_linker_option_enabled)
@@ -1509,11 +1673,17 @@ def enable_gold(value):
 
 @depends(target, developer_options)
 def enable_linker_default(target, developer_options):
-    # x86-64 gold has bugs in how it lays out .note.* sections. See bug 1573820.
-    # x86-32 gold has a bug when assembly files are built. See bug 1651699.
-    # lld is faster, so prefer that for developer builds.
-    if target.os == "Android" and target.cpu in ("x86", "x86_64"):
-        return "lld" if developer_options else "bfd"
+    # Recent versions of clang default to lld when targetting Android, but we don't
+    # want that as the default for non developer builds (see above).
+    # So we want to force the default to whatever it was with older versions of clang,
+    # but with caveats/workarounds:
+    # - x86-64 gold has bugs in how it lays out .note.* sections. See bug 1573820.
+    # - x86-32 gold has a bug when assembly files are built. See bug 1651699.
+    # That leaves us with aarch64 and armv7, which respectively defaulted to
+    # bfd and gold.
+    # On developer builds, select_linker will pick lld if it's not the default.
+    if target.os == "Android" and not developer_options:
+        return "bfd" if target.cpu in ("x86", "x86_64", "aarch64") else "gold"
 
 
 option(
@@ -1532,177 +1702,246 @@ def enable_linker(linker):
     return linker
 
 
-@depends(
-    "--enable-linker",
-    c_compiler,
-    developer_options,
-    extra_toolchain_flags,
-    target,
-    when=is_linker_option_enabled,
-)
-@checking("for linker", lambda x: x.KIND)
-@imports("os")
-@imports("shutil")
-def select_linker(linker, c_compiler, developer_options, toolchain_flags, target):
-
-    if linker:
-        linker = linker[0]
+@template
+def select_linker_tmpl(host_or_target):
+    if host_or_target is target:
+        deps = depends(
+            "--enable-linker",
+            c_compiler,
+            developer_options,
+            extra_toolchain_flags,
+            target,
+            when=is_linker_option_enabled,
+        )
+        host_or_target_str = "target"
     else:
-        linker = None
+        deps = depends(
+            dependable(None),
+            host_c_compiler,
+            developer_options,
+            dependable(None),
+            host,
+            when=is_not_winnt_or_sunos(host_or_target),
+        )
+        host_or_target_str = "host"
 
-    def is_valid_linker(linker):
-        if target.kernel == "Darwin":
-            valid_linkers = ("ld64", "lld")
+    @deps
+    @checking(f"for {host_or_target_str} linker", lambda x: x.KIND)
+    @imports("os")
+    @imports("shutil")
+    def select_linker(linker, c_compiler, developer_options, toolchain_flags, target):
+
+        if linker:
+            linker = linker[0]
         else:
-            valid_linkers = ("bfd", "gold", "lld", "mold")
-        if linker in valid_linkers:
-            return True
-        if "lld" in valid_linkers and linker.startswith("lld-"):
-            return True
-        return False
+            linker = None
 
-    if linker and not is_valid_linker(linker):
-        # Check that we are trying to use a supported linker
-        die("Unsupported linker " + linker)
+        def is_valid_linker(linker):
+            if target.kernel == "Darwin":
+                valid_linkers = ("ld64", "lld")
+            else:
+                valid_linkers = ("bfd", "gold", "lld", "mold")
+            if linker in valid_linkers:
+                return True
+            if "lld" in valid_linkers and linker.startswith("lld-"):
+                return True
+            return False
 
-    # Check the kind of linker
-    version_check = ["-Wl,--version"]
-    cmd_base = c_compiler.wrapper + [c_compiler.compiler] + c_compiler.flags
+        if linker and not is_valid_linker(linker):
+            # Check that we are trying to use a supported linker
+            die("Unsupported linker " + linker)
 
-    def try_linker(linker):
-        # Generate the compiler flag
-        if linker == "ld64":
-            linker_flag = ["-fuse-ld=ld"]
-        elif linker:
-            linker_flag = ["-fuse-ld=" + linker]
-        else:
-            linker_flag = []
-        cmd = cmd_base + linker_flag + version_check
-        if toolchain_flags:
-            cmd += toolchain_flags
+        # Check the kind of linker
+        version_check = ["-Wl,--version"]
+        cmd_base = c_compiler.wrapper + [c_compiler.compiler] + c_compiler.flags
 
-        # ld64 doesn't have anything to print out a version. It does print out
-        # "ld64: For information on command line options please use 'man ld'."
-        # but that would require doing two attempts, one with --version, that
-        # would fail, and another with --help.
-        # Instead, abuse its LD_PRINT_OPTIONS feature to detect a message
-        # specific to it on stderr when it fails to process --version.
-        env = dict(os.environ)
-        env["LD_PRINT_OPTIONS"] = "1"
-        # Some locales might not print out the strings we are looking for, so
-        # ensure consistent output.
-        env["LC_ALL"] = "C"
-        retcode, stdout, stderr = get_cmd_output(*cmd, env=env)
-        if retcode == 1 and "Logging ld64 options" in stderr:
-            kind = "ld64"
+        def try_linker(linker):
+            # Generate the compiler flag
+            if linker == "ld64":
+                linker_flag = ["-fuse-ld=ld"]
+            elif linker:
+                linker_flag = ["-fuse-ld=" + linker]
+            else:
+                linker_flag = []
+            cmd = cmd_base + linker_flag + version_check
+            if toolchain_flags:
+                cmd += toolchain_flags
 
-        elif retcode != 0:
-            return None
+            # ld64 doesn't have anything to print out a version. It does print out
+            # "ld64: For information on command line options please use 'man ld'."
+            # but that would require doing two attempts, one with --version, that
+            # would fail, and another with --help.
+            # Instead, abuse its LD_PRINT_OPTIONS feature to detect a message
+            # specific to it on stderr when it fails to process --version.
+            env = dict(os.environ)
+            env["LD_PRINT_OPTIONS"] = "1"
+            # Some locales might not print out the strings we are looking for, so
+            # ensure consistent output.
+            env["LC_ALL"] = "C"
+            retcode, stdout, stderr = get_cmd_output(*cmd, env=env)
+            if retcode == 1 and "Logging ld64 options" in stderr:
+                kind = "ld64"
 
-        elif "mold" in stdout:
-            kind = "mold"
+            elif retcode != 0:
+                return None
 
-        elif "GNU ld" in stdout:
-            # We are using the normal linker
-            kind = "bfd"
+            elif "mold" in stdout:
+                kind = "mold"
 
-        elif "GNU gold" in stdout:
-            kind = "gold"
+            elif "GNU ld" in stdout:
+                # We are using the normal linker
+                kind = "bfd"
 
-        elif "LLD" in stdout:
-            kind = "lld"
+            elif "GNU gold" in stdout:
+                kind = "gold"
 
-        else:
-            kind = "unknown"
+            elif "LLD" in stdout:
+                kind = "lld"
 
-        if kind == "unknown" or is_valid_linker(kind):
-            return namespace(
-                KIND=kind,
-                LINKER_FLAG=linker_flag,
+            else:
+                kind = "unknown"
+
+            if kind == "unknown" or is_valid_linker(kind):
+                return namespace(
+                    KIND=kind,
+                    LINKER_FLAG=linker_flag,
+                )
+
+        result = try_linker(linker)
+        if result is None and linker:
+            die("Could not use {} as linker".format(linker))
+
+        if (
+            linker is None
+            and target.kernel == "Darwin"
+            and c_compiler.type == "clang"
+            and (
+                (developer_options and c_compiler.version >= "13.0")
+                or c_compiler.version >= "15.0"
             )
-
-    result = try_linker(linker)
-    if result is None and linker:
-        die("Could not use {} as linker".format(linker))
-
-    if (
-        linker is None
-        and developer_options
-        and target.kernel == "Darwin"
-        and c_compiler.type == "clang"
-        and c_compiler.version >= "13.0"
-    ):
-        result = try_linker("lld")
-    elif (
-        linker is None
-        and developer_options
-        and (result is None or result.KIND in ("bfd", "gold"))
-    ):
-        # try and use lld if available.
-        tried = try_linker("lld")
-        if (result is None or result.KIND != "gold") and (
-            tried is None or tried.KIND != "lld"
         ):
-            tried = try_linker("gold")
-            if tried is None or tried.KIND != "gold":
-                tried = None
-        if tried:
-            result = tried
+            result = try_linker("lld")
+        elif (
+            linker is None
+            and (
+                developer_options
+                or (host_or_target_str == "host" and c_compiler.type == "clang")
+            )
+            and (result is None or result.KIND in ("bfd", "gold"))
+        ):
+            # try and use lld if available.
+            tried = try_linker("lld")
+            if (result is None or result.KIND != "gold") and (
+                tried is None or tried.KIND != "lld"
+            ):
+                tried = try_linker("gold")
+                if tried is None or tried.KIND != "gold":
+                    tried = None
+            if tried:
+                result = tried
 
-    if result is None:
-        die("Failed to find an adequate linker")
+        if result is None:
+            die("Failed to find an adequate linker")
 
-    # If an explicit linker was given, error out if what we found is different.
-    if linker and not linker.startswith(result.KIND):
-        die("Could not use {} as linker".format(linker))
+        # If an explicit linker was given, error out if what we found is different.
+        if linker and not linker.startswith(result.KIND):
+            die("Could not use {} as linker".format(linker))
 
-    return result
+        return result
+
+    return select_linker
 
 
+select_linker = select_linker_tmpl(target)
 set_config("LINKER_KIND", select_linker.KIND)
 
 
-@depends_if(
-    select_linker,
-    target,
-    target_sysroot,
-    target_multiarch_dir,
-    android_platform,
-    c_compiler,
-)
-@imports("os")
-def linker_ldflags(
-    linker, target, sysroot, multiarch_dir, android_platform, c_compiler
-):
-    flags = list((linker and linker.LINKER_FLAG) or [])
-    # rpath-link is irrelevant to wasm, see for more info https://github.com/emscripten-core/emscripten/issues/11076.
-    if sysroot.path and multiarch_dir and target.os != "WASI":
-        for d in ("lib", "usr/lib"):
-            multiarch_lib_dir = os.path.join(sysroot.path, d, multiarch_dir)
-            if os.path.exists(multiarch_lib_dir):
-                # Non-Debian-patched binutils linkers (both BFD and gold) don't lookup
-                # in multi-arch directories.
-                flags.append("-Wl,-rpath-link,%s" % multiarch_lib_dir)
-                # GCC also needs -L.
-                if c_compiler.type == "gcc":
-                    flags.append("-L%s" % multiarch_lib_dir)
-        if c_compiler.type == "gcc" and sysroot.bootstrapped and sysroot.stdcxx_version:
-            flags.append(
-                "-L{}/usr/lib/gcc/{}/{}".format(
-                    sysroot.path, multiarch_dir, sysroot.stdcxx_version
+@template
+def linker_ldflags_tmpl(host_or_target):
+    if host_or_target is target:
+        deps = depends_if(
+            select_linker,
+            target,
+            target_sysroot,
+            target_multiarch_dir,
+            android_sysroot,
+            android_version,
+            c_compiler,
+            developer_options,
+        )
+    else:
+        deps = depends_if(
+            select_linker_tmpl(host),
+            host,
+            host_sysroot,
+            host_multiarch_dir,
+            dependable(None),
+            dependable(None),
+            host_c_compiler,
+            developer_options,
+        )
+
+    @deps
+    @imports("os")
+    def linker_ldflags(
+        linker,
+        target,
+        sysroot,
+        multiarch_dir,
+        android_sysroot,
+        android_version,
+        c_compiler,
+        developer_options,
+    ):
+        flags = list((linker and linker.LINKER_FLAG) or [])
+        # rpath-link is irrelevant to wasm, see for more info https://github.com/emscripten-core/emscripten/issues/11076.
+        if sysroot.path and multiarch_dir and target.os != "WASI":
+            for d in ("lib", "usr/lib"):
+                multiarch_lib_dir = os.path.join(sysroot.path, d, multiarch_dir)
+                if os.path.exists(multiarch_lib_dir):
+                    # Non-Debian-patched binutils linkers (both BFD and gold) don't lookup
+                    # in multi-arch directories.
+                    flags.append("-Wl,-rpath-link,%s" % multiarch_lib_dir)
+                    # GCC also needs -L.
+                    if c_compiler.type == "gcc":
+                        flags.append("-L%s" % multiarch_lib_dir)
+            if (
+                c_compiler.type == "gcc"
+                and sysroot.bootstrapped
+                and sysroot.stdcxx_version
+            ):
+                flags.append(
+                    "-L{}/usr/lib/gcc/{}/{}".format(
+                        sysroot.path, multiarch_dir, sysroot.stdcxx_version
+                    )
                 )
-            )
-    # mozjs: The NDK compiler / linker wrappers take care of properly setting these variables.
-    # See the mozjs note in android-ndk.configure.
-    # if android_platform:
-    #     flags.append("-L{}/usr/lib".format(android_platform))
-    #     flags.append("-Wl,--rpath-link={}/usr/lib".format(android_platform))
-    #     flags.append("--sysroot")
-    #     flags.append(android_platform)
-    return flags
+        if android_sysroot:
+            # BFD/gold linkers need a manual --rpath-link for indirect
+            # dependencies.
+            flags += [
+                "-Wl,--rpath-link={}/usr/lib/{}".format(
+                    android_sysroot, target.toolchain
+                ),
+                "-Wl,--rpath-link={}/usr/lib/{}/{}".format(
+                    android_sysroot, target.toolchain, android_version
+                ),
+            ]
+        if (
+            developer_options
+            and linker
+            and linker.KIND == "lld"
+            and target.kernel != "WINNT"
+        ):
+            flags.append("-Wl,-O0")
+        return flags
+
+    return linker_ldflags
 
 
+linker_ldflags = linker_ldflags_tmpl(target)
 add_old_configure_assignment("LINKER_LDFLAGS", linker_ldflags)
+
+add_old_configure_assignment("HOST_LINKER_LDFLAGS", linker_ldflags_tmpl(host))
 
 
 # There's a wrinkle with MinGW: linker configuration is not enabled, so
@@ -1720,18 +1959,6 @@ def gcc_use_gnu_ld(select_linker, target, c_compiler):
 set_config("GCC_USE_GNU_LD", gcc_use_gnu_ld)
 add_old_configure_assignment("GCC_USE_GNU_LD", gcc_use_gnu_ld)
 
-
-@depends(c_compiler)
-def msvs_version(info):
-    # clang-cl emulates the same version scheme as cl. And MSVS_VERSION needs to
-    # be set for GYP on Windows.
-    if info.type == "clang-cl":
-        return "2017"
-
-    return ""
-
-
-set_config("MSVS_VERSION", msvs_version)
 
 include("compile-checks.configure")
 include("arm.configure", when=depends(target.cpu)(lambda cpu: cpu == "arm"))
@@ -1839,8 +2066,11 @@ set_config("MOZ_DEBUG_FLAGS", debug_flags)
 add_old_configure_assignment("MOZ_DEBUG_FLAGS", debug_flags)
 
 
-@depends(c_compiler)
-def color_cflags(info):
+@depends(c_compiler, host)
+@imports(
+    _from="mach.logging", _import="enable_blessed", _as="_enable_ansi_escape_codes"
+)
+def color_cflags(info, host):
     # We could test compiling with flags. By why incur the overhead when
     # color support should always be present in a specific toolchain
     # version?
@@ -1854,7 +2084,10 @@ def color_cflags(info):
     if info.type == "gcc":
         return "-fdiagnostics-color"
     elif info.type in ["clang", "clang-cl"]:
-        return "-fcolor-diagnostics"
+        if host.os == "WINNT" and _enable_ansi_escape_codes():
+            return "-fcolor-diagnostics -fansi-escape-codes"
+        else:
+            return "-fcolor-diagnostics"
     else:
         return ""
 
@@ -1999,13 +2232,6 @@ set_config("PREPROCESS_OPTION", preprocess_option)
 
 # We only want to include windows.configure when we are compiling on
 # Windows, or for Windows.
-
-
-@depends(target, host)
-def is_windows(target, host):
-    return host.kernel == "WINNT" or target.kernel == "WINNT"
-
-
 include("windows.configure", when=is_windows)
 
 
@@ -2233,9 +2459,9 @@ def security_hardening_cflags(
             ldflags.append("-guard:cf,nolongjmp")
 
     # ----------------------------------------------------------
-    # If ASAN _is_ on, undefine FORTIFY_SOURCE just to be safe
+    # If ASAN _is_ on, disable FORTIFY_SOURCE just to be safe
     if asan:
-        flags.append("-U_FORTIFY_SOURCE")
+        flags.append("-D_FORTIFY_SOURCE=0")
 
     # fno-common -----------------------------------------
     # Do not merge variables for ASAN; can detect some subtle bugs
@@ -2465,7 +2691,6 @@ def gnu_as(assembler, c_compiler, toolchain_flags):
 
 
 set_config("GNU_AS", gnu_as)
-add_old_configure_assignment("GNU_AS", gnu_as)
 
 
 @depends(as_info, target)
@@ -2819,37 +3044,48 @@ def rc_names(c_compiler, toolchain_prefix):
 check_prog("RC", rc_names, paths=clang_search_path, when=target_is_windows)
 
 
-@depends(toolchain_prefix, c_compiler)
-def ar_config(toolchain_prefix, c_compiler):
-    if c_compiler.type == "clang-cl":
+@template
+def ar_config(c_compiler, toolchain_prefix=None):
+    if not toolchain_prefix:
+        toolchain_prefix = dependable(None)
+
+    @depends(toolchain_prefix, c_compiler)
+    def ar_config(toolchain_prefix, c_compiler):
+        if c_compiler.type == "clang-cl":
+            return namespace(
+                names=("llvm-lib",),
+                flags=("-llvmlibthin", "-out:$@"),
+            )
+
+        names = tuple("%s%s" % (p, "ar") for p in (toolchain_prefix or ()) + ("",))
+        if c_compiler.type == "clang":
+            # Get the llvm-ar path as per the output from clang --print-prog-name=llvm-ar
+            # so that we directly get the one under the clang directory, rather than one
+            # that might be in /usr/bin and that might point to one from a different version
+            # of clang.
+            out = check_cmd_output(
+                c_compiler.compiler, "--print-prog-name=llvm-ar", onerror=lambda: None
+            )
+            llvm_ar = out.rstrip() if out else "llvm-ar"
+            names = (llvm_ar,) + names
+
         return namespace(
-            names=("llvm-lib",),
-            flags=("-llvmlibthin", "-out:$@"),
+            names=names,
+            flags=("crs", "$@"),
         )
 
-    names = tuple("%s%s" % (p, "ar") for p in (toolchain_prefix or ()) + ("",))
-    if c_compiler.type == "clang":
-        # Get the llvm-ar path as per the output from clang --print-prog-name=llvm-ar
-        # so that we directly get the one under the clang directory, rather than one
-        # that might be in /usr/bin and that might point to one from a different version
-        # of clang.
-        out = check_cmd_output(
-            c_compiler.compiler, "--print-prog-name=llvm-ar", onerror=lambda: None
-        )
-        llvm_ar = out.rstrip() if out else "llvm-ar"
-        names = (llvm_ar,) + names
-
-    return namespace(
-        names=names,
-        flags=("crs", "$@"),
-    )
+    return ar_config
 
 
-ar = check_prog("AR", ar_config.names, paths=clang_search_path)
+target_ar_config = ar_config(c_compiler, toolchain_prefix)
 
-add_old_configure_assignment("AR", ar)
+check_prog("AR", target_ar_config.names, paths=clang_search_path)
 
-set_config("AR_FLAGS", ar_config.flags)
+set_config("AR_FLAGS", target_ar_config.flags)
+
+host_ar_config = ar_config(host_c_compiler)
+
+check_prog("HOST_AR", host_ar_config.names, paths=clang_search_path)
 
 
 @depends(toolchain_prefix, c_compiler)
@@ -2869,7 +3105,7 @@ def nm_names(toolchain_prefix, c_compiler):
     return names
 
 
-check_prog("NM", nm_names, paths=clang_search_path, when=target_is_linux)
+check_prog("NM", nm_names, paths=clang_search_path, when=target_has_linux_kernel)
 
 
 option("--enable-cpp-rtti", help="Enable C++ RTTI")
@@ -2953,3 +3189,6 @@ set_config("MMX_FLAGS", ["-mmmx"])
 set_config("SSE_FLAGS", ["-msse"])
 set_config("SSE2_FLAGS", ["-msse2"])
 set_config("SSSE3_FLAGS", ["-mssse3"])
+set_config("SSE4_2_FLAGS", ["-msse4.2"])
+set_config("FMA_FLAGS", ["-mfma"])
+set_config("AVX2_FLAGS", ["-mavx2"])

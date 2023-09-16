@@ -36,6 +36,7 @@
 #include "vm/WrapperObject.h"
 
 #include "debugger/DebugAPI-inl.h"
+#include "gc/StableCellHasher-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSContext-inl.h"
 
@@ -273,24 +274,41 @@ class MutableWrappedPtrOperations<SavedFrame::Lookup, Wrapper>
 };
 
 /* static */
-bool SavedFrame::HashPolicy::hasHash(const Lookup& l) {
-  return SavedFramePtrHasher::hasHash(l.parent);
+bool SavedFrame::HashPolicy::maybeGetHash(const Lookup& l,
+                                          HashNumber* hashOut) {
+  HashNumber parentHash;
+  if (!SavedFramePtrHasher::maybeGetHash(l.parent, &parentHash)) {
+    return false;
+  }
+  *hashOut = calculateHash(l, parentHash);
+  return true;
 }
 
 /* static */
-bool SavedFrame::HashPolicy::ensureHash(const Lookup& l) {
-  return SavedFramePtrHasher::ensureHash(l.parent);
+bool SavedFrame::HashPolicy::ensureHash(const Lookup& l, HashNumber* hashOut) {
+  HashNumber parentHash;
+  if (!SavedFramePtrHasher::ensureHash(l.parent, &parentHash)) {
+    return false;
+  }
+  *hashOut = calculateHash(l, parentHash);
+  return true;
 }
 
 /* static */
 HashNumber SavedFrame::HashPolicy::hash(const Lookup& lookup) {
+  return calculateHash(lookup, SavedFramePtrHasher::hash(lookup.parent));
+}
+
+/* static */
+HashNumber SavedFrame::HashPolicy::calculateHash(const Lookup& lookup,
+                                                 HashNumber parentHash) {
   JS::AutoCheckCannotGC nogc;
   // Assume that we can take line mod 2^32 without losing anything of
   // interest.  If that assumption changes, we'll just need to start with 0
   // and add another overload of AddToHash with more arguments.
   return AddToHash(lookup.line, lookup.column, lookup.source,
                    lookup.functionDisplayName, lookup.asyncCause,
-                   lookup.mutedErrors, SavedFramePtrHasher::hash(lookup.parent),
+                   lookup.mutedErrors, parentHash,
                    JSPrincipalsPtrHasher::hash(lookup.principals));
 }
 
@@ -1442,10 +1460,17 @@ bool SavedStacks::insertFrames(JSContext* cx, MutableHandle<SavedFrame*> frame,
     }
 
     if (framePtr) {
-      // See the comment in Stack.h for why RematerializedFrames
-      // are a special case here.
-      MOZ_ASSERT_IF(seenCached, framePtr->hasCachedSavedFrame() ||
-                                    framePtr->isRematerializedFrame());
+      // In general, when we reach a frame with its hasCachedSavedFrame bit set,
+      // all its parents will have the bit set as well. See the
+      // LiveSavedFrameCache comment in Activation.h for more details. Note that
+      // this invariant does not hold when we are finding the first subsumed
+      // frame. Captures using FirstSubsumedFrame ignore async parents and walk
+      // the real stack. Because we're using different rules for walking the
+      // stack, we can reach frames that weren't cached in a previous AllFrames
+      // traversal.
+      MOZ_ASSERT_IF(
+          seenCached && !capture.is<JS::FirstSubsumedFrame>(),
+          framePtr->hasCachedSavedFrame() || framePtr->isRematerializedFrame());
       seenCached |= framePtr->hasCachedSavedFrame();
 
       if (capture.is<JS::AllFrames>() && framePtr->isInterpreterFrame() &&
@@ -1810,7 +1835,7 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
       locationp.setSource(AtomizeChars(cx, displayURL, js_strlen(displayURL)));
     } else {
       const char* filename = iter.filename() ? iter.filename() : "";
-      locationp.setSource(Atomize(cx, filename, strlen(filename)));
+      locationp.setSource(AtomizeUTF8Chars(cx, filename, strlen(filename)));
     }
     if (!locationp.source()) {
       return false;
@@ -1826,8 +1851,7 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
   RootedScript script(cx, iter.script());
   jsbytecode* pc = iter.pc();
 
-  PCKey key(script, pc);
-  PCLocationMap::AddPtr p = pcLocationMap.lookupForAdd(key);
+  PCLocationMap::AddPtr p = pcLocationMap.lookupForAdd(PCKey(script, pc));
 
   if (!p) {
     Rooted<JSAtom*> source(cx);
@@ -1835,7 +1859,7 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
       source = AtomizeChars(cx, displayURL, js_strlen(displayURL));
     } else {
       const char* filename = script->filename() ? script->filename() : "";
-      source = Atomize(cx, filename, strlen(filename));
+      source = AtomizeUTF8Chars(cx, filename, strlen(filename));
     }
     if (!source) {
       return false;
@@ -1846,6 +1870,7 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
     uint32_t line = PCToLineNumber(script, pc, &column);
 
     // Make the column 1-based. See comment above.
+    PCKey key(script, pc);
     LocationValue value(source, sourceId, line, column + 1);
     if (!pcLocationMap.add(p, key, value)) {
       ReportOutOfMemory(cx);

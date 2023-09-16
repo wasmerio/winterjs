@@ -181,13 +181,14 @@ set_config("DEVELOPER_OPTIONS", developer_options)
 
 option(
     "--disable-unified-build",
-    help="Enable building modules that are not marked with `REQUIRES_UNIFIED_BUILD` in non unified context",
+    help="Enable building modules in non unified context",
 )
 
 set_config("ENABLE_UNIFIED_BUILD", True, when="--disable-unified-build")
 
 
 include("build/moz.configure/bootstrap.configure")
+
 
 # The execution model of the configure sandbox doesn't allow for
 # check_prog to use bootstrap_search_path directly because check_prog
@@ -205,10 +206,6 @@ check_prog("WGET", ("wget",), allow_missing=True)
 include("build/moz.configure/toolchain.configure", when="--enable-compile-environment")
 
 include("build/moz.configure/pkg.configure")
-# Make this assignment here rather than in pkg.configure to avoid
-# requiring this file in unit tests.
-add_old_configure_assignment("PKG_CONFIG", pkg_config)
-
 include("build/moz.configure/memory.configure", when="--enable-compile-environment")
 include("build/moz.configure/headers.configure", when="--enable-compile-environment")
 include("build/moz.configure/warnings.configure", when="--enable-compile-environment")
@@ -255,17 +252,17 @@ def so_version(value):
 @template
 def library_name_info_template(host_or_target):
     assert host_or_target in {host, target}
-    compiler = {
-        host: host_c_compiler,
-        target: c_compiler,
+    windows_abi = {
+        host: host_windows_abi,
+        target: target_windows_abi,
     }[host_or_target]
 
-    @depends(host_or_target, compiler, so_version)
-    def library_name_info_impl(host_or_target, compiler, so_version):
+    @depends(host_or_target, host_or_target.abi | windows_abi, so_version)
+    def library_name_info_impl(host_or_target, windows_abi, so_version):
         if host_or_target.kernel == "WINNT":
             # There aren't artifacts for mingw builds, so it's OK that the
             # results are inaccurate in that case.
-            if compiler and compiler.type != "clang-cl":
+            if windows_abi and windows_abi != "msvc":
                 return namespace(
                     dll=namespace(prefix="", suffix=".dll"),
                     lib=namespace(prefix="lib", suffix="a"),
@@ -360,19 +357,16 @@ imply_option("--build-backends", build_backend)
     target,
     "--enable-artifact-builds",
     "--disable-compile-environment",
-    "--enable-build-backend",
     "--enable-project",
     "--enable-application",
     "--help",
 )
 @imports("sys")
-@imports(_from="mozbuild.backend.clangd", _import="find_vscode_cmd")
 def build_backend_defaults(
     host,
     target,
     artifact_builds,
     compile_environment,
-    requested_backends,
     project,
     application,
     _,
@@ -382,11 +376,7 @@ def build_backend_defaults(
     elif project:
         project = project[0]
 
-    if "Tup" in requested_backends:
-        # As a special case, if Tup was requested, do not combine it with any
-        # Make based backend by default.
-        all_backends = []
-    elif artifact_builds:
+    if artifact_builds:
         all_backends = ["FasterMake+RecursiveMake"]
     else:
         all_backends = ["RecursiveMake", "FasterMake"]
@@ -397,11 +387,7 @@ def build_backend_defaults(
         and project not in ("mobile/android", "memory", "tools/update-programs")
     ):
         all_backends.append("VisualStudio")
-    if (
-        compile_environment
-        and find_vscode_cmd()
-        and project not in ("mobile/android", "memory", "tools/update-programs")
-    ):
+    if compile_environment and project not in ("memory", "tools/update-programs"):
         all_backends.append("Clangd")
     return tuple(all_backends) or None
 
@@ -421,27 +407,6 @@ def build_backends(backends):
 
 
 set_config("BUILD_BACKENDS", build_backends)
-
-
-@depends(build_environment, build_backends)
-@imports("glob")
-def check_objdir_backend_reuse(build_env, backends):
-    # "Make based" might be RecursiveMake or a hybrid backend, so "Make" is
-    # intentionally vague for use with the substring match below.
-    incompatible_backends = (("Tup", "Make"), ("Make", "Tup"))
-    for backend_file in glob.iglob(
-        os.path.join(build_env.topobjdir, "backend.*Backend")
-    ):
-        for prev, curr in incompatible_backends:
-            if prev in backend_file and any(curr in b for b in backends):
-                die(
-                    "The active objdir, %s, was previously "
-                    "used to build with a %s based backend. "
-                    "Change objdirs (by setting MOZ_OBJDIR in "
-                    "your mozconfig) or clobber to continue.\n",
-                    build_env.topobjdir,
-                    prev,
-                )
 
 
 # Determine whether to build the gtest xul. This happens in automation
@@ -516,7 +481,7 @@ add_old_configure_assignment("CLANG_PLUGIN", clang_plugin_path)
 
 # Awk detection
 # ==============================================================
-awk = check_prog("AWK", ("gawk", "mawk", "nawk", "awk"))
+awk = check_prog("AWK", ("gawk", "mawk", "nawk", "awk"), paths=prefer_mozillabuild_path)
 
 # Until the AWK variable is not necessary in old-configure
 
@@ -527,59 +492,6 @@ def awk_for_old_configure(value):
 
 
 add_old_configure_assignment("AWK", awk_for_old_configure)
-
-
-# Perl detection
-# ==============================================================
-perl = check_prog("PERL", ("perl5", "perl"))
-
-# Until the PERL variable is not necessary in old-configure
-
-
-@depends(perl)
-def perl_for_old_configure(value):
-    return value
-
-
-add_old_configure_assignment("PERL", perl_for_old_configure)
-
-
-@template
-def perl_version_check(min_version):
-    @depends(perl)
-    @checking("for minimum required perl version >= %s" % min_version)
-    def get_perl_version(perl):
-        return Version(
-            check_cmd_output(
-                perl,
-                "-e",
-                "print $]",
-                onerror=lambda: die("Failed to get perl version."),
-            )
-        )
-
-    @depends(get_perl_version)
-    def check_perl_version(version):
-        if version < min_version:
-            die("Perl %s or higher is required.", min_version)
-
-    @depends(perl)
-    @checking("for full perl installation")
-    @imports("subprocess")
-    def has_full_perl_installation(perl):
-        ret = subprocess.call([perl, "-e", "use Config; exit(!-d $Config{archlib})"])
-        return ret == 0
-
-    @depends(has_full_perl_installation)
-    def require_full_perl_installation(has_full_perl_installation):
-        if not has_full_perl_installation:
-            die(
-                "Cannot find Config.pm or $Config{archlib}. "
-                "A full perl installation is required."
-            )
-
-
-perl_version_check("5.006")
 
 
 # GNU make detection
@@ -673,7 +585,6 @@ check_prog("XARGS", ("xargs",))
 def extra_programs(target):
     if target.kernel == "Darwin":
         return namespace(
-            DSYMUTIL=("dsymutil", "llvm-dsymutil"),
             MKFSHFS=("newfs_hfs", "mkfs.hfsplus"),
             HFS_TOOL=("hfsplus",),
         )
@@ -681,7 +592,6 @@ def extra_programs(target):
         return namespace(RPMBUILD=("rpmbuild",))
 
 
-check_prog("DSYMUTIL", extra_programs.DSYMUTIL, allow_missing=True)
 check_prog("MKFSHFS", extra_programs.MKFSHFS, allow_missing=True)
 check_prog("HFS_TOOL", extra_programs.HFS_TOOL, allow_missing=True)
 check_prog("RPMBUILD", extra_programs.RPMBUILD, allow_missing=True)
@@ -778,6 +688,41 @@ def llvm_tool(name):
     return llvm_tool
 
 
+check_prog(
+    "DSYMUTIL",
+    llvm_tool("dsymutil"),
+    when=compile_environment & target_is_darwin,
+    paths=clang_search_path,
+)
+
+
+@template
+def plain_llvm_or_prefixed(name):
+    @depends(llvm_tool(f"llvm-{name}"), toolchain_prefix)
+    def plain_llvm_or_prefixed(llvm_tool, toolchain_prefix):
+        commands = [llvm_tool[0], name]
+        for prefix in toolchain_prefix or ():
+            commands.insert(1, f"{prefix}{name}")
+        return tuple(commands)
+
+    return plain_llvm_or_prefixed
+
+
+check_prog(
+    "OTOOL",
+    plain_llvm_or_prefixed("otool"),
+    when=compile_environment & target_is_darwin,
+    paths=clang_search_path,
+)
+
+check_prog(
+    "INSTALL_NAME_TOOL",
+    plain_llvm_or_prefixed("install-name-tool"),
+    when=compile_environment & target_is_darwin & js_standalone,
+    paths=clang_search_path,
+)
+
+
 llvm_objdump = check_prog(
     "LLVM_OBJDUMP",
     llvm_tool("llvm-objdump"),
@@ -787,14 +732,6 @@ llvm_objdump = check_prog(
 )
 
 add_old_configure_assignment("LLVM_OBJDUMP", llvm_objdump)
-
-
-@depends(llvm_tool("llvm-readelf"), toolchain_prefix)
-def readelf(llvm_readelf, toolchain_prefix):
-    commands = [llvm_readelf[0], "readelf"]
-    for prefix in toolchain_prefix or ():
-        commands.insert(1, "%sreadelf" % prefix)
-    return tuple(commands)
 
 
 def validate_readelf(path):
@@ -817,19 +754,11 @@ def readelf_when(compile_env, target, host):
 
 check_prog(
     "READELF",
-    readelf,
+    plain_llvm_or_prefixed("readelf"),
     when=readelf_when,
     paths=clang_search_path,
     validate=validate_readelf,
 )
-
-
-@depends(llvm_tool("llvm-objcopy"), toolchain_prefix)
-def objcopy(llvm_objcopy, toolchain_prefix):
-    commands = [llvm_objcopy[0], "objcopy"]
-    for prefix in toolchain_prefix or ():
-        commands.insert(1, "%sreadelf" % prefix)
-    return tuple(commands)
 
 
 def validate_objcopy(path):
@@ -844,7 +773,7 @@ def validate_objcopy(path):
 
 check_prog(
     "OBJCOPY",
-    objcopy,
+    plain_llvm_or_prefixed("objcopy"),
     when=readelf_when,
     paths=clang_search_path,
     validate=validate_objcopy,
@@ -938,19 +867,6 @@ def strip_flags(flags, profiling, target):
 set_config("STRIP_FLAGS", strip_flags)
 
 
-@depends(llvm_tool("llvm-strip"), toolchain_prefix, target)
-def strip(llvm_strip, toolchain_prefix, target):
-    commands = ["strip"]
-    for prefix in toolchain_prefix or ():
-        commands.insert(0, "%sstrip" % prefix)
-    # llvm-strip causes some problems on macos targets.
-    if target.kernel == "Darwin":
-        commands.append(llvm_strip[0])
-    else:
-        commands.insert(0, llvm_strip[0])
-    return tuple(commands)
-
-
 def validate_strip(path):
     if "llvm-strip" not in path:
         return True
@@ -966,7 +882,7 @@ def strip_when(compile_env, target, host):
 
 check_prog(
     "STRIP",
-    strip,
+    plain_llvm_or_prefixed("strip"),
     when=strip_when,
     paths=clang_search_path,
     validate=validate_strip,
@@ -975,7 +891,11 @@ check_prog(
 
 @depends(js_standalone, target)
 def system_zlib_default(js_standalone, target):
-    return js_standalone and target.kernel not in ("WINNT", "Darwin")
+    return (
+        js_standalone
+        and target.kernel not in ("WINNT", "Darwin")
+        and target.os != "Android"
+    )
 
 
 option(
@@ -1017,6 +937,16 @@ include("build/moz.configure/old.configure")
 
 # JS Subconfigure.
 include("js/sub.configure", when=compile_environment & toolkit)
+
+
+@depends(build_environment, configure_cache)
+@imports(_import="json")
+@imports(_from="pathlib", _import="Path")
+def save_cache(build_environment, configure_cache):
+    cache_file = Path(build_environment.topobjdir) / "configure.cache"
+
+    with cache_file.open(mode="w") as fd:
+        json.dump(configure_cache, fd, indent=4)
 
 
 @depends(build_environment, build_project)

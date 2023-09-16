@@ -2,20 +2,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
+import os
+import sys
+import time
 
 import gyp
 import gyp.msvs_emulation
-import six
-import sys
-import os
-import time
-
 import mozpack.path as mozpath
+import six
 from mozpack.files import FileFinder
-from .sandbox import alphabetical_sorted
-from .context import ObjDirPath, SourcePath, TemplateContext, VARIABLES
+
+from mozbuild import shellutil
 from mozbuild.util import expand_variables
+
+from .context import VARIABLES, ObjDirPath, SourcePath, TemplateContext
+from .sandbox import alphabetical_sorted
 
 # Define this module as gyp.generator.mozbuild so that gyp can use it
 # as a generator under the name "mozbuild".
@@ -443,6 +444,12 @@ class GypProcessor(object):
             "build_files": [path],
             "root_targets": None,
         }
+        # The NSS gyp configuration uses CC and CFLAGS to determine the
+        # floating-point ABI on arm.
+        os.environ.update(
+            CC=config.substs["CC"],
+            CFLAGS=shellutil.quote(*config.substs["CC_BASE_FLAGS"]),
+        )
 
         if gyp_dir_attrs.no_chromium:
             includes = []
@@ -472,9 +479,9 @@ class GypProcessor(object):
             # We report our execution time as the time spent blocked in a call
             # to `result`, which is the only case a gyp processor will
             # contribute significantly to total wall time.
-            t0 = time.time()
+            t0 = time.monotonic()
             flat_list, targets, data = self._gyp_loader_future.result()
-            self.execution_time += time.time() - t0
+            self.execution_time += time.monotonic() - t0
             results = []
             for res in process_gyp_result(
                 (flat_list, targets, data),

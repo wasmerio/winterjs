@@ -31,7 +31,7 @@
 #include "js/GCHashTable.h"    // GCHashMap, GCHashSet
 #include "js/GCVector.h"       // GCVector
 #include "js/PropertySpec.h"   // JSPropertySpec, JSFunctionSpec
-#include "js/RootingAPI.h"     // MovableCellHasher
+#include "js/RootingAPI.h"     // StableCellHasher
 #include "js/SweepingAPI.h"    // JS::WeakCache
 #include "js/TypeDecls.h"  // HandleValue, HandleObject, MutableHandleObject, MutableHandleFunction
 #include "js/Vector.h"  // JS::Vector
@@ -42,7 +42,6 @@
 #include "wasm/WasmConstants.h"
 #include "wasm/WasmException.h"
 #include "wasm/WasmExprType.h"
-#include "wasm/WasmInstanceData.h"
 #include "wasm/WasmMemory.h"
 #include "wasm/WasmModuleTypes.h"
 #include "wasm/WasmTypeDecls.h"
@@ -325,13 +324,12 @@ class WasmInstanceObject : public NativeObject {
   static bool construct(JSContext*, unsigned, Value*);
 
   static WasmInstanceObject* create(
-      JSContext* cx, RefPtr<const wasm::Code> code,
+      JSContext* cx, const RefPtr<const wasm::Code>& code,
       const wasm::DataSegmentVector& dataSegments,
-      const wasm::ElemSegmentVector& elemSegments, uint32_t globalDataLength,
+      const wasm::ElemSegmentVector& elemSegments, uint32_t instanceDataLength,
       Handle<WasmMemoryObject*> memory,
       Vector<RefPtr<wasm::Table>, 0, SystemAllocPolicy>&& tables,
-      const JSFunctionVector& funcImports,
-      const wasm::GlobalDescVector& globals,
+      const JSObjectVector& funcImports, const wasm::GlobalDescVector& globals,
       const wasm::ValVector& globalImportValues,
       const WasmGlobalObjectVector& globalObjs,
       const WasmTagObjectVector& tagObjs, HandleObject proto,
@@ -375,11 +373,13 @@ class WasmMemoryObject : public NativeObject {
   static bool type(JSContext* cx, unsigned argc, Value* vp);
   static bool growImpl(JSContext* cx, const CallArgs& args);
   static bool grow(JSContext* cx, unsigned argc, Value* vp);
+  static bool discardImpl(JSContext* cx, const CallArgs& args);
+  static bool discard(JSContext* cx, unsigned argc, Value* vp);
   static uint64_t growShared(Handle<WasmMemoryObject*> memory, uint64_t delta);
 
   using InstanceSet = JS::WeakCache<GCHashSet<
       WeakHeapPtr<WasmInstanceObject*>,
-      MovableCellHasher<WeakHeapPtr<WasmInstanceObject*>>, CellAllocPolicy>>;
+      StableCellHasher<WeakHeapPtr<WasmInstanceObject*>>, CellAllocPolicy>>;
   bool hasObservers() const;
   InstanceSet& observers() const;
   InstanceSet* getOrCreateObservers(JSContext* cx);
@@ -390,6 +390,7 @@ class WasmMemoryObject : public NativeObject {
   static const JSClass& protoClass_;
   static const JSPropertySpec properties[];
   static const JSFunctionSpec methods[];
+  static const JSFunctionSpec memoryControlMethods[];
   static const JSFunctionSpec static_methods[];
   static bool construct(JSContext*, unsigned, Value*);
 
@@ -432,6 +433,8 @@ class WasmMemoryObject : public NativeObject {
   bool addMovingGrowObserver(JSContext* cx, WasmInstanceObject* instance);
   static uint64_t grow(Handle<WasmMemoryObject*> memory, uint64_t delta,
                        JSContext* cx);
+  static void discard(Handle<WasmMemoryObject*> memory, uint64_t byteOffset,
+                      uint64_t len, JSContext* cx);
 };
 
 // The class of WebAssembly.Table. A WasmTableObject holds a refcount on a
@@ -478,9 +481,6 @@ class WasmTableObject : public NativeObject {
   // the range is within bounds. Returns false if the coercion failed.
   bool fillRange(JSContext* cx, uint32_t index, uint32_t length,
                  HandleValue value) const;
-#ifdef DEBUG
-  void assertRangeNull(uint32_t index, uint32_t length) const;
-#endif
 };
 
 // The class of WebAssembly.Tag. This class is used to track exception tag

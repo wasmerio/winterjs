@@ -29,10 +29,6 @@ const FuncType& BaseCompiler::funcType() const {
   return *moduleEnv_.funcs[func_.index].type;
 }
 
-const TypeIdDesc& BaseCompiler::funcTypeId() const {
-  return *moduleEnv_.funcs[func_.index].typeId;
-}
-
 bool BaseCompiler::usesMemory() const { return moduleEnv_.usesMemory(); }
 
 bool BaseCompiler::usesSharedMemory() const {
@@ -42,13 +38,6 @@ bool BaseCompiler::usesSharedMemory() const {
 const Local& BaseCompiler::localFromSlot(uint32_t slot, MIRType type) {
   MOZ_ASSERT(localInfo_[slot].type == type);
   return localInfo_[slot];
-}
-
-uint32_t BaseCompiler::readCallSiteLineOrBytecode() {
-  if (!func_.callSiteLineNums.empty()) {
-    return func_.callSiteLineNums[lastReadCallSite_++];
-  }
-  return iter_.lastOpcodeOffset();
 }
 
 BytecodeOffset BaseCompiler::bytecodeOffset() const {

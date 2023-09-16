@@ -2,23 +2,25 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import logging
 import os
-import six
 import sys
 import time
 import traceback
+from collections import OrderedDict, defaultdict
 
-from collections import defaultdict, OrderedDict
-from mach.mixin.logging import LoggingMixin
-from mozbuild.util import memoize, OrderedDefaultDict
-
-import mozpack.path as mozpath
 import mozinfo
-import pytoml
+import mozpack.path as mozpath
+import six
+import toml
+from mach.mixin.logging import LoggingMixin
+from mozpack.chrome.manifest import Manifest
 
+from mozbuild.base import ExecutionSummary
+from mozbuild.util import OrderedDefaultDict, memoize
+
+from ..testing import REFTEST_FLAVORS, TEST_MANIFESTS, SupportFilesConverter
+from .context import Context, ObjDirPath, Path, SourcePath, SubContext
 from .data import (
     BaseRustProgram,
     ChromeManifestEntry,
@@ -27,14 +29,15 @@ from .data import (
     Defines,
     DirectoryTraversal,
     Exports,
+    ExternalSharedLibrary,
+    ExternalStaticLibrary,
     FinalTargetFiles,
     FinalTargetPreprocessedFiles,
     GeneratedFile,
-    ExternalStaticLibrary,
-    ExternalSharedLibrary,
     HostDefines,
     HostLibrary,
     HostProgram,
+    HostRustLibrary,
     HostRustProgram,
     HostSharedLibrary,
     HostSimpleProgram,
@@ -50,10 +53,8 @@ from .data import (
     ObjdirFiles,
     ObjdirPreprocessedFiles,
     PerSourceFlag,
-    WebIDLCollection,
     Program,
     RustLibrary,
-    HostRustLibrary,
     RustProgram,
     RustTests,
     SandboxedWasmLibrary,
@@ -67,18 +68,11 @@ from .data import (
     VariablePassthru,
     WasmDefines,
     WasmSources,
+    WebIDLCollection,
     XPCOMComponentManifests,
     XPIDLModule,
 )
-from mozpack.chrome.manifest import Manifest
-
 from .reader import SandboxValidationError
-
-from ..testing import TEST_MANIFESTS, REFTEST_FLAVORS, SupportFilesConverter
-
-from .context import Context, SourcePath, ObjDirPath, Path, SubContext
-
-from mozbuild.base import ExecutionSummary
 
 
 class TreeMetadataEmitter(LoggingMixin):
@@ -157,10 +151,10 @@ class TreeMetadataEmitter(LoggingMixin):
                 # Keep all contexts around, we will need them later.
                 contexts[os.path.normcase(out.objdir)] = out
 
-                start = time.time()
+                start = time.monotonic()
                 # We need to expand the generator for the timings to work.
                 objs = list(emitfn(out))
-                self._emitter_time += time.time() - start
+                self._emitter_time += time.monotonic() - start
 
                 for o in emit_objs(objs):
                     yield o
@@ -170,9 +164,9 @@ class TreeMetadataEmitter(LoggingMixin):
 
         # Don't emit Linkable objects when COMPILE_ENVIRONMENT is not set
         if self.config.substs.get("COMPILE_ENVIRONMENT"):
-            start = time.time()
+            start = time.monotonic()
             objs = list(self._emit_libs_derived(contexts))
-            self._emitter_time += time.time() - start
+            self._emitter_time += time.monotonic() - start
 
             for o in emit_objs(objs):
                 yield o
@@ -523,7 +517,7 @@ class TreeMetadataEmitter(LoggingMixin):
                 "No Cargo.toml file found in %s" % cargo_file, context
             )
         with open(cargo_file, "r") as f:
-            return pytoml.load(f), cargo_file
+            return toml.load(f), cargo_file
 
     def _verify_deps(
         self, context, crate_dir, crate_name, dependencies, description="Dependency"

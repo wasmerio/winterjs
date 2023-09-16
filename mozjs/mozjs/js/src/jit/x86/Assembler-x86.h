@@ -153,15 +153,20 @@ static constexpr Register PreBarrierReg = edx;
 // Not enough registers for a PC register (R0-R2 use 2 registers each).
 static constexpr Register InterpreterPCReg = InvalidReg;
 
-// Registerd used in RegExpMatcher instruction (do not use JSReturnOperand).
+// Registers used by RegExpMatcher and RegExpExecMatch stubs (do not use
+// JSReturnOperand).
 static constexpr Register RegExpMatcherRegExpReg = CallTempReg0;
 static constexpr Register RegExpMatcherStringReg = CallTempReg1;
 static constexpr Register RegExpMatcherLastIndexReg = CallTempReg2;
 
-// Registerd used in RegExpTester instruction (do not use ReturnReg).
-static constexpr Register RegExpTesterRegExpReg = CallTempReg0;
-static constexpr Register RegExpTesterStringReg = CallTempReg2;
-static constexpr Register RegExpTesterLastIndexReg = CallTempReg3;
+// Registers used by RegExpExecTest stub (do not use ReturnReg).
+static constexpr Register RegExpExecTestRegExpReg = CallTempReg0;
+static constexpr Register RegExpExecTestStringReg = CallTempReg2;
+
+// Registers used by RegExpSearcher stub (do not use ReturnReg).
+static constexpr Register RegExpSearcherRegExpReg = CallTempReg0;
+static constexpr Register RegExpSearcherStringReg = CallTempReg2;
+static constexpr Register RegExpSearcherLastIndexReg = CallTempReg3;
 
 // GCC stack is aligned on 16 bytes. Ion does not maintain this for internal
 // calls. wasm code does.
@@ -202,7 +207,6 @@ static constexpr uint32_t WasmTrapInstructionLength = 2;
 // the tail offset 3, but I have opted for 4 as that results in a better-aligned
 // branch target.)
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
-static constexpr uint32_t WasmCheckedTailEntryOffset = 4u;
 
 struct ImmTag : public Imm32 {
   explicit ImmTag(JSValueTag mask) : Imm32(int32_t(mask)) {}

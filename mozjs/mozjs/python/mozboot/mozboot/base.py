@@ -2,25 +2,23 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import os
 import re
 import subprocess
 import sys
-
 from pathlib import Path
 
+from mach.util import to_optional_path, win_to_msys_path
+from mozbuild.bootstrap import bootstrap_all_toolchains_for, bootstrap_toolchain
+from mozfile import which
 from packaging.version import Version
+
 from mozboot import rust
 from mozboot.util import (
-    get_mach_virtualenv_binary,
     MINIMUM_RUST_VERSION,
+    get_mach_virtualenv_binary,
     http_download_and_save,
 )
-from mozfile import which
-from mozbuild.bootstrap import bootstrap_toolchain
-from mach.util import to_optional_path, win_to_msys_path
 
 NO_MERCURIAL = """
 Could not find Mercurial (hg) in the current shell's path. Try starting a new
@@ -143,7 +141,7 @@ ac_add_options --enable-artifact-builds
 
 JS_MOZCONFIG_TEMPLATE = """\
 # Build only the SpiderMonkey JS test shell
-ac_add_options --enable-application=js
+ac_add_options --enable-project=js
 """
 
 # Upgrade Mercurial older than this.
@@ -335,61 +333,11 @@ class BaseBootstrapper(object):
             % __name__
         )
 
-    def ensure_clang_static_analysis_package(self):
-        """
-        Install the clang static analysis package
-        """
-        raise NotImplementedError(
-            "%s does not yet implement ensure_clang_static_analysis_package()"
-            % __name__
-        )
-
-    def ensure_stylo_packages(self):
-        """
-        Install any necessary packages needed for Stylo development.
-        """
-        raise NotImplementedError(
-            "%s does not yet implement ensure_stylo_packages()" % __name__
-        )
-
-    def ensure_nasm_packages(self):
-        """
-        Install nasm.
-        """
-        raise NotImplementedError(
-            "%s does not yet implement ensure_nasm_packages()" % __name__
-        )
-
     def ensure_sccache_packages(self):
         """
         Install sccache.
         """
         pass
-
-    def ensure_node_packages(self):
-        """
-        Install any necessary packages needed to supply NodeJS"""
-        raise NotImplementedError(
-            "%s does not yet implement ensure_node_packages()" % __name__
-        )
-
-    def ensure_fix_stacks_packages(self):
-        """
-        Install fix-stacks.
-        """
-        pass
-
-    def ensure_minidump_stackwalk_packages(self):
-        """
-        Install minidump-stackwalk.
-        """
-        pass
-
-    def install_toolchain_static_analysis(self, toolchain_job):
-        clang_tools_path = self.state_dir / "clang-tools"
-        if not clang_tools_path.exists():
-            clang_tools_path.mkdir()
-        self.install_toolchain_artifact_impl(clang_tools_path, toolchain_job)
 
     def install_toolchain_artifact(self, toolchain_job, no_unpack=False):
         if no_unpack:
@@ -401,7 +349,10 @@ class BaseBootstrapper(object):
     def install_toolchain_artifact_impl(
         self, install_dir: Path, toolchain_job, no_unpack=False
     ):
-        mach_binary = (self.srcdir / "mach").resolve()
+        if type(self.srcdir) is str:
+            mach_binary = Path(self.srcdir) / "mach"
+        else:
+            mach_binary = (self.srcdir / "mach").resolve()
         if not mach_binary.exists():
             raise ValueError(f"mach not found at {mach_binary}")
 
@@ -428,9 +379,21 @@ class BaseBootstrapper(object):
 
         subprocess.check_call(cmd, cwd=str(install_dir))
 
-    def run_as_root(self, command):
+    def auto_bootstrap(self, application, exclude=[]):
+        args = ["--with-ccache=sccache"]
+        if application.endswith("_artifact_mode"):
+            args.append("--enable-artifact-builds")
+            application = application[: -len("_artifact_mode")]
+        args.append("--enable-project={}".format(application.replace("_", "/")))
+        if exclude:
+            args.append(
+                "--enable-bootstrap={}".format(",".join(f"-{x}" for x in exclude))
+            )
+        bootstrap_all_toolchains_for(args)
+
+    def run_as_root(self, command, may_use_sudo=True):
         if os.geteuid() != 0:
-            if which("sudo"):
+            if may_use_sudo and which("sudo"):
                 command.insert(0, "sudo")
             else:
                 command = ["su", "root", "-c", " ".join(command)]
@@ -438,107 +401,6 @@ class BaseBootstrapper(object):
         print("Executing as root:", subprocess.list2cmdline(command))
 
         subprocess.check_call(command, stdin=sys.stdin)
-
-    def dnf_install(self, *packages):
-        if which("dnf"):
-
-            def not_installed(package):
-                # We could check for "Error: No matching Packages to list", but
-                # checking `dnf`s exit code is sufficent.
-                # Ideally we'd invoke dnf with '--cacheonly', but there's:
-                # https://bugzilla.redhat.com/show_bug.cgi?id=2030255
-                is_installed = subprocess.run(
-                    ["dnf", "list", "--installed", package],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                )
-                if is_installed.returncode not in [0, 1]:
-                    stdout = is_installed.stdout
-                    raise Exception(
-                        f'Failed to determine whether package "{package}" is installed: "{stdout}"'
-                    )
-                return is_installed.returncode != 0
-
-            packages = list(filter(not_installed, packages))
-            if len(packages) == 0:
-                # avoid sudo prompt (support unattended re-bootstrapping)
-                return
-
-            command = ["dnf", "install"]
-        else:
-            command = ["yum", "install"]
-
-        if self.no_interactive:
-            command.append("-y")
-        command.extend(packages)
-
-        self.run_as_root(command)
-
-    def dnf_groupinstall(self, *packages):
-        if which("dnf"):
-            installed = subprocess.run(
-                # Ideally we'd invoke dnf with '--cacheonly', but there's:
-                # https://bugzilla.redhat.com/show_bug.cgi?id=2030255
-                # Ideally we'd use `--installed` instead of the undocumented
-                # `installed` subcommand, but that doesn't currently work:
-                # https://bugzilla.redhat.com/show_bug.cgi?id=1884616#c0
-                ["dnf", "group", "list", "installed", "--hidden"],
-                universal_newlines=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-            if installed.returncode != 0:
-                raise Exception(
-                    f'Failed to determine currently-installed package groups: "{installed.stdout}"'
-                )
-            installed_packages = (pkg.strip() for pkg in installed.stdout.split("\n"))
-            packages = list(filter(lambda p: p not in installed_packages, packages))
-            if len(packages) == 0:
-                # avoid sudo prompt (support unattended re-bootstrapping)
-                return
-
-            command = ["dnf", "groupinstall"]
-        else:
-            command = ["yum", "groupinstall"]
-
-        if self.no_interactive:
-            command.append("-y")
-        command.extend(packages)
-
-        self.run_as_root(command)
-
-    def dnf_update(self, *packages):
-        if which("dnf"):
-            command = ["dnf", "update"]
-        else:
-            command = ["yum", "update"]
-
-        if self.no_interactive:
-            command.append("-y")
-        command.extend(packages)
-
-        self.run_as_root(command)
-
-    def apt_install(self, *packages):
-        command = ["apt-get", "install"]
-        if self.no_interactive:
-            command.append("-y")
-        command.extend(packages)
-
-        self.run_as_root(command)
-
-    def apt_update(self):
-        command = ["apt-get", "update"]
-        if self.no_interactive:
-            command.append("-y")
-
-        self.run_as_root(command)
-
-    def apt_add_architecture(self, arch):
-        command = ["dpkg", "--add-architecture"]
-        command.extend(arch)
-
-        self.run_as_root(command)
 
     def prompt_int(self, prompt, low, high, default=None):
         """Prompts the user with prompt and requires an integer between low and high.
@@ -757,14 +619,10 @@ class BaseBootstrapper(object):
         if modern:
             print("Your version of Rust (%s) is new enough." % version)
 
-            if rustup:
-                self.ensure_rust_targets(rustup, version)
-            return
-
-        if version:
+        elif version:
             print("Your version of Rust (%s) is too old." % version)
 
-        if rustup:
+        if rustup and not modern:
             rustup_version = self._parse_version(rustup)
             if not rustup_version:
                 print(RUSTUP_OLD)
@@ -776,10 +634,16 @@ class BaseBootstrapper(object):
             if not modern:
                 print(RUST_UPGRADE_FAILED % (MODERN_RUST_VERSION, after))
                 sys.exit(1)
-        else:
+        elif not rustup:
             # No rustup. Download and run the installer.
             print("Will try to install Rust.")
             self.install_rust()
+            modern, version = self.is_rust_modern(cargo_bin)
+            rustup = to_optional_path(
+                which("rustup", extra_search_dirs=[str(cargo_bin)])
+            )
+
+        self.ensure_rust_targets(rustup, version)
 
     def ensure_rust_targets(self, rustup: Path, rust_version):
         """Make sure appropriate cross target libraries are installed."""

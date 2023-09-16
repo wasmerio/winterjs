@@ -17,12 +17,13 @@ from math import ceil
 from multiprocessing import cpu_count, get_context
 from multiprocessing.queues import Queue
 from subprocess import CalledProcessError
+from typing import Dict, Set
 
 import mozpack.path as mozpath
 from mozversioncontrol import (
-    get_repository_object,
-    MissingUpstreamRepo,
     InvalidRepoPath,
+    MissingUpstreamRepo,
+    get_repository_object,
 )
 
 from .errors import LintersNotConfigured, NoValidLinter
@@ -66,7 +67,7 @@ def _run_worker(config, paths, **lintargs):
         lintargs["include_thirdparty"] = True
 
     func = supported_types[config["type"]]
-    start_time = time.time()
+    start_time = time.monotonic()
     try:
         res = func(paths, config, **lintargs)
         # Some linters support fixed operations
@@ -85,7 +86,7 @@ def _run_worker(config, paths, **lintargs):
     except (KeyboardInterrupt, SystemExit):
         return result
     finally:
-        end_time = time.time()
+        end_time = time.monotonic()
         log.debug("Finished in {:.2f} seconds".format(end_time - start_time))
         sys.stdout.flush()
 
@@ -177,7 +178,11 @@ class LintRoller(object):
         self._setupargs = setupargs or {}
 
         # result state
-        self.result = ResultSummary(root)
+        self.result = ResultSummary(
+            root,
+            # Prevent failing on warnings when the --warnings parameter is set to "soft"
+            fail_on_warnings=lintargs.get("show_warnings") != "soft",
+        )
 
         self.root = root
         self.exclude = exclude or []
@@ -224,13 +229,13 @@ class LintRoller(object):
                 )
                 if virtualenv_manager is not None:
                     setupargs["virtualenv_manager"] = virtualenv_manager
-                start_time = time.time()
+                start_time = time.monotonic()
                 res = findobject(linter["setup"])(
                     **setupargs,
                 )
                 self.log.debug(
                     f"setup for {linter['name']} finished in "
-                    f"{round(time.time() - start_time, 2)} seconds"
+                    f"{round(time.monotonic() - start_time, 2)} seconds"
                 )
             except Exception:
                 traceback.print_exc()
@@ -251,22 +256,36 @@ class LintRoller(object):
             return 1
         return 0
 
+    def should_lint_entire_tree(self, vcs_paths: Set[str], linter: Dict) -> bool:
+        """Return `True` if the linter should be run on the entire tree."""
+        # Don't lint the entire tree when `--fix` is passed to linters.
+        if "fix" in self.lintargs and self.lintargs["fix"]:
+            return False
+
+        # Lint the whole tree when a `support-file` is modified.
+        return any(
+            os.path.isfile(p) and mozpath.match(p, pattern)
+            for pattern in linter.get("support-files", [])
+            for p in vcs_paths
+        )
+
     def _generate_jobs(self, paths, vcs_paths, num_procs):
         def __get_current_paths(path=self.root):
             return [os.path.join(path, p) for p in os.listdir(path)]
 
         """A job is of the form (<linter:dict>, <paths:list>)."""
         for linter in self.linters:
-            if any(
-                os.path.isfile(p) and mozpath.match(p, pattern)
-                for pattern in linter.get("support-files", [])
-                for p in vcs_paths
-            ):
+            if self.should_lint_entire_tree(vcs_paths, linter):
                 lpaths = __get_current_paths()
                 print(
                     "warning: {} support-file modified, linting entire tree "
                     "(press ctrl-c to cancel)".format(linter["name"])
                 )
+            elif paths == {self.root}:
+                # If the command line is ".", the path will match with the root
+                # directory. In this case, get all the paths, so that we can
+                # benefit from chunking below.
+                lpaths = __get_current_paths()
             else:
                 lpaths = paths.union(vcs_paths)
 

@@ -1,9 +1,6 @@
 #!/usr/bin/env python
-from __future__ import absolute_import, print_function
-
-import os
-
 import datetime
+import os
 from builtins import Exception
 
 import mozinfo
@@ -35,7 +32,7 @@ def test_record_and_replay(*args):
     config = {
         "playback_tool": "mitmproxy",
         "recording_file": recording_file,
-        "playback_version": "5.1.1",
+        "playback_version": "8.1.1",
         "platform": mozinfo.os,
         "run_local": "MOZ_AUTOMATION" not in os.environ,
         "binary": "firefox",

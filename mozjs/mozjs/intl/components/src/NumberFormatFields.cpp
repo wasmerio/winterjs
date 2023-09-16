@@ -336,10 +336,10 @@ Maybe<NumberPartType> GetPartTypeForNumberField(UNumberFormatFields fieldName,
   switch (fieldName) {
     case UNUM_INTEGER_FIELD:
       if (number.isSome()) {
-        if (IsNaN(*number)) {
+        if (std::isnan(*number)) {
           return Some(NumberPartType::Nan);
         }
-        if (!IsFinite(*number)) {
+        if (!std::isfinite(*number)) {
           return Some(NumberPartType::Infinity);
         }
       }
@@ -378,10 +378,8 @@ Maybe<NumberPartType> GetPartTypeForNumberField(UNumberFormatFields fieldName,
       return Some(NumberPartType::Unit);
     case UNUM_COMPACT_FIELD:
       return Some(NumberPartType::Compact);
-#ifndef U_HIDE_DRAFT_API
     case UNUM_APPROXIMATELY_SIGN_FIELD:
       return Some(NumberPartType::ApproximatelySign);
-#endif
 #ifndef U_HIDE_DEPRECATED_API
     case UNUM_FIELD_COUNT:
       MOZ_ASSERT_UNREACHABLE(

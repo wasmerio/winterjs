@@ -39,6 +39,7 @@ class SetObject;
 class Shape;
 class TypedArrayObject;
 class WithScope;
+class MegamorphicCacheEntry;
 
 namespace gc {
 
@@ -386,6 +387,8 @@ JSString* ArrayJoin(JSContext* cx, HandleObject array, HandleString sep);
 JSLinearString* StringFromCharCode(JSContext* cx, int32_t code);
 JSLinearString* StringFromCharCodeNoGC(JSContext* cx, int32_t code);
 JSString* StringFromCodePoint(JSContext* cx, int32_t codePoint);
+JSLinearString* LinearizeForCharAccessPure(JSString* str);
+JSLinearString* LinearizeForCharAccess(JSContext* cx, JSString* str);
 
 [[nodiscard]] bool SetProperty(JSContext* cx, HandleObject obj,
                                Handle<PropertyName*> name, HandleValue value,
@@ -501,9 +504,6 @@ JSObject* InitRestParameter(JSContext* cx, uint32_t length, Value* rest,
 JSString* StringReplace(JSContext* cx, HandleString string,
                         HandleString pattern, HandleString repl);
 
-[[nodiscard]] bool SetDenseElementPure(JSContext* cx, NativeObject* obj,
-                                       int32_t index, Value* value);
-
 void AssertValidBigIntPtr(JSContext* cx, JS::BigInt* bi);
 void AssertValidObjectPtr(JSContext* cx, JSObject* obj);
 void AssertValidStringPtr(JSContext* cx, JSString* str);
@@ -545,29 +545,35 @@ bool CallDOMSetter(JSContext* cx, const JSJitInfo* jitInfo, HandleObject obj,
 void HandleCodeCoverageAtPC(BaselineFrame* frame, jsbytecode* pc);
 void HandleCodeCoverageAtPrologue(BaselineFrame* frame);
 
-bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
-                               Value* vp);
+bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyKey id,
+                               MegamorphicCacheEntry* entry, Value* vp);
 
-bool GetNativeDataPropertyPureFallback(JSContext* cx, JSObject* obj,
-                                       PropertyName* name, Value* vp);
+bool GetNativeDataPropertyPureWithCacheLookup(JSContext* cx, JSObject* obj,
+                                              PropertyKey id,
+                                              MegamorphicCacheEntry* entry,
+                                              Value* vp);
 
-bool GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj, Value* vp);
+bool GetNativeDataPropertyByValuePure(JSContext* cx, JSObject* obj,
+                                      MegamorphicCacheEntry* cacheEntry,
+                                      Value* vp);
 
 template <bool HasOwn>
-bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj, Value* vp);
+bool HasNativeDataPropertyPure(JSContext* cx, JSObject* obj,
+                               MegamorphicCacheEntry* cacheEntry, Value* vp);
 
 bool HasNativeElementPure(JSContext* cx, NativeObject* obj, int32_t index,
                           Value* vp);
 
-bool SetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
-                               Value* val);
-
 bool ObjectHasGetterSetterPure(JSContext* cx, JSObject* objArg, jsid id,
                                GetterSetter* getterSetter);
 
+template <bool Cached>
 bool SetElementMegamorphic(JSContext* cx, HandleObject obj, HandleValue index,
-                           HandleValue value, HandleValue receiver,
-                           bool strict);
+                           HandleValue value, bool strict);
+
+template <bool Cached>
+bool SetPropertyMegamorphic(JSContext* cx, HandleObject obj, HandleId id,
+                            HandleValue value, bool strict);
 
 JSString* TypeOfNameObject(JSObject* obj, JSRuntime* rt);
 
@@ -680,6 +686,8 @@ void AssertSetObjectHash(JSContext* cx, SetObject* obj, const Value* value,
                          mozilla::HashNumber actualHash);
 void AssertMapObjectHash(JSContext* cx, MapObject* obj, const Value* value,
                          mozilla::HashNumber actualHash);
+
+void AssertPropertyLookup(NativeObject* obj, PropertyKey id, uint32_t slot);
 
 // Functions used when JS_MASM_VERBOSE is enabled.
 void AssumeUnreachable(const char* output);

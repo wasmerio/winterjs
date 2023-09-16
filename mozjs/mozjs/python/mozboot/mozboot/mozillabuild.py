@@ -2,15 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import ctypes
 import os
 import platform
-import sys
 import subprocess
-
+import sys
 from pathlib import Path
+
+from mozbuild.util import mozilla_build_version
+from packaging.version import Version
+
 from mozboot.base import BaseBootstrapper
 
 
@@ -143,10 +144,7 @@ class MozillaBuildBootstrapper(BaseBootstrapper):
         # Mercurial upstream sometimes doesn't upload wheels, and building
         # from source requires MS Visual C++ 9.0. So we force pip to install
         # the last version that comes with wheels.
-        with open(Path(os.environ["MOZILLABUILD"]) / "VERSION") as f:
-            major, minor = (int(v) for v in f.read().split("."))
-
-        if major >= 4:
+        if mozilla_build_version() >= Version("4.0"):
             pip_dir = (
                 Path(os.environ["MOZILLABUILD"]) / "python3" / "Scripts" / "pip.exe"
             )
@@ -224,42 +222,11 @@ class MozillaBuildBootstrapper(BaseBootstrapper):
     def generate_mobile_android_artifact_mode_mozconfig(self):
         return self.generate_mobile_android_mozconfig(artifact_mode=True)
 
-    def ensure_clang_static_analysis_package(self):
-        from mozboot import static_analysis
-
-        self.install_toolchain_static_analysis(static_analysis.WINDOWS_CLANG_TIDY)
-
     def ensure_sccache_packages(self):
         from mozboot import sccache
 
-        self.install_toolchain_artifact("sccache")
         self.install_toolchain_artifact(sccache.RUSTC_DIST_TOOLCHAIN, no_unpack=True)
         self.install_toolchain_artifact(sccache.CLANG_DIST_TOOLCHAIN, no_unpack=True)
-
-    def ensure_stylo_packages(self):
-        # On-device artifact builds are supported; on-device desktop builds are not.
-        if is_aarch64_host():
-            raise Exception(
-                "You should not be performing desktop builds on an "
-                "AArch64 device.  If you want to do artifact builds "
-                "instead, please choose the appropriate artifact build "
-                "option when beginning bootstrap."
-            )
-
-        self.install_toolchain_artifact("clang")
-        self.install_toolchain_artifact("cbindgen")
-
-    def ensure_nasm_packages(self):
-        self.install_toolchain_artifact("nasm")
-
-    def ensure_node_packages(self):
-        self.install_toolchain_artifact("node")
-
-    def ensure_fix_stacks_packages(self):
-        self.install_toolchain_artifact("fix-stacks")
-
-    def ensure_minidump_stackwalk_packages(self):
-        self.install_toolchain_artifact("minidump-stackwalk")
 
     def _update_package_manager(self):
         pass

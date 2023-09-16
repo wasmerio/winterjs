@@ -20,6 +20,7 @@ from .protocol import (BaseProtocolPart,
                        TestharnessProtocolPart,
                        Protocol,
                        SelectorProtocolPart,
+                       AccessibilityProtocolPart,
                        ClickProtocolPart,
                        CookiesProtocolPart,
                        SendKeysProtocolPart,
@@ -186,6 +187,17 @@ class WebDriverSelectorProtocolPart(SelectorProtocolPart):
         return self.webdriver.find.css(selector)
 
 
+class WebDriverAccessibilityProtocolPart(AccessibilityProtocolPart):
+    def setup(self):
+        self.webdriver = self.parent.webdriver
+
+    def get_computed_label(self, element):
+        return element.get_computed_label()
+
+    def get_computed_role(self, element):
+        return element.get_computed_role()
+
+
 class WebDriverClickProtocolPart(ClickProtocolPart):
     def setup(self):
         self.webdriver = self.parent.webdriver
@@ -203,6 +215,18 @@ class WebDriverCookiesProtocolPart(CookiesProtocolPart):
         self.logger.info("Deleting all cookies")
         return self.webdriver.send_session_command("DELETE", "cookie")
 
+    def get_all_cookies(self):
+        self.logger.info("Getting all cookies")
+        return self.webdriver.send_session_command("GET", "cookie")
+
+    def get_named_cookie(self, name):
+        self.logger.info("Getting cookie named %s" % name)
+        try:
+            return self.webdriver.send_session_command("GET", "cookie/%s" % name)
+        except error.NoSuchCookieException:
+            return None
+
+
 class WebDriverWindowProtocolPart(WindowProtocolPart):
     def setup(self):
         self.webdriver = self.parent.webdriver
@@ -214,6 +238,7 @@ class WebDriverWindowProtocolPart(WindowProtocolPart):
     def set_rect(self, rect):
         self.logger.info("Restoring")
         self.webdriver.window.rect = rect
+
 
 class WebDriverSendKeysProtocolPart(SendKeysProtocolPart):
     def setup(self):
@@ -279,13 +304,11 @@ class WebDriverSetPermissionProtocolPart(SetPermissionProtocolPart):
     def setup(self):
         self.webdriver = self.parent.webdriver
 
-    def set_permission(self, descriptor, state, one_realm):
+    def set_permission(self, descriptor, state):
         permission_params_dict = {
             "descriptor": descriptor,
             "state": state,
         }
-        if one_realm is not None:
-            permission_params_dict["oneRealm"] = one_realm
         self.webdriver.send_session_command("POST", "permissions", permission_params_dict)
 
 
@@ -333,6 +356,7 @@ class WebDriverProtocol(Protocol):
     implements = [WebDriverBaseProtocolPart,
                   WebDriverTestharnessProtocolPart,
                   WebDriverSelectorProtocolPart,
+                  WebDriverAccessibilityProtocolPart,
                   WebDriverClickProtocolPart,
                   WebDriverCookiesProtocolPart,
                   WebDriverSendKeysProtocolPart,
@@ -444,8 +468,7 @@ class WebDriverTestharnessExecutor(TestharnessExecutor):
 
     def __init__(self, logger, browser, server_config, timeout_multiplier=1,
                  close_after_done=True, capabilities=None, debug_info=None,
-                 supports_eager_pageload=True, cleanup_after_test=True,
-                 **kwargs):
+                 cleanup_after_test=True, **kwargs):
         """WebDriver-based executor for testharness.js tests"""
         TestharnessExecutor.__init__(self, logger, browser, server_config,
                                      timeout_multiplier=timeout_multiplier,
@@ -458,7 +481,6 @@ class WebDriverTestharnessExecutor(TestharnessExecutor):
 
         self.close_after_done = close_after_done
         self.window_id = str(uuid.uuid4())
-        self.supports_eager_pageload = supports_eager_pageload
         self.cleanup_after_test = cleanup_after_test
 
     def is_alive(self):
@@ -503,9 +525,6 @@ class WebDriverTestharnessExecutor(TestharnessExecutor):
         handler = WebDriverCallbackHandler(self.logger, protocol, test_window)
         protocol.webdriver.url = url
 
-        if not self.supports_eager_pageload:
-            self.wait_for_load(protocol)
-
         while True:
             result = protocol.base.execute_script(
                 self.script_resume % format_map, asynchronous=True)
@@ -535,29 +554,6 @@ class WebDriverTestharnessExecutor(TestharnessExecutor):
             protocol.testharness.close_old_windows()
 
         return rv
-
-    def wait_for_load(self, protocol):
-        # pageLoadStrategy=eager doesn't work in Chrome so try to emulate in user script
-        loaded = False
-        seen_error = False
-        while not loaded:
-            try:
-                loaded = protocol.base.execute_script("""
-var callback = arguments[arguments.length - 1];
-if (location.href === "about:blank") {
-  callback(false);
-} else if (document.readyState !== "loading") {
-  callback(true);
-} else {
-  document.addEventListener("readystatechange", () => {if (document.readyState !== "loading") {callback(true)}});
-}""", asynchronous=True)
-            except error.JavascriptErrorException:
-                # We can get an error here if the script runs in the initial about:blank
-                # document before it has navigated, with the driver returning an error
-                # indicating that the document was unloaded
-                if seen_error:
-                    raise
-                seen_error = True
 
 
 class WebDriverRefTestExecutor(RefTestExecutor):

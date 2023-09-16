@@ -228,9 +228,9 @@ template double js::ParseDecimalNumber(
     const mozilla::Range<const char16_t> chars);
 
 template <typename CharT>
-static bool GetPrefixInteger(const CharT* start, const CharT* end, int base,
-                             IntegerSeparatorHandling separatorHandling,
-                             const CharT** endp, double* dp) {
+static bool GetPrefixIntegerImpl(const CharT* start, const CharT* end, int base,
+                                 IntegerSeparatorHandling separatorHandling,
+                                 const CharT** endp, double* dp) {
   MOZ_ASSERT(start <= end);
   MOZ_ASSERT(2 <= base && base <= 36);
 
@@ -280,10 +280,10 @@ static bool GetPrefixInteger(const CharT* start, const CharT* end, int base,
 }
 
 template <typename CharT>
-bool js::GetPrefixInteger(JSContext* cx, const CharT* start, const CharT* end,
-                          int base, IntegerSeparatorHandling separatorHandling,
+bool js::GetPrefixInteger(const CharT* start, const CharT* end, int base,
+                          IntegerSeparatorHandling separatorHandling,
                           const CharT** endp, double* dp) {
-  if (::GetPrefixInteger(start, end, base, separatorHandling, endp, dp)) {
+  if (GetPrefixIntegerImpl(start, end, base, separatorHandling, endp, dp)) {
     return true;
   }
 
@@ -291,28 +291,27 @@ bool js::GetPrefixInteger(JSContext* cx, const CharT* start, const CharT* end,
   MOZ_ASSERT(base == 10);
 
   // If we're accumulating a decimal number and the number is >= 2^53, then the
-  // fast result from the loop in GetPrefixInteger may be inaccurate. Call
+  // fast result from the loop in GetPrefixIntegerImpl may be inaccurate. Call
   // GetDecimal to get the correct answer.
-  return GetDecimal(cx, start, *endp, dp);
+  return GetDecimal(start, *endp, dp);
 }
 
 namespace js {
 
-template bool GetPrefixInteger(JSContext* cx, const char16_t* start,
-                               const char16_t* end, int base,
+template bool GetPrefixInteger(const char16_t* start, const char16_t* end,
+                               int base,
                                IntegerSeparatorHandling separatorHandling,
                                const char16_t** endp, double* dp);
 
-template bool GetPrefixInteger(JSContext* cx, const Latin1Char* start,
-                               const Latin1Char* end, int base,
+template bool GetPrefixInteger(const Latin1Char* start, const Latin1Char* end,
+                               int base,
                                IntegerSeparatorHandling separatorHandling,
                                const Latin1Char** endp, double* dp);
 
 }  // namespace js
 
 template <typename CharT>
-bool js::GetDecimalInteger(JSContext* cx, const CharT* start, const CharT* end,
-                           double* dp) {
+bool js::GetDecimalInteger(const CharT* start, const CharT* end, double* dp) {
   MOZ_ASSERT(start <= end);
 
   double d = 0.0;
@@ -334,29 +333,28 @@ bool js::GetDecimalInteger(JSContext* cx, const CharT* start, const CharT* end,
   }
 
   // Otherwise compute the correct integer using GetDecimal.
-  return GetDecimal(cx, start, end, dp);
+  return GetDecimal(start, end, dp);
 }
 
 namespace js {
 
-template bool GetDecimalInteger(JSContext* cx, const char16_t* start,
-                                const char16_t* end, double* dp);
+template bool GetDecimalInteger(const char16_t* start, const char16_t* end,
+                                double* dp);
 
-template bool GetDecimalInteger(JSContext* cx, const Latin1Char* start,
-                                const Latin1Char* end, double* dp);
+template bool GetDecimalInteger(const Latin1Char* start, const Latin1Char* end,
+                                double* dp);
 
 template <>
-bool GetDecimalInteger<Utf8Unit>(JSContext* cx, const Utf8Unit* start,
-                                 const Utf8Unit* end, double* dp) {
-  return GetDecimalInteger(cx, Utf8AsUnsignedChars(start),
-                           Utf8AsUnsignedChars(end), dp);
+bool GetDecimalInteger<Utf8Unit>(const Utf8Unit* start, const Utf8Unit* end,
+                                 double* dp) {
+  return GetDecimalInteger(Utf8AsUnsignedChars(start), Utf8AsUnsignedChars(end),
+                           dp);
 }
 
 }  // namespace js
 
 template <typename CharT>
-bool js::GetDecimal(JSContext* cx, const CharT* start, const CharT* end,
-                    double* dp) {
+bool js::GetDecimal(const CharT* start, const CharT* end, double* dp) {
   MOZ_ASSERT(start <= end);
 
   size_t length = end - start;
@@ -387,7 +385,7 @@ bool js::GetDecimal(JSContext* cx, const CharT* start, const CharT* end,
     return true;
   }
 
-  Vector<char, 32> chars(cx);
+  Vector<char, 32, SystemAllocPolicy> chars;
   if (!chars.growByUninitialized(length)) {
     return false;
   }
@@ -411,17 +409,16 @@ bool js::GetDecimal(JSContext* cx, const CharT* start, const CharT* end,
 
 namespace js {
 
-template bool GetDecimal(JSContext* cx, const char16_t* start,
-                         const char16_t* end, double* dp);
+template bool GetDecimal(const char16_t* start, const char16_t* end,
+                         double* dp);
 
-template bool GetDecimal(JSContext* cx, const Latin1Char* start,
-                         const Latin1Char* end, double* dp);
+template bool GetDecimal(const Latin1Char* start, const Latin1Char* end,
+                         double* dp);
 
 template <>
-bool GetDecimal<Utf8Unit>(JSContext* cx, const Utf8Unit* start,
-                          const Utf8Unit* end, double* dp) {
-  return GetDecimal(cx, Utf8AsUnsignedChars(start), Utf8AsUnsignedChars(end),
-                    dp);
+bool GetDecimal<Utf8Unit>(const Utf8Unit* start, const Utf8Unit* end,
+                          double* dp) {
+  return GetDecimal(Utf8AsUnsignedChars(start), Utf8AsUnsignedChars(end), dp);
 }
 
 }  // namespace js
@@ -481,25 +478,27 @@ static bool num_parseFloat(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+// ES2023 draft rev 053d34c87b14d9234d6f7f45bd61074b72ca9d69
+// 19.2.5 parseInt ( string, radix )
 template <typename CharT>
 static bool ParseIntImpl(JSContext* cx, const CharT* chars, size_t length,
                          bool stripPrefix, int32_t radix, double* res) {
-  /* Step 2. */
+  // Step 2.
   const CharT* end = chars + length;
   const CharT* s = SkipSpace(chars, end);
 
   MOZ_ASSERT(chars <= s);
   MOZ_ASSERT(s <= end);
 
-  /* Steps 3-4. */
+  // Steps 3-4.
   bool negative = (s != end && s[0] == '-');
 
-  /* Step 5. */
+  // Step 5. */
   if (s != end && (s[0] == '-' || s[0] == '+')) {
     s++;
   }
 
-  /* Step 10. */
+  // Step 10.
   if (stripPrefix) {
     if (end - s >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
       s += 2;
@@ -507,11 +506,12 @@ static bool ParseIntImpl(JSContext* cx, const CharT* chars, size_t length,
     }
   }
 
-  /* Steps 11-15. */
+  // Steps 11-15.
   const CharT* actualEnd;
   double d;
-  if (!GetPrefixInteger(cx, s, end, radix, IntegerSeparatorHandling::None,
-                        &actualEnd, &d)) {
+  if (!js::GetPrefixInteger(s, end, radix, IntegerSeparatorHandling::None,
+                            &actualEnd, &d)) {
+    ReportOutOfMemory(cx);
     return false;
   }
 
@@ -523,7 +523,55 @@ static bool ParseIntImpl(JSContext* cx, const CharT* chars, size_t length,
   return true;
 }
 
-/* ES5 15.1.2.2. */
+// ES2023 draft rev 053d34c87b14d9234d6f7f45bd61074b72ca9d69
+// 19.2.5 parseInt ( string, radix )
+bool js::NumberParseInt(JSContext* cx, HandleString str, int32_t radix,
+                        MutableHandleValue result) {
+  // Step 7.
+  bool stripPrefix = true;
+
+  // Steps 8-9.
+  if (radix != 0) {
+    if (radix < 2 || radix > 36) {
+      result.setNaN();
+      return true;
+    }
+
+    if (radix != 16) {
+      stripPrefix = false;
+    }
+  } else {
+    radix = 10;
+  }
+  MOZ_ASSERT(2 <= radix && radix <= 36);
+
+  JSLinearString* linear = str->ensureLinear(cx);
+  if (!linear) {
+    return false;
+  }
+
+  // Steps 2-5, 10-16.
+  AutoCheckCannotGC nogc;
+  size_t length = linear->length();
+  double number;
+  if (linear->hasLatin1Chars()) {
+    if (!ParseIntImpl(cx, linear->latin1Chars(nogc), length, stripPrefix, radix,
+                      &number)) {
+      return false;
+    }
+  } else {
+    if (!ParseIntImpl(cx, linear->twoByteChars(nogc), length, stripPrefix,
+                      radix, &number)) {
+      return false;
+    }
+  }
+
+  result.setNumber(number);
+  return true;
+}
+
+// ES2023 draft rev 053d34c87b14d9234d6f7f45bd61074b72ca9d69
+// 19.2.5 parseInt ( string, radix )
 static bool num_parseInt(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -545,7 +593,7 @@ static bool num_parseInt(JSContext* cx, unsigned argc, Value* vp) {
      * 1e21, ToString(string) is in the form "NeM". 'e' marks the end of
      * the word, which would mean the result of parseInt(string) should be |N|.
      *
-     * To preserve this behaviour, we can't use the fast-path when string >
+     * To preserve this behaviour, we can't use the fast-path when string >=
      * 1e21, or else the result would be |NeM|.
      *
      * The same goes for values smaller than 1.0e-6, because the string would be
@@ -553,11 +601,13 @@ static bool num_parseInt(JSContext* cx, unsigned argc, Value* vp) {
      */
     if (args[0].isDouble()) {
       double d = args[0].toDouble();
-      if (1.0e-6 < d && d < 1.0e21) {
+      if (DOUBLE_DECIMAL_IN_SHORTEST_LOW <= d &&
+          d < DOUBLE_DECIMAL_IN_SHORTEST_HIGH) {
         args.rval().setNumber(floor(d));
         return true;
       }
-      if (-1.0e21 < d && d < -1.0e-6) {
+      if (-DOUBLE_DECIMAL_IN_SHORTEST_HIGH < d &&
+          d <= -DOUBLE_DECIMAL_IN_SHORTEST_LOW) {
         args.rval().setNumber(-floor(-d));
         return true;
       }
@@ -576,57 +626,22 @@ static bool num_parseInt(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
-  /* Step 1. */
+  // Step 1.
   RootedString inputString(cx, ToString<CanGC>(cx, args[0]));
   if (!inputString) {
     return false;
   }
-  args[0].setString(inputString);
 
-  /* Steps 6-9. */
-  bool stripPrefix = true;
-  int32_t radix;
-  if (!args.hasDefined(1)) {
-    radix = 10;
-  } else {
+  // Step 6.
+  int32_t radix = 0;
+  if (args.hasDefined(1)) {
     if (!ToInt32(cx, args[1], &radix)) {
       return false;
     }
-    if (radix == 0) {
-      radix = 10;
-    } else {
-      if (radix < 2 || radix > 36) {
-        args.rval().setNaN();
-        return true;
-      }
-      if (radix != 16) {
-        stripPrefix = false;
-      }
-    }
   }
 
-  JSLinearString* linear = inputString->ensureLinear(cx);
-  if (!linear) {
-    return false;
-  }
-
-  AutoCheckCannotGC nogc;
-  size_t length = inputString->length();
-  double number;
-  if (linear->hasLatin1Chars()) {
-    if (!ParseIntImpl(cx, linear->latin1Chars(nogc), length, stripPrefix, radix,
-                      &number)) {
-      return false;
-    }
-  } else {
-    if (!ParseIntImpl(cx, linear->twoByteChars(nogc), length, stripPrefix,
-                      radix, &number)) {
-      return false;
-    }
-  }
-
-  args.rval().setNumber(number);
-  return true;
+  // Steps 2-5, 7-16.
+  return NumberParseInt(cx, inputString, radix, args.rval());
 }
 
 static const JSFunctionSpec number_functions[] = {
@@ -804,7 +819,7 @@ JSLinearString* js::Int32ToString(JSContext* cx, int32_t si) {
 
   mozilla::Range<const Latin1Char> chars(start, length);
   JSInlineString* str =
-      NewInlineString<allowGC>(cx, chars, js::gc::DefaultHeap);
+      NewInlineString<allowGC>(cx, chars, js::gc::Heap::Default);
   if (!str) {
     return nullptr;
   }
@@ -850,7 +865,7 @@ JSAtom* js::Int32ToAtom(JSContext* cx, int32_t si) {
 }
 
 frontend::TaggedParserAtomIndex js::Int32ToParserAtom(
-    ErrorContext* ec, frontend::ParserAtomsTable& parserAtoms, int32_t si) {
+    FrontendContext* fc, frontend::ParserAtomsTable& parserAtoms, int32_t si) {
   char buffer[JSFatInlineString::MAX_LENGTH_TWO_BYTE + 1];
   size_t length;
   char* start = BackfillInt32InBuffer(
@@ -861,7 +876,7 @@ frontend::TaggedParserAtomIndex js::Int32ToParserAtom(
     indexValue.emplace(si);
   }
 
-  return parserAtoms.internAscii(ec, start, length);
+  return parserAtoms.internAscii(fc, start, length);
 }
 
 /* Returns a non-nullptr pointer to inside `buf`. */
@@ -1218,11 +1233,11 @@ static bool num_toFixed(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   // Step 6.
-  if (mozilla::IsNaN(d)) {
+  if (std::isnan(d)) {
     args.rval().setString(cx->names().NaN);
     return true;
   }
-  if (mozilla::IsInfinite(d)) {
+  if (std::isinf(d)) {
     if (d > 0) {
       args.rval().setString(cx->names().Infinity);
       return true;
@@ -1290,11 +1305,11 @@ static bool num_toExponential(JSContext* cx, unsigned argc, Value* vp) {
   MOZ_ASSERT_IF(!args.hasDefined(0), prec == 0);
 
   // Step 4.
-  if (mozilla::IsNaN(d)) {
+  if (std::isnan(d)) {
     args.rval().setString(cx->names().NaN);
     return true;
   }
-  if (mozilla::IsInfinite(d)) {
+  if (std::isinf(d)) {
     if (d > 0) {
       args.rval().setString(cx->names().Infinity);
       return true;
@@ -1353,11 +1368,11 @@ static bool num_toPrecision(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   // Step 4.
-  if (mozilla::IsNaN(d)) {
+  if (std::isnan(d)) {
     args.rval().setString(cx->names().NaN);
     return true;
   }
-  if (mozilla::IsInfinite(d)) {
+  if (std::isinf(d)) {
     if (d > 0) {
       args.rval().setString(cx->names().Infinity);
       return true;
@@ -1402,7 +1417,7 @@ static const JSFunctionSpec number_methods[] = {
     JS_FS_END};
 
 bool js::IsInteger(double d) {
-  return mozilla::IsFinite(d) && JS::ToInteger(d) == d;
+  return std::isfinite(d) && JS::ToInteger(d) == d;
 }
 
 static const JSFunctionSpec number_static_methods[] = {
@@ -1525,6 +1540,8 @@ static bool NumberClassFinish(JSContext* cx, HandleObject ctor,
   if (!parseInt) {
     return false;
   }
+  parseInt->setJitInfo(&jit::JitInfo_NumberParseInt);
+
   RootedValue parseIntValue(cx, ObjectValue(*parseInt));
   if (!DefineDataProperty(cx, ctor, parseIntId, parseIntValue, 0)) {
     return false;
@@ -1566,7 +1583,8 @@ static bool NumberClassFinish(JSContext* cx, HandleObject ctor,
 }
 
 const ClassSpec NumberObject::classSpec_ = {
-    GenericCreateConstructor<Number, 1, gc::AllocKind::FUNCTION>,
+    GenericCreateConstructor<Number, 1, gc::AllocKind::FUNCTION,
+                             &jit::JitInfo_Number>,
     NumberObject::createPrototype,
     number_static_methods,
     number_static_properties,
@@ -1806,10 +1824,10 @@ JSAtom* js::NumberToAtom(JSContext* cx, double d) {
 }
 
 frontend::TaggedParserAtomIndex js::NumberToParserAtom(
-    ErrorContext* ec, frontend::ParserAtomsTable& parserAtoms, double d) {
+    FrontendContext* fc, frontend::ParserAtomsTable& parserAtoms, double d) {
   int32_t si;
   if (NumberEqualsInt32(d, &si)) {
-    return Int32ToParserAtom(ec, parserAtoms, si);
+    return Int32ToParserAtom(fc, parserAtoms, si);
   }
 
   ToCStringBuf cbuf;
@@ -1819,7 +1837,7 @@ frontend::TaggedParserAtomIndex js::NumberToParserAtom(
   MOZ_ASSERT(std::begin(cbuf.sbuf) <= numStr && numStr < std::end(cbuf.sbuf));
   MOZ_ASSERT(length == strlen(numStr));
 
-  return parserAtoms.internAscii(ec, numStr, length);
+  return parserAtoms.internAscii(fc, numStr, length);
 }
 
 JSLinearString* js::IndexToString(JSContext* cx, uint32_t index) {
@@ -1839,13 +1857,18 @@ JSLinearString* js::IndexToString(JSContext* cx, uint32_t index) {
   RangedPtr<Latin1Char> start = BackfillIndexInCharBuffer(index, end);
 
   mozilla::Range<const Latin1Char> chars(start.get(), end - start);
-  JSInlineString* str = NewInlineString<CanGC>(cx, chars, js::gc::DefaultHeap);
+  JSInlineString* str =
+      NewInlineString<CanGC>(cx, chars, js::gc::Heap::Default);
   if (!str) {
     return nullptr;
   }
 
   realm->dtoaCache.cache(10, index, str);
   return str;
+}
+
+JSString* js::Int32ToStringWithBase(JSContext* cx, int32_t i, int32_t base) {
+  return NumberToStringWithBase<CanGC>(cx, double(i), base);
 }
 
 bool js::NumberValueToStringBuffer(const Value& v, StringBuffer& sb) {
@@ -1898,7 +1921,7 @@ inline bool CharsToNonDecimalNumber(const CharT* start, const CharT* end,
   // digits.
   const CharT* endptr;
   double d;
-  MOZ_ALWAYS_TRUE(GetPrefixInteger(
+  MOZ_ALWAYS_TRUE(GetPrefixIntegerImpl(
       start + 2, end, radix, IntegerSeparatorHandling::None, &endptr, &d));
   if (endptr == start + 2 || SkipSpace(endptr, end) != end) {
     *result = GenericNaN();

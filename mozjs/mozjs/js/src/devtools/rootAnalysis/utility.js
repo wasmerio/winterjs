@@ -11,13 +11,16 @@ loadRelativeToScript('dumpCFG.js');
 // Attribute bits - each call edge may carry a set of 'attrs' bits, saying eg
 // that the edge takes place within a scope where GC is suppressed, for
 // example.
-var ATTR_GC_SUPPRESSED     = 1;
-var ATTR_CANSCRIPT_BOUNDED = 2; // Unimplemented
-var ATTR_DOM_ITERATING     = 4; // Unimplemented
-var ATTR_NONRELEASING      = 8; // ~RefPtr of value whose refcount will not go to zero
+var ATTR_GC_SUPPRESSED     = 1 << 0;
+var ATTR_CANSCRIPT_BOUNDED = 1 << 1; // Unimplemented
+var ATTR_DOM_ITERATING     = 1 << 2; // Unimplemented
+var ATTR_NONRELEASING      = 1 << 3; // ~RefPtr of value whose refcount will not go to zero
+var ATTR_REPLACED          = 1 << 4; // Ignore edge, it was replaced by zero or more better edges.
+var ATTR_SYNTHETIC         = 1 << 5; // Call was manufactured in some way.
 
+var ATTR_LAST              = 1 << 5;
 var ATTRS_NONE             = 0;
-var ATTRS_ALL              = 7; // All possible bits set
+var ATTRS_ALL              = (ATTR_LAST << 1) - 1; // All possible bits set
 
 // The traversal algorithms we run will recurse into children if you change any
 // attrs bit to zero. Use all bits set to maximally attributed, including
@@ -310,15 +313,27 @@ function xdbLibrary()
     return api;
 }
 
-function cLibrary()
-{
-    var libPossibilities = ['libc.so.6', 'libc.so', 'libc.dylib'];
-    var lib;
-    for (const name of libPossibilities) {
+function openLibrary(names) {
+    for (const name of names) {
         try {
-            lib = ctypes.open("libc.so.6");
+            return ctypes.open(name);
         } catch(e) {
         }
+    }
+    return undefined;
+}
+
+function cLibrary()
+{
+    const lib = openLibrary(['libc.so.6', 'libc.so', 'libc.dylib']);
+    if (!lib) {
+        throw new Error("Unable to open libc");
+    }
+
+    if (getBuildConfiguration()["moz-memory"]) {
+        throw new Error("cannot use libc functions with --enable-jemalloc, since they will be routed " +
+                        "through jemalloc, but calling libc.free() directly will bypass it and the " +
+                        "malloc/free will be mismatched");
     }
 
     return {
@@ -336,7 +351,7 @@ function* readFileLines_gen(filename)
     var bufsize = ctypes.size_t(0);
     var fp = libc.fopen(filename, "r");
     if (fp.isNull())
-        throw "Unable to open '" + filename + "'"
+        throw new Error("Unable to open '" + filename + "'");
 
     while (libc.getline(linebuf.address(), bufsize.address(), fp) > 0)
         yield linebuf.readString();

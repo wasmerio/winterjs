@@ -1,13 +1,15 @@
-from mozperftest.layers import Layer
 import json
-import requests
-import time
-from threading import Thread
-import re
-import mozperftest.utils as utils
 import pathlib
-from mozperftest.runner import HERE
+import re
+import time
 import traceback
+from threading import Thread
+
+import requests
+
+import mozperftest.utils as utils
+from mozperftest.layers import Layer
+from mozperftest.runner import HERE
 
 ACCEPTED_BROWSERS = ["Chrome", "Firefox"]
 
@@ -29,6 +31,7 @@ ACCEPTED_CONNECTIONS = [
 
 ACCEPTED_STATISTICS = ["average", "median", "standardDeviation"]
 WPT_KEY_FILE = "WPT_key.txt"
+WPT_API_EXPIRED_MESSAGE = "API key expired"
 
 
 class WPTTimeOutError(Exception):
@@ -112,6 +115,14 @@ class WPTInvalidStatisticsError(Exception):
     pass
 
 
+class WPTExpiredAPIKeyError(Exception):
+    """
+    This error is raised if we get a notification from WPT that our API key has expired
+    """
+
+    pass
+
+
 class PropagatingErrorThread(Thread):
     def run(self):
         self.exc = None
@@ -182,7 +193,10 @@ class WebPageTest(Layer):
         self.wpt_browser_metrics = options["browser_metrics"]
         self.pre_run_error_checks(options["test_parameters"], test_list)
         self.create_and_run_wpt_threaded_tests(test_list, metadata)
-        self.test_runs_left_this_month()
+        try:
+            self.test_runs_left_this_month()
+        except Exception:
+            self.warning("testBalance check had an issue, please investigate")
         return metadata
 
     def pre_run_error_checks(self, options, test_list):
@@ -243,10 +257,15 @@ class WebPageTest(Layer):
     def request_with_timeout(self, url):
         requested_results = requests.get(url)
         results_of_request = json.loads(requested_results.text)
-        start = time.time()
+        start = time.monotonic()
+        if (
+            "statusText" in results_of_request.keys()
+            and results_of_request["statusText"] == WPT_API_EXPIRED_MESSAGE
+        ):
+            raise WPTExpiredAPIKeyError("The API key has expired")
         while (
             requested_results.status_code == 200
-            and time.time() - start < self.timeout_limit
+            and time.monotonic() - start < self.timeout_limit
             and (
                 "statusCode" in results_of_request.keys()
                 and results_of_request["statusCode"] != 200
@@ -255,7 +274,7 @@ class WebPageTest(Layer):
             requested_results = requests.get(url)
             results_of_request = json.loads(requested_results.text)
             time.sleep(self.wait_between_requests)
-        if time.time() - start > self.timeout_limit:
+        if time.monotonic() - start > self.timeout_limit:
             raise WPTTimeOutError(
                 f"{url} test timed out after {self.timeout_limit} seconds"
             )

@@ -27,8 +27,8 @@
 #include "gc/Heap-inl.h"
 #include "gc/Marking-inl.h"
 #include "gc/PrivateIterators-inl.h"
+#include "gc/StableCellHasher-inl.h"
 #include "gc/TraceMethods-inl.h"
-#include "gc/Zone-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 
 using namespace js;
@@ -214,13 +214,14 @@ static void RelocateCell(Zone* zone, TenuredCell* src, AllocKind thingKind,
 
   // Allocate a new cell.
   MOZ_ASSERT(zone == src->zone());
-  TenuredCell* dst = AllocateCellInGC(zone, thingKind);
+  TenuredCell* dst =
+      reinterpret_cast<TenuredCell*>(AllocateCellInGC(zone, thingKind));
 
   // Copy source cell contents to destination.
   memcpy(dst, src, thingSize);
 
   // Move any uid attached to the object.
-  src->zone()->transferUniqueId(dst, src);
+  gc::TransferUniqueId(dst, src);
 
   if (IsObjectAllocKind(thingKind)) {
     auto* srcObj = static_cast<JSObject*>(static_cast<Cell*>(src));
@@ -454,10 +455,11 @@ void Zone::prepareForCompacting() {
 }
 
 void GCRuntime::sweepZoneAfterCompacting(MovingTracer* trc, Zone* zone) {
-  MOZ_ASSERT(zone->isCollecting());
-  traceWeakFinalizationObserverEdges(trc, zone);
+  MOZ_ASSERT(zone->isGCCompacting());
 
   zone->traceWeakMaps(trc);
+
+  traceWeakFinalizationObserverEdges(trc, zone);
 
   for (auto* cache : zone->weakCaches()) {
     cache->traceWeak(trc, nullptr);
@@ -467,13 +469,16 @@ void GCRuntime::sweepZoneAfterCompacting(MovingTracer* trc, Zone* zone) {
     jitZone->traceWeak(trc);
   }
 
-  for (RealmsInZoneIter r(zone); !r.done(); r.next()) {
-    r->traceWeakRegExps(trc);
-    r->traceWeakSavedStacks(trc);
-    r->traceWeakGlobalEdge(trc);
-    r->traceWeakDebugEnvironmentEdges(trc);
-    r->traceWeakEdgesInJitRealm(trc);
-    r->traceWeakObjectRealm(trc);
+  for (CompartmentsInZoneIter c(zone); !c.done(); c.next()) {
+    c->traceWeakNativeIterators(trc);
+
+    for (RealmsInCompartmentIter r(c); !r.done(); r.next()) {
+      r->traceWeakRegExps(trc);
+      r->traceWeakSavedStacks(trc);
+      r->traceWeakGlobalEdge(trc);
+      r->traceWeakDebugEnvironmentEdges(trc);
+      r->traceWeakEdgesInJitRealm(trc);
+    }
   }
 }
 
@@ -647,26 +652,6 @@ static AllocKinds ForegroundUpdateKinds(AllocKinds kinds) {
   return result;
 }
 
-void GCRuntime::updateRttValueObjects(MovingTracer* trc, Zone* zone) {
-  // We need to update each type descriptor object and any objects stored in
-  // its reserved slots, since some of these contain array objects that also
-  // need to be updated. Do not update any non-reserved slots, since they might
-  // point back to unprocessed descriptor objects.
-
-  zone->rttValueObjects().traceWeak(trc, nullptr);
-
-  for (auto r = zone->rttValueObjects().all(); !r.empty(); r.popFront()) {
-    RttValue* obj = &MaybeForwardedObjectAs<RttValue>(r.front());
-    UpdateCellPointers(trc, obj);
-    for (size_t i = 0; i < RttValue::SlotCount; i++) {
-      Value value = obj->getSlot(i);
-      if (value.isObject()) {
-        UpdateCellPointers(trc, &value.toObject());
-      }
-    }
-  }
-}
-
 void GCRuntime::updateCellPointers(Zone* zone, AllocKinds kinds) {
   AllocKinds fgKinds = ForegroundUpdateKinds(kinds);
   AllocKinds bgKinds = kinds - fgKinds;
@@ -754,10 +739,6 @@ static constexpr AllocKinds UpdatePhaseThree{AllocKind::FUNCTION,
 void GCRuntime::updateAllCellPointers(MovingTracer* trc, Zone* zone) {
   updateCellPointers(zone, UpdatePhaseOne);
 
-  // UpdatePhaseTwo: Update RttValues before all other objects as typed
-  // objects access these objects when we trace them.
-  updateRttValueObjects(trc, zone);
-
   updateCellPointers(zone, UpdatePhaseThree);
 }
 
@@ -837,6 +818,10 @@ void GCRuntime::updateRuntimePointersToRelocatedCells(AutoGCSession& session) {
   jit::JitRuntime::TraceWeakJitcodeGlobalTable(rt, &trc);
   for (JS::detail::WeakCacheBase* cache : rt->weakCaches()) {
     cache->traceWeak(&trc, nullptr);
+  }
+
+  if (rt->hasJitRuntime() && rt->jitRuntime()->hasInterpreterEntryMap()) {
+    rt->jitRuntime()->getInterpreterEntryMap()->updateScriptsAfterMovingGC();
   }
 
   // Type inference may put more blocks here to free.

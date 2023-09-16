@@ -26,23 +26,6 @@ HOST_CFLAGS="${HOST_CFLAGS=}"
 HOST_CXXFLAGS="${HOST_CXXFLAGS=}"
 HOST_LDFLAGS="${HOST_LDFLAGS=}"
 
-dnl ========================================================
-dnl = Preserve certain environment flags passed to configure
-dnl = We want sub projects to receive the same flags
-dnl = untainted by this configure script
-dnl ========================================================
-_SUBDIR_CC="$CC"
-_SUBDIR_CXX="$CXX"
-_SUBDIR_CFLAGS="$CFLAGS"
-_SUBDIR_CPPFLAGS="$CPPFLAGS"
-_SUBDIR_CXXFLAGS="$CXXFLAGS"
-_SUBDIR_LDFLAGS="$LDFLAGS"
-_SUBDIR_HOST_CC="$HOST_CC"
-_SUBDIR_HOST_CFLAGS="$HOST_CFLAGS"
-_SUBDIR_HOST_CXXFLAGS="$HOST_CXXFLAGS"
-_SUBDIR_HOST_LDFLAGS="$HOST_LDFLAGS"
-_SUBDIR_CONFIG_ARGS="$ac_configure_args"
-
 dnl Set the minimum version of toolkit libs used by mozilla
 dnl ========================================================
 W32API_VERSION=3.14
@@ -58,6 +41,7 @@ USE_PTHREADS=
 _PTHREAD_LDFLAGS=""
 
 LDFLAGS="$LDFLAGS $LINKER_LDFLAGS"
+HOST_LDFLAGS="$HOST_LDFLAGS $HOST_LINKER_LDFLAGS"
 
 if test -z "$JS_STANDALONE"; then
   autoconfmk=autoconf-js.mk
@@ -126,15 +110,18 @@ case "$target" in
 
         AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
         AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
-        AC_DEFINE(_USE_MATH_DEFINES) # Otherwise MSVC's math.h doesn't #define M_PI.
 
         MSVC_C_RUNTIME_DLL=vcruntime140.dll
+        if test -n "$IS_VS2019_OR_MORE" -a "$CPU_ARCH" != "x86"; then
+            MSVC_C_RUNTIME_1_DLL=vcruntime140_1.dll
+        fi
         MSVC_CXX_RUNTIME_DLL=msvcp140.dll
 
         # -Zc:sizedDealloc- disables C++14 global sized deallocation (see bug 1160146)
         CXXFLAGS="$CXXFLAGS -Zc:sizedDealloc-"
 
         AC_SUBST(MSVC_C_RUNTIME_DLL)
+        AC_SUBST(MSVC_C_RUNTIME_1_DLL)
         AC_SUBST(MSVC_CXX_RUNTIME_DLL)
 
         CFLAGS="$CFLAGS -D_HAS_EXCEPTIONS=0"
@@ -156,6 +143,8 @@ case "$target" in
             AC_MSG_ERROR([w32api version $W32API_VERSION or higher required.])
         fi
     fi # !GNU_CC
+
+    AC_DEFINE(_USE_MATH_DEFINES) # Otherwise Windows' math.h doesn't #define M_PI.
 
     AC_DEFINE_UNQUOTED(WINVER,0x$WINVER)
     AC_DEFINE_UNQUOTED(_WIN32_WINNT,0x$WINVER)
@@ -184,24 +173,6 @@ MOZ_FIX_LINK_PATHS="-Wl,-rpath-link,${DIST}/bin -Wl,-rpath-link,${prefix}/lib"
 dnl Configure platform-specific CPU architecture compiler options.
 dnl ==============================================================
 MOZ_ARCH_OPTS
-
-dnl ========================================================
-dnl Android libstdc++
-dnl ========================================================
-
-MOZ_ANDROID_STLPORT
-
-dnl ========================================================
-dnl Suppress Clang Argument Warnings
-dnl ========================================================
-WARNINGS_CFLAGS="$_WARNINGS_CFLAGS"
-if test -n "${CLANG_CC}${CLANG_CL}"; then
-    WARNINGS_CFLAGS="-Qunused-arguments $WARNINGS_CFLAGS"
-    CPPFLAGS="-Qunused-arguments ${CPPFLAGS}"
-fi
-if test -n "${CLANG_CXX}${CLANG_CL}"; then
-    _WARNINGS_CXXFLAGS="-Qunused-arguments ${_WARNINGS_CXXFLAGS}"
-fi
 
 MOZ_CONFIG_SANITIZE
 
@@ -267,9 +238,15 @@ if test "$GNU_CC"; then
                   AC_MSG_RESULT([no])
                   LDFLAGS=$_SAVE_LDFLAGS)
 
-    AC_MSG_CHECKING([for --build-id=sha1 option to ld])
+    # While sha1 is deterministic, it is slower.
+    if test -z "$DEVELOPER_OPTIONS"; then
+        build_id=sha1
+    else
+        build_id=uuid
+    fi
+    AC_MSG_CHECKING([for --build-id=$build_id option to ld])
     _SAVE_LDFLAGS=$LDFLAGS
-    LDFLAGS="$LDFLAGS -Wl,--build-id=sha1"
+    LDFLAGS="$LDFLAGS -Wl,--build-id=$build_id"
     AC_TRY_LINK(,,AC_MSG_RESULT([yes]),
                   AC_MSG_RESULT([no])
                   LDFLAGS=$_SAVE_LDFLAGS)
@@ -570,15 +547,6 @@ fi
 AC_LANG_CPLUSPLUS
 
 MOZ_CXX11
-
-case "${OS_TARGET}" in
-WINNT|Darwin|Android)
-  ;;
-*)
-  STL_FLAGS="-I${DIST}/stl_wrappers"
-  WRAP_STL_INCLUDES=1
-  ;;
-esac
 
 dnl Checks for header files.
 dnl ========================================================
@@ -950,13 +918,6 @@ if test -n "$MOZ_INSTRUMENTS"; then
 fi
 
 dnl ========================================================
-dnl Debug (see Bug 939505)
-dnl ========================================================
-if test -n "$MOZ_DEBUG"; then
-    AC_DEFINE(JS_DEBUG)
-fi
-
-dnl ========================================================
 dnl = Enable using the clang plugin to build
 dnl ========================================================
 
@@ -991,7 +952,6 @@ dnl ========================================================
 
 AC_SUBST_LIST(ASFLAGS)
 AC_SUBST_LIST(MOZ_DEBUG_LDFLAGS)
-AC_SUBST_LIST(WARNINGS_CFLAGS)
 
 AC_SUBST_LIST(MOZ_FIX_LINK_PATHS)
 
@@ -1007,7 +967,6 @@ CFLAGS=`echo \
 	$CFLAGS`
 
 CXXFLAGS=`echo \
-	$_WARNINGS_CXXFLAGS \
 	$_COMPILATION_CXXFLAGS \
 	$CXXFLAGS`
 
@@ -1020,12 +979,10 @@ COMPILE_CXXFLAGS=`echo \
     $COMPILE_CXXFLAGS`
 
 HOST_CFLAGS=`echo \
-    $_WARNINGS_HOST_CFLAGS \
     $_COMPILATION_HOST_CFLAGS \
     $HOST_CFLAGS`
 
 HOST_CXXFLAGS=`echo \
-    $_WARNINGS_HOST_CXXFLAGS \
     $_COMPILATION_HOST_CXXFLAGS \
     $HOST_CXXFLAGS`
 
@@ -1074,8 +1031,6 @@ dnl JavaScript shell
 dnl ========================================================
 
 MOZ_CHECK_ALLOCATOR
-
-AC_SUBST(ac_configure_args)
 
 if test -n "$JS_STANDALONE"; then
 JS_LIBRARY_NAME="mozjs-$MOZILLA_SYMBOLVERSION"

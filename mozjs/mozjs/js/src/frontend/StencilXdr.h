@@ -121,6 +121,14 @@ class StencilXDR {
                                       ParserAtomSpan& parserAtomData);
 
   template <XDRMode mode>
+  static XDRResult codeModuleRequest(XDRState<mode>* xdr,
+                                     StencilModuleRequest& stencil);
+
+  template <XDRMode mode>
+  static XDRResult codeModuleRequestVector(
+      XDRState<mode>* xdr, StencilModuleMetadata::RequestVector& vector);
+
+  template <XDRMode mode>
   static XDRResult codeModuleEntry(XDRState<mode>* xdr,
                                    StencilModuleEntry& stencil);
 
@@ -148,12 +156,12 @@ class StencilXDR {
 /*
  * The structure of the Stencil XDR buffer is:
  *
- * 1. Header
- *   a. Version
- *   b. ScriptSource
- *   d. Alignment padding
- * 2. Stencil
- *   a. CompilationStencil
+ * 1. Version
+ * 2. length of content
+ * 3. checksum of content
+ * 4. content
+ *   a. ScriptSource
+ *   b. CompilationStencil
  */
 
 /*
@@ -169,9 +177,8 @@ class XDRStencilDecoder : public XDRState<XDR_DECODE> {
   using Base = XDRState<XDR_DECODE>;
 
  public:
-  XDRStencilDecoder(JSContext* cx, ErrorContext* ec,
-                    const JS::TranscodeRange& range)
-      : Base(cx, ec, range) {
+  XDRStencilDecoder(FrontendContext* fc, const JS::TranscodeRange& range)
+      : Base(fc, range) {
     MOZ_ASSERT(JS::IsTranscodingBytecodeAligned(range.begin().get()));
   }
 
@@ -191,9 +198,8 @@ class XDRStencilEncoder : public XDRState<XDR_ENCODE> {
   using Base = XDRState<XDR_ENCODE>;
 
  public:
-  XDRStencilEncoder(JSContext* cx, ErrorContext* ec,
-                    JS::TranscodeBuffer& buffer)
-      : Base(cx, ec, buffer, buffer.length()) {
+  XDRStencilEncoder(FrontendContext* fc, JS::TranscodeBuffer& buffer)
+      : Base(fc, buffer, buffer.length()) {
     // NOTE: If buffer is empty, buffer.begin() doesn't point valid buffer.
     MOZ_ASSERT_IF(!buffer.empty(),
                   JS::IsTranscodingBytecodeAligned(buffer.begin()));

@@ -28,6 +28,10 @@
 #include "js/Utility.h"
 #include "util/Unicode.h"
 
+namespace js {
+class FrontendContext;
+}  // namespace js
+
 class JSLinearString;
 
 template <typename CharT>
@@ -51,7 +55,7 @@ static MOZ_ALWAYS_INLINE size_t js_strnlen(const CharT* s, size_t maxlen) {
 
 namespace js {
 
-class GenericPrinter;
+class JS_PUBLIC_API GenericPrinter;
 
 template <typename CharT>
 constexpr uint8_t AsciiDigitToNumber(CharT c) {
@@ -148,6 +152,7 @@ extern UniqueTwoByteChars DuplicateStringToArena(arena_id_t destArenaId,
                                                  const char16_t* s, size_t n);
 
 extern UniqueChars DuplicateString(JSContext* cx, const char* s);
+extern UniqueChars DuplicateString(FrontendContext* fc, const char* s);
 
 extern UniqueChars DuplicateString(JSContext* cx, const char* s, size_t n);
 
@@ -155,6 +160,8 @@ extern UniqueLatin1Chars DuplicateString(JSContext* cx, const JS::Latin1Char* s,
                                          size_t n);
 
 extern UniqueTwoByteChars DuplicateString(JSContext* cx, const char16_t* s);
+extern UniqueTwoByteChars DuplicateString(FrontendContext* fc,
+                                          const char16_t* s);
 
 extern UniqueTwoByteChars DuplicateString(JSContext* cx, const char16_t* s,
                                           size_t n);

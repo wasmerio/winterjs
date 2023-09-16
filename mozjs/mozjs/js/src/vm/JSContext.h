@@ -34,7 +34,6 @@
 #include "vm/Activation.h"  // js::Activation
 #include "vm/MallocProvider.h"
 #include "vm/Runtime.h"
-#include "vm/SharedStencil.h"  // js::SharedImmutableScriptDataTable
 #include "wasm/WasmContext.h"
 
 struct JS_PUBLIC_API JSContext;
@@ -53,10 +52,6 @@ class JitActivation;
 class JitContext;
 class DebugModeOSRVolatileJitFrameIter;
 }  // namespace jit
-
-namespace gc {
-class AutoSuppressNurseryCellAlloc;
-}  // namespace gc
 
 /* Detects cycles when traversing an object graph. */
 class MOZ_RAII AutoCycleDetector {
@@ -80,7 +75,7 @@ class MOZ_RAII AutoCycleDetector {
 
 struct AutoResolving;
 
-struct OffThreadFrontendErrors;  // vm/HelperThreadState.h
+struct FrontendErrors;  // vm/HelperThreadState.h
 
 class InternalJobQueue : public JS::JobQueue {
  public:
@@ -171,15 +166,12 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   js::UnprotectedData<JSRuntime*> runtime_;
   js::WriteOnceData<js::ContextKind> kind_;
 
-  friend class js::gc::AutoSuppressNurseryCellAlloc;
-  js::ContextData<size_t> nurserySuppressions_;
-
   js::ContextData<JS::ContextOptions> options_;
 
   // Thread that the JSContext is currently running on, if in use.
   js::ThreadId currentThread_;
 
-  js::OffThreadFrontendErrors* errors_;
+  js::FrontendErrors* errors_;
 
   // When a helper thread is using a context, it may need to periodically
   // free unused memory.
@@ -330,14 +322,8 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   inline void leaveRealm(JS::Realm* oldRealm);
 
-  void setOffThreadFrontendErrors(js::OffThreadFrontendErrors* errors) {
-    errors_ = errors;
-  }
-  js::OffThreadFrontendErrors* offThreadFrontendErrors() const {
-    return errors_;
-  }
-
-  bool isNurseryAllocSuppressed() const { return nurserySuppressions_; }
+  void setFrontendErrors(js::FrontendErrors* errors) { errors_ = errors; }
+  js::FrontendErrors* frontendErrors() const { return errors_; }
 
   // Threads may freely access any data in their realm, compartment and zone.
   JS::Compartment* compartment() const {
@@ -370,12 +356,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   js::AtomsTable& atoms() { return runtime_->atoms(); }
 
   js::SymbolRegistry& symbolRegistry() { return runtime_->symbolRegistry(); }
-
-  // Methods to access runtime data that must be protected by locks.
-  js::SharedImmutableScriptDataTable& scriptDataTable(
-      js::AutoLockScriptData& lock) {
-    return runtime_->scriptDataTable(lock);
-  }
 
   // Methods to access other runtime data that checks locking internally.
   js::gc::AtomMarkingRuntime& atomMarking() { return runtime_->gc.atomMarking; }
@@ -522,6 +502,11 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
    */
   js::ContextData<int32_t> suppressGC;
 
+#ifdef FUZZING_JS_FUZZILLI
+  uint32_t executionHash;
+  uint32_t executionHashInputs;
+#endif
+
 #ifdef DEBUG
   js::ContextData<size_t> noNurseryAllocationCheck;
 
@@ -584,6 +569,18 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   void verifyIsSafeToGC() {
     MOZ_DIAGNOSTIC_ASSERT(!inUnsafeRegion,
                           "[AutoAssertNoGC] possible GC in GC-unsafe region");
+  }
+
+  bool isInUnsafeRegion() const { return bool(inUnsafeRegion); }
+
+  // For JIT use.
+  void resetInUnsafeRegion() {
+    MOZ_ASSERT(inUnsafeRegion >= 0);
+    inUnsafeRegion = 0;
+  }
+
+  static constexpr size_t offsetOfInUnsafeRegion() {
+    return offsetof(JSContext, inUnsafeRegion);
   }
 
   /* Whether sampling should be enabled or not. */
@@ -682,17 +679,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   }
   const js::AutoCycleDetector::Vector& cycleDetectorVector() const {
     return cycleDetectorVector_.ref();
-  }
-
- private:
-  js::ContextData<JS::PersistentRooted<JSFunction*>> watchtowerTestingCallback_;
-
- public:
-  JSFunction*& watchtowerTestingCallbackRef() {
-    if (!watchtowerTestingCallback_.ref().initialized()) {
-      watchtowerTestingCallback_.ref().init(this);
-    }
-    return watchtowerTestingCallback_.ref().get();
   }
 
   /* Client opaque pointer. */
@@ -1092,35 +1078,6 @@ class AutoAssertNoPendingException {
 #endif
 };
 
-class MOZ_RAII AutoLockScriptData {
-  JSRuntime* runtime;
-
- public:
-  explicit AutoLockScriptData(JSRuntime* rt) {
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt) ||
-               CurrentThreadIsParseThread());
-    runtime = rt;
-    if (runtime->hasParseTasks()) {
-      runtime->scriptDataLock.lock();
-    } else {
-      MOZ_ASSERT(!runtime->activeThreadHasScriptDataAccess);
-#ifdef DEBUG
-      runtime->activeThreadHasScriptDataAccess = true;
-#endif
-    }
-  }
-  ~AutoLockScriptData() {
-    if (runtime->hasParseTasks()) {
-      runtime->scriptDataLock.unlock();
-    } else {
-      MOZ_ASSERT(runtime->activeThreadHasScriptDataAccess);
-#ifdef DEBUG
-      runtime->activeThreadHasScriptDataAccess = false;
-#endif
-    }
-  }
-};
-
 class MOZ_RAII AutoNoteDebuggerEvaluationWithOnNativeCallHook {
   JSContext* cx;
   Debugger* oldValue;
@@ -1172,22 +1129,6 @@ class MOZ_RAII AutoUnsafeCallWithABI {
       UnsafeABIStrictness unused_ = UnsafeABIStrictness::NoExceptions) {}
 #endif
 };
-
-namespace gc {
-
-// Note that this class does not suppress buffer allocation/reallocation in the
-// nursery, only Cells themselves.
-class MOZ_RAII AutoSuppressNurseryCellAlloc {
-  JSContext* cx_;
-
- public:
-  explicit AutoSuppressNurseryCellAlloc(JSContext* cx) : cx_(cx) {
-    cx_->nurserySuppressions_++;
-  }
-  ~AutoSuppressNurseryCellAlloc() { cx_->nurserySuppressions_--; }
-};
-
-}  // namespace gc
 
 } /* namespace js */
 

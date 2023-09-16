@@ -13,6 +13,7 @@
 
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"  // REGEXP_*_FLAG
+#include "frontend/FrontendContext.h"    // AutoReportFrontendContext
 #include "frontend/TokenStream.h"
 #include "gc/HashUtil.h"
 #include "irregexp/RegExpAPI.h"
@@ -22,7 +23,6 @@
 #include "js/RegExp.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlags
 #include "util/StringBuffer.h"
-#include "vm/ErrorContext.h"  // AutoReportFrontendContext
 #include "vm/MatchPairs.h"
 #include "vm/PlainObject.h"
 #include "vm/RegExpStatics.h"
@@ -149,13 +149,28 @@ bool RegExpObject::isOriginalFlagGetter(JSNative native, RegExpFlags* mask) {
   return false;
 }
 
+static bool FinishRegExpClassInit(JSContext* cx, JS::HandleObject ctor,
+                                  JS::HandleObject proto) {
+#ifdef DEBUG
+  // Assert RegExp.prototype.exec is usually stored in a dynamic slot. The
+  // optimization in InlinableNativeIRGenerator::tryAttachIntrinsicRegExpExec
+  // depends on this.
+  Handle<NativeObject*> nproto = proto.as<NativeObject>();
+  auto prop = nproto->lookupPure(cx->names().exec);
+  MOZ_ASSERT(prop->isDataProperty());
+  MOZ_ASSERT(!nproto->isFixedSlot(prop->slot()));
+#endif
+  return true;
+}
+
 static const ClassSpec RegExpObjectClassSpec = {
     GenericCreateConstructor<js::regexp_construct, 2, gc::AllocKind::FUNCTION>,
     GenericCreatePrototype<RegExpObject>,
     nullptr,
     js::regexp_static_props,
     js::regexp_methods,
-    js::regexp_properties};
+    js::regexp_properties,
+    FinishRegExpClassInit};
 
 const JSClass RegExpObject::class_ = {
     js_RegExp_str,
@@ -205,9 +220,9 @@ RegExpObject* RegExpObject::create(JSContext* cx, Handle<JSAtom*> source,
                                    RegExpFlags flags, NewObjectKind newKind) {
   Rooted<RegExpObject*> regexp(cx);
   {
-    AutoReportFrontendContext ec(cx);
+    AutoReportFrontendContext fc(cx);
     CompileOptions dummyOptions(cx);
-    frontend::DummyTokenStream dummyTokenStream(cx, &ec, dummyOptions);
+    frontend::DummyTokenStream dummyTokenStream(&fc, dummyOptions);
 
     LifoAllocScope allocScope(&cx->tempLifoAlloc());
     if (!irregexp::CheckPatternSyntax(cx, cx->stackLimitForCurrentPrincipal(),
@@ -245,8 +260,8 @@ RegExpShared* RegExpObject::createShared(JSContext* cx,
   return shared;
 }
 
-Shape* RegExpObject::assignInitialShape(JSContext* cx,
-                                        Handle<RegExpObject*> self) {
+SharedShape* RegExpObject::assignInitialShape(JSContext* cx,
+                                              Handle<RegExpObject*> self) {
   MOZ_ASSERT(self->empty());
 
   static_assert(LAST_INDEX_SLOT == 0);
@@ -258,7 +273,7 @@ Shape* RegExpObject::assignInitialShape(JSContext* cx,
     return nullptr;
   }
 
-  return self->shape();
+  return self->sharedShape();
 }
 
 void RegExpObject::initIgnoringLastIndex(JSAtom* source, RegExpFlags flags) {
@@ -423,21 +438,25 @@ JSLinearString* js::EscapeRegExpPattern(JSContext* cx, Handle<JSAtom*> src) {
 
   // We may never need to use |sb|. Start using it lazily.
   JSStringBuilder sb(cx);
-
+  bool escapeFailed = false;
   if (src->hasLatin1Chars()) {
     JS::AutoCheckCannotGC nogc;
-    if (!::EscapeRegExpPattern(sb, src->latin1Chars(nogc), src->length())) {
-      return nullptr;
-    }
+    escapeFailed =
+        !::EscapeRegExpPattern(sb, src->latin1Chars(nogc), src->length());
   } else {
     JS::AutoCheckCannotGC nogc;
-    if (!::EscapeRegExpPattern(sb, src->twoByteChars(nogc), src->length())) {
-      return nullptr;
-    }
+    escapeFailed =
+        !::EscapeRegExpPattern(sb, src->twoByteChars(nogc), src->length());
+  }
+  if (escapeFailed) {
+    return nullptr;
   }
 
   // Step 3.
-  return sb.empty() ? src : sb.finishString();
+  if (sb.empty()) {
+    return src;
+  }
+  return sb.finishString();
 }
 
 // ES6 draft rev32 21.2.5.14. Optimized for RegExpObject.
@@ -543,15 +562,6 @@ RegExpShared::RegExpShared(JSAtom* source, RegExpFlags flags)
     : CellWithTenuredGCPointer(source), pairCount_(0), flags(flags) {}
 
 void RegExpShared::traceChildren(JSTracer* trc) {
-  // Discard code to avoid holding onto ExecutablePools.
-  gc::GCRuntime* gc = &trc->runtime()->gc;
-  // Bug 1758095: isIncrementalGCInProgress() also returns true when called from
-  // the collector during a non-incremental GC.
-  if (trc->isMarkingTracer() && gc->isIncrementalGCInProgress() &&
-      gc->isShrinkingGC()) {
-    discardJitCode();
-  }
-
   TraceNullableCellHeaderEdge(trc, this, "RegExpShared source");
   if (kind() == RegExpShared::Kind::Atom) {
     TraceNullableEdge(trc, &patternAtom_, "RegExpShared pattern atom");
@@ -1193,23 +1203,26 @@ JS_PUBLIC_API bool JS::CheckRegExpSyntax(JSContext* cx, const char16_t* chars,
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
-  AutoReportFrontendContext ec(cx);
+  AutoReportFrontendContext fc(cx);
   CompileOptions dummyOptions(cx);
-  frontend::DummyTokenStream dummyTokenStream(cx, &ec, dummyOptions);
+  frontend::DummyTokenStream dummyTokenStream(&fc, dummyOptions);
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
 
   mozilla::Range<const char16_t> source(chars, length);
   bool success = irregexp::CheckPatternSyntax(
-      cx, cx->stackLimitForCurrentPrincipal(), dummyTokenStream, source, flags);
+      cx->tempLifoAlloc(), cx->stackLimitForCurrentPrincipal(),
+      dummyTokenStream, source, flags);
   error.set(UndefinedValue());
   if (!success) {
+    if (!fc.convertToRuntimeErrorAndClear()) {
+      return false;
+    }
     // We can fail because of OOM or over-recursion even if the syntax is valid.
-    if (ec.hadOutOfMemory() || ec.hadOverRecursed()) {
+    if (cx->isThrowingOutOfMemory() || cx->isThrowingOverRecursed()) {
       return false;
     }
 
-    ec.convertToRuntimeErrorAndClear();
     if (!cx->getPendingException(error)) {
       return false;
     }

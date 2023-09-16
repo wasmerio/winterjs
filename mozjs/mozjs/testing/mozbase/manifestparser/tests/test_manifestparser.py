@@ -4,17 +4,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
 import os
 import shutil
 import tempfile
 import unittest
-from six import StringIO
 
 import mozunit
-
 from manifestparser import ManifestParser
+from six import StringIO
 
 here = os.path.dirname(os.path.abspath(__file__))
 
@@ -437,6 +434,19 @@ yellow = submarine
         parser.read(manifest)
         self.assertEqual(len(parser.tests), 0)
         self.assertTrue(len(parser.manifests()) == 1)
+
+    def test_manifest_with_invalid_condition(self):
+        """
+        Ensure a skip-if or similar condition with an assignment in it
+        causes errors.
+        """
+
+        parser = ManifestParser()
+        manifest = os.path.join(here, "broken-skip-if.ini")
+        with self.assertRaisesRegex(
+            Exception, "Should not assign in skip-if condition for DEFAULT"
+        ):
+            parser.read(manifest)
 
 
 if __name__ == "__main__":

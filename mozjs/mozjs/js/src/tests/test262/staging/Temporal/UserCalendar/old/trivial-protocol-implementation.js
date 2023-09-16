@@ -41,6 +41,7 @@ var obj = {
   toString() {
     return "decimal";
   },
+  fields(fieldNames) { return fieldNames; },
   dateFromFields(fields, options) {
     var {
       overflow = "constrain"
@@ -84,7 +85,14 @@ var obj = {
   day(date) {
     var {days} = isoToDecimal(date);
     return days % 10 + 1;
+  },
+  mergeFields(fields, additionalFields) {
+  if ("month" in additionalFields || "monthCode" in additionalFields) {
+    let {month, monthCode, ...rest} = fields;
+    return {...rest, ...additionalFields};
   }
+  return {...fields, ...additionalFields};
+}
 };
 var date = Temporal.PlainDate.from({
   year: 184,
@@ -115,7 +123,7 @@ assert.sameValue(typeof obj, "object")
 
 // .id is not available in from()
 assert.throws(RangeError, () => Temporal.Calendar.from("decimal"));
-assert.throws(RangeError, () => Temporal.Calendar.from("2020-06-05T09:34-07:00[America/Vancouver][u-ca=decimal]"));
+assert.throws(RangeError, () => Temporal.Calendar.from("2020-06-05T09:34-00:00[UTC][u-ca=decimal]"));
 
 // Temporal.PlainDate.from()
 assert.sameValue(`${ date }`, "2020-06-05[u-ca=decimal]")

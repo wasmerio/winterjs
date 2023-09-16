@@ -2,34 +2,28 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import logging
 import os
+import sys
 import tempfile
 import textwrap
 import unittest
-import six
-import sys
 
+import six
+from buildconfig import topsrcdir
+from mozpack import path as mozpath
+from mozunit import main
 from six import StringIO
 
-from mozunit import main
-from mozpack import path as mozpath
-
+from common import ConfigureTestSandbox
+from mozbuild.configure import ConfigureSandbox
 from mozbuild.configure.util import (
     ConfigureOutputHandler,
-    getpreferredencoding,
     LineIO,
     Version,
+    getpreferredencoding,
 )
-
-from mozbuild.configure import ConfigureSandbox
-
 from mozbuild.util import exec_
-
-from buildconfig import topsrcdir
-from common import ConfigureTestSandbox
 
 
 class TestConfigureOutputHandler(unittest.TestCase):

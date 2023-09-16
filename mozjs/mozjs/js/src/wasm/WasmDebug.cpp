@@ -372,6 +372,7 @@ void DebugState::ensureEnterFrameTrapsState(JSContext* cx, Instance* instance,
 bool DebugState::debugGetLocalTypes(uint32_t funcIndex, ValTypeVector* locals,
                                     size_t* argsLength,
                                     StackResults* stackResults) {
+  const TypeContext& types = *metadata().types;
   const FuncType& funcType = metadata().debugFuncType(funcIndex);
   const ValTypeVector& args = funcType.args();
   const ValTypeVector& results = funcType.results();
@@ -392,7 +393,7 @@ bool DebugState::debugGetLocalTypes(uint32_t funcIndex, ValTypeVector* locals,
   Decoder d(bytecode().begin() + offsetInModule, bytecode().end(),
             offsetInModule,
             /* error = */ nullptr);
-  return DecodeValidatedLocalEntries(d, locals);
+  return DecodeValidatedLocalEntries(types, d, locals);
 }
 
 bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
@@ -431,8 +432,7 @@ bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
     return true;
   }
 
-  uint8_t* globalData = instance.globalData();
-  void* dataPtr = globalData + global.offset();
+  void* dataPtr = instance.data() + global.offset();
   if (global.isIndirect()) {
     dataPtr = *static_cast<void**>(dataPtr);
   }

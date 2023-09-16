@@ -4,7 +4,7 @@ import argparse
 import os
 import sys
 from collections import OrderedDict
-from distutils.spawn import find_executable
+from shutil import which
 from datetime import timedelta
 
 from . import config
@@ -159,8 +159,11 @@ scheme host and port.""")
     # TODO(bashi): Remove this when WebTransport over HTTP/3 server is enabled by default.
     test_selection_group.add_argument("--enable-webtransport-h3",
                                       action="store_true",
-                                      default=False,
-                                      help="Enable tests that require WebTransport over HTTP/3 server (default: false)")
+                                      dest="enable_webtransport_h3",
+                                      default=True,
+                                      help="Enable tests that require WebTransport over HTTP/3 server (default: true)")
+    test_selection_group.add_argument("--no-enable-webtransport-h3", action="store_false", dest="enable_webtransport_h3",
+                                      help="Do not enable WebTransport tests on experimental channels")
     test_selection_group.add_argument("--tag", action="append", dest="tags",
                                       help="Labels applied to tests to include in the run. "
                                            "Labels starting dir: are equivalent to top-level directories.")
@@ -181,11 +184,9 @@ scheme host and port.""")
     debugging_group.add_argument("--repeat-until-unexpected", action="store_true", default=None,
                                  help="Run tests in a loop until one returns an unexpected result")
     debugging_group.add_argument('--retry-unexpected', type=int, default=0,
-                                 help=('Maximum number of times to retry '
-                                       'each test that consistently runs '
-                                       'unexpectedly in the initial repeat '
-                                       'loop. A retried test takes any '
-                                       'expected status as its final result.'))
+                                 help=('Maximum number of times to retry unexpected tests. '
+                                       'A test is retried until it gets one of the expected status, '
+                                       'or until it exhausts the maximum number of retries.'))
     debugging_group.add_argument('--pause-after-test', action="store_true", default=None,
                                  help="Halt the test runner after each test (this happens by default if only a single test is run)")
     debugging_group.add_argument('--no-pause-after-test', dest="pause_after_test", action="store_false",
@@ -260,6 +261,11 @@ scheme host and port.""")
                               help="Don't run browser in headless mode")
     config_group.add_argument("--instrument-to-file", action="store",
                               help="Path to write instrumentation logs to")
+    config_group.add_argument("--suppress-handler-traceback", action="store_true", default=None,
+                              help="Don't write the stacktrace for exceptions in server handlers")
+    config_group.add_argument("--no-suppress-handler-traceback", action="store_false",
+                              dest="supress_handler_traceback",
+                              help="Write the stacktrace for exceptions in server handlers")
 
     build_type = parser.add_mutually_exclusive_group()
     build_type.add_argument("--debug-build", dest="debug", action="store_true",
@@ -274,7 +280,8 @@ scheme host and port.""")
                                 help="Total number of chunks to use")
     chunking_group.add_argument("--this-chunk", action="store", type=int, default=1,
                                 help="Chunk number to run")
-    chunking_group.add_argument("--chunk-type", action="store", choices=["none", "hash", "dir_hash"],
+    chunking_group.add_argument("--chunk-type", action="store",
+                                choices=["none", "hash", "id_hash", "dir_hash"],
                                 default=None, help="Chunking type to use")
 
     ssl_group = parser.add_argument_group("SSL/TLS")
@@ -317,8 +324,6 @@ scheme host and port.""")
                              "silently ignored for opt, mobile)")
     gecko_group.add_argument("--no-leak-check", dest="leak_check", action="store_false", default=None,
                              help="Disable leak checking")
-    gecko_group.add_argument("--stylo-threads", action="store", type=int, default=1,
-                             help="Number of parallel threads to use for stylo")
     gecko_group.add_argument("--reftest-internal", dest="reftest_internal", action="store_true",
                              default=None, help="Enable reftest runner implemented inside Marionette")
     gecko_group.add_argument("--reftest-external", dest="reftest_internal", action="store_false",
@@ -327,10 +332,14 @@ scheme host and port.""")
                              choices=["always", "fail", "unexpected"], default=None,
                              help="With --reftest-internal, when to take a screenshot")
     gecko_group.add_argument("--chaos", dest="chaos_mode_flags", action="store",
-                             nargs="?", const=0xFFFFFFFF, type=int,
+                             nargs="?", const=0xFFFFFFFF, type=lambda x: int(x, 16),
                              help="Enable chaos mode with the specified feature flag "
                              "(see http://searchfox.org/mozilla-central/source/mfbt/ChaosMode.h for "
                              "details). If no value is supplied, all features are activated")
+
+    gecko_view_group = parser.add_argument_group("GeckoView-specific")
+    gecko_view_group.add_argument("--setenv", dest="env", action="append", default=[],
+                                  help="Set target environment variable, like FOO=BAR")
 
     servo_group = parser.add_argument_group("Servo-specific")
     servo_group.add_argument("--user-stylesheet",
@@ -348,6 +357,16 @@ scheme host and port.""")
     chrome_group.add_argument("--enable-swiftshader", action="store_true", default=False,
                              help="Enable SwiftShader for CPU-based 3D graphics. This can be used "
                              "in environments with no hardware GPU available.")
+    chrome_group.add_argument("--enable-experimental", action="store_true", dest="enable_experimental",
+                              help="Enable --enable-experimental-web-platform-features flag", default=None)
+    chrome_group.add_argument("--no-enable-experimental", action="store_false", dest="enable_experimental",
+                              help="Do not enable --enable-experimental-web-platform-features flag "
+                              "on experimental channels")
+    chrome_group.add_argument(
+        "--enable-sanitizer",
+        action="store_true",
+        dest="sanitizer_enabled",
+        help="Only alert on sanitizer-related errors and crashes.")
 
     sauce_group = parser.add_argument_group("Sauce Labs-specific")
     sauce_group.add_argument("--sauce-browser", dest="sauce_browser",
@@ -488,11 +507,7 @@ def exe_path(name):
     if name is None:
         return
 
-    path = find_executable(name)
-    if path and os.access(path, os.X_OK):
-        return path
-    else:
-        return None
+    return which(name)
 
 
 def check_paths(kwargs):

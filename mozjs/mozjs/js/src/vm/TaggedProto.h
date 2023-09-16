@@ -59,16 +59,24 @@ class TaggedProto {
 };
 
 template <>
-struct MovableCellHasher<TaggedProto> {
+struct StableCellHasher<TaggedProto> {
   using Key = TaggedProto;
   using Lookup = TaggedProto;
 
-  static bool hasHash(const Lookup& l) {
-    return !l.isObject() || MovableCellHasher<JSObject*>::hasHash(l.toObject());
+  static bool maybeGetHash(const Lookup& l, HashNumber* hashOut) {
+    if (!l.isObject()) {
+      *hashOut = hash(l);
+      return true;
+    }
+
+    return StableCellHasher<JSObject*>::maybeGetHash(l.toObject(), hashOut);
   }
-  static bool ensureHash(const Lookup& l) {
-    return !l.isObject() ||
-           MovableCellHasher<JSObject*>::ensureHash(l.toObject());
+  static bool ensureHash(const Lookup& l, HashNumber* hashOut) {
+    if (!l.isObject()) {
+      *hashOut = hash(l);
+      return true;
+    }
+    return StableCellHasher<JSObject*>::ensureHash(l.toObject(), hashOut);
   }
   static HashNumber hash(const Lookup& l) {
     if (l.isDynamic()) {
@@ -77,12 +85,12 @@ struct MovableCellHasher<TaggedProto> {
     if (!l.isObject()) {
       return uint64_t(0);
     }
-    return MovableCellHasher<JSObject*>::hash(l.toObject());
+    return StableCellHasher<JSObject*>::hash(l.toObject());
   }
   static bool match(const Key& k, const Lookup& l) {
     return k.isDynamic() == l.isDynamic() && k.isObject() == l.isObject() &&
            (!k.isObject() ||
-            MovableCellHasher<JSObject*>::match(k.toObject(), l.toObject()));
+            StableCellHasher<JSObject*>::match(k.toObject(), l.toObject()));
   }
 };
 

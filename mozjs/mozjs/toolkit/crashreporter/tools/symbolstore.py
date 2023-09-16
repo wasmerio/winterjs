@@ -21,33 +21,29 @@
 #     -s <srcdir>  : Use <srcdir> as the top source directory to
 #                    generate relative filenames.
 
-from __future__ import print_function
-
-import buildconfig
+import ctypes
 import errno
-import sys
-import platform
 import os
+import platform
 import re
 import shutil
-import textwrap
 import subprocess
+import sys
+import textwrap
 import time
-import ctypes
-
 from optparse import OptionParser
+from pathlib import Path
 
-from mozbuild.util import memoize
+import buildconfig
 from mozbuild.generated_sources import (
+    GENERATED_SOURCE_EXTS,
     get_filename_with_digest,
-    get_generated_sources,
     get_s3_region_and_bucket,
 )
+from mozbuild.util import memoize
+from mozpack import executables
 from mozpack.copier import FileRegistry
-from mozpack.manifests import (
-    InstallManifest,
-    UnreadableInstallManifest,
-)
+from mozpack.manifests import InstallManifest, UnreadableInstallManifest
 
 # Utility classes
 
@@ -317,10 +313,11 @@ else:
 
 
 def IsInDir(file, dir):
-    # the lower() is to handle win32+vc8, where
-    # the source filenames come out all lowercase,
-    # but the srcdir can be mixed case
-    return os.path.abspath(file).lower().startswith(os.path.abspath(dir).lower())
+    try:
+        Path(file).relative_to(dir)
+        return True
+    except ValueError:
+        return False
 
 
 def GetVCSFilenameFromSrcdir(file, srcdir):
@@ -486,7 +483,6 @@ class Dumper:
         copy_debug=False,
         vcsinfo=False,
         srcsrv=False,
-        generated_files=None,
         s3_bucket=None,
         file_mapping=None,
     ):
@@ -503,7 +499,6 @@ class Dumper:
         self.copy_debug = copy_debug
         self.vcsinfo = vcsinfo
         self.srcsrv = srcsrv
-        self.generated_files = generated_files or {}
         self.s3_bucket = s3_bucket
         self.file_mapping = file_mapping or {}
         # Add a static mapping for Rust sources. Since Rust 1.30 official Rust builds map
@@ -518,12 +513,6 @@ class Dumper:
     # subclasses override this
     def ShouldProcess(self, file):
         return True
-
-    def RunFileCommand(self, file):
-        """Utility function, returns the output of file(1)"""
-        # we use -L to read the targets of symlinks,
-        # and -b to print just the content, not the filename
-        return read_output("file", "-Lb", file)
 
     # This is a no-op except on Win32
     def SourceServerIndexing(
@@ -611,10 +600,21 @@ class Dumper:
                         if filename in self.file_mapping:
                             filename = self.file_mapping[filename]
                         if self.vcsinfo:
-                            gen_path = self.generated_files.get(filename)
-                            if gen_path and self.s3_bucket:
+                            try:
+                                gen_path = Path(filename)
+                                rel_gen_path = gen_path.relative_to(
+                                    buildconfig.topobjdir
+                                )
+                            except ValueError:
+                                gen_path = None
+                            if (
+                                gen_path
+                                and gen_path.exists()
+                                and gen_path.suffix in GENERATED_SOURCE_EXTS
+                                and self.s3_bucket
+                            ):
                                 filename = get_generated_file_s3_path(
-                                    filename, gen_path, self.s3_bucket
+                                    filename, str(rel_gen_path), self.s3_bucket
                                 )
                                 rootname = ""
                             else:
@@ -832,7 +832,7 @@ class Dumper_Linux(Dumper):
         file(1) reports as being ELF files.  It expects to find the file
         command in PATH."""
         if file.endswith(".so") or os.access(file, os.X_OK):
-            return self.RunFileCommand(file).startswith("ELF")
+            return executables.get_type(file) == executables.ELF
         return False
 
     def CopyExeAndDebugInfo(self, file, debug_file, guid, code_file, code_id):
@@ -866,21 +866,13 @@ class Dumper_Linux(Dumper):
 
 
 class Dumper_Solaris(Dumper):
-    def RunFileCommand(self, file):
-        """Utility function, returns the output of file(1)"""
-        try:
-            output = os.popen("file " + file).read()
-            return output.split("\t")[1]
-        except Exception:
-            return ""
-
     def ShouldProcess(self, file):
         """This function will allow processing of files that are
         executable, or end with the .so extension, and additionally
         file(1) reports as being ELF files.  It expects to find the file
         command in PATH."""
         if file.endswith(".so") or os.access(file, os.X_OK):
-            return self.RunFileCommand(file).startswith("ELF")
+            return executables.get_type(file) == executables.ELF
         return False
 
 
@@ -891,7 +883,7 @@ class Dumper_Mac(Dumper):
         file(1) reports as being Mach-O files.  It expects to find the file
         command in PATH."""
         if file.endswith(".dylib") or os.access(file, os.X_OK):
-            return self.RunFileCommand(file).startswith("Mach-O")
+            return executables.get_type(file) == executables.MACHO
         return False
 
     def ProcessFile(self, file, count_ctors=False):
@@ -1083,11 +1075,6 @@ to canonical locations in the source repository. Specify
         parser.error(str(e))
         exit(1)
     file_mapping = make_file_mapping(manifests)
-    # Any paths that get compared to source file names need to go through realpath.
-    generated_files = {
-        realpath(os.path.join(buildconfig.topobjdir, f)): f
-        for (f, _) in get_generated_sources()
-    }
     _, bucket = get_s3_region_and_bucket()
     dumper = GetPlatformSpecificDumper(
         dump_syms=args[0],
@@ -1097,7 +1084,6 @@ to canonical locations in the source repository. Specify
         srcdirs=options.srcdir,
         vcsinfo=options.vcsinfo,
         srcsrv=options.srcsrv,
-        generated_files=generated_files,
         s3_bucket=bucket,
         file_mapping=file_mapping,
     )

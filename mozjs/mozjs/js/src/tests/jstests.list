@@ -612,13 +612,13 @@ skip script test262/built-ins/AsyncGeneratorPrototype/return/return-suspendedYie
 # https://github.com/tc39/proposal-intl-numberformat-v3/pull/107
 skip script test262/intl402/NumberFormat/test-option-useGrouping.js
 
-
 ###########################################################
 # Tests disabled due to issues in test262 importer script #
 ###########################################################
 
-# test262 importer merges all includes in a per directory shell.js file, breaking this harness test case.
+# test262 importer merges all includes in a per directory shell.js file, breaking these harness test cases.
 skip script test262/harness/detachArrayBuffer.js
+skip script test262/harness/asyncHelpers-asyncTest-without-async-flag.js
 
 # Likewise here -- shell.js defines an |AsyncFunction| global property for
 # various tests in this directory that have an include that defines it, but this
@@ -650,6 +650,15 @@ skip script test262/intl402/DateTimeFormat/prototype/resolvedOptions/hourCycle-d
 # See bug: https://bugzilla.mozilla.org/show_bug.cgi?id=1769088
 skip script test262/built-ins/Date/year-zero.js
 skip script test262/built-ins/Date/parse/year-zero.js
+
+# Array.prototype.concat currently doesn't support spreading tuples. The spec
+# for records and tuples is undergoing major (design) changes, so disable the
+# test for now.
+skip script non262/Tuple/prototype/concat/concat-with-array.js
+
+# https://github.com/tc39/test262/pull/3804
+skip script test262/intl402/Locale/constructor-non-iana-canon.js
+skip script test262/intl402/Locale/prototype/minimize/removing-likely-subtags-first-adds-likely-subtags.js
 
 
 ##############################################

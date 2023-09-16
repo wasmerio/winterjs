@@ -627,6 +627,7 @@ void MacroAssemblerX64::handleFailureWithHandlerTail(Label* profilerExitTail,
   bind(&wasm);
   loadPtr(Address(rsp, ResumeFromException::offsetOfFramePointer()), rbp);
   loadPtr(Address(rsp, ResumeFromException::offsetOfStackPointer()), rsp);
+  movePtr(ImmPtr((const void*)wasm::FailInstanceReg), InstanceReg);
   masm.ret();
 
   // Found a wasm catch handler, restore state and jump to it.
@@ -881,8 +882,8 @@ void MacroAssembler::loadStoreBuffer(Register ptr, Register buffer) {
   if (ptr != buffer) {
     movePtr(ptr, buffer);
   }
-  orPtr(Imm32(gc::ChunkMask), buffer);
-  loadPtr(Address(buffer, gc::ChunkStoreBufferOffsetFromLastByte), buffer);
+  andPtr(Imm32(int32_t(~gc::ChunkMask)), buffer);
+  loadPtr(Address(buffer, gc::ChunkStoreBufferOffset), buffer);
 }
 
 void MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr,
@@ -894,9 +895,8 @@ void MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr,
   MOZ_ASSERT(ptr != scratch);
 
   movePtr(ptr, scratch);
-  orPtr(Imm32(gc::ChunkMask), scratch);
-  branchPtr(InvertCondition(cond),
-            Address(scratch, gc::ChunkStoreBufferOffsetFromLastByte),
+  andPtr(Imm32(int32_t(~gc::ChunkMask)), scratch);
+  branchPtr(InvertCondition(cond), Address(scratch, gc::ChunkStoreBufferOffset),
             ImmWord(0), label);
 }
 
@@ -911,11 +911,9 @@ void MacroAssembler::branchValueIsNurseryCellImpl(Condition cond,
   branchTestGCThing(Assembler::NotEqual, value,
                     cond == Assembler::Equal ? &done : label);
 
-  unboxGCThingForGCBarrier(value, temp);
-  orPtr(Imm32(gc::ChunkMask), temp);
-  branchPtr(InvertCondition(cond),
-            Address(temp, gc::ChunkStoreBufferOffsetFromLastByte), ImmWord(0),
-            label);
+  getGCThingValueChunk(value, temp);
+  branchPtr(InvertCondition(cond), Address(temp, gc::ChunkStoreBufferOffset),
+            ImmWord(0), label);
 
   bind(&done);
 }

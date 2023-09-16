@@ -386,6 +386,16 @@ static bool IsObjectEscaped(MDefinition* ins, MInstruction* newObject,
       case MDefinition::Opcode::AssertRecoveredOnBailout:
         break;
 
+      // This is just a special flavor of constant which lets us optimize
+      // out some guards in certain circumstances. We'll turn this into a
+      // regular constant later.
+      case MDefinition::Opcode::ConstantProto:
+        break;
+
+      // We definitely don't need barriers for objects that don't exist.
+      case MDefinition::Opcode::AssertCanElidePostWriteBarrier:
+        break;
+
       default:
         JitSpewDef(JitSpew_Escape, "is escaped by\n", def);
         return true;
@@ -453,7 +463,10 @@ class ObjectMemoryView : public MDefinitionVisitorDefaultNoop {
   void visitFunctionWithProto(MFunctionWithProto* ins);
   void visitPhi(MPhi* ins);
   void visitCompare(MCompare* ins);
+  void visitConstantProto(MConstantProto* ins);
   void visitIsObject(MIsObject* ins);
+  void visitAssertCanElidePostWriteBarrier(
+      MAssertCanElidePostWriteBarrier* ins);
 };
 
 /* static */ const char ObjectMemoryView::phaseName[] =
@@ -924,6 +937,16 @@ void ObjectMemoryView::visitCompare(MCompare* ins) {
   ins->block()->discard(ins);
 }
 
+void ObjectMemoryView::visitConstantProto(MConstantProto* ins) {
+  if (ins->getReceiverObject() != obj_) {
+    return;
+  }
+
+  auto* cst = ins->protoObject();
+  ins->replaceAllUsesWith(cst);
+  ins->block()->discard(ins);
+}
+
 void ObjectMemoryView::visitIsObject(MIsObject* ins) {
   // Skip unrelated tests.
   if (ins->input() != obj_) {
@@ -937,6 +960,15 @@ void ObjectMemoryView::visitIsObject(MIsObject* ins) {
   ins->replaceAllUsesWith(cst);
 
   // Remove original instruction.
+  ins->block()->discard(ins);
+}
+
+void ObjectMemoryView::visitAssertCanElidePostWriteBarrier(
+    MAssertCanElidePostWriteBarrier* ins) {
+  if (ins->object() != obj_) {
+    return;
+  }
+
   ins->block()->discard(ins);
 }
 
@@ -2292,7 +2324,7 @@ MNewArrayObject* ArgumentsReplacer::inlineArgsArray(MInstruction* ins,
   static_assert(
       gc::CanUseFixedElementsForArray(ArgumentsObject::MaxInlinedArgs));
 
-  gc::InitialHeap heap = gc::DefaultHeap;
+  gc::Heap heap = gc::Heap::Default;
 
   // Allocate an array of the correct size.
   auto* shapeConstant = MConstant::NewShape(alloc(), shape);

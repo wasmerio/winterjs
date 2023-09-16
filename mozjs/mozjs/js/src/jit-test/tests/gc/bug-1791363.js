@@ -1,4 +1,4 @@
-// |jit-test| allow-unhandlable-oom
+// |jit-test| allow-unhandlable-oom; skip-if: (getBuildConfiguration()['android'] && getBuildConfiguration()['debug'])
 
 gczeal(0);
 if (!this.enqueueMark) {
@@ -9,5 +9,5 @@ enqueueMark('set-color-gray');
 enqueueMark(newGlobal());
 enqueueMark('set-color-black');
 enqueueMark(newGlobal());
-gcparam("markStackLimit", 1);
+setMarkStackLimit(1);
 gc();

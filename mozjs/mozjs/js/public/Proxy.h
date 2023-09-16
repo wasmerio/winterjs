@@ -156,7 +156,7 @@ class JS_PUBLIC_API Wrapper;
  * explicit override for the method in SecurityWrapper. See bug 945826 comment
  * 0.
  */
-class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
+class JS_PUBLIC_API BaseProxyHandler {
   /*
    * Sometimes it's desirable to designate groups of proxy handlers as
    * "similar". For this, we use the notion of a "family": A consumer-provided
@@ -315,6 +315,13 @@ class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
   // normal get/set/defineField paths.
   virtual bool useProxyExpandoObjectForPrivateFields() const { return true; }
 
+  // For some exotic objects (WindowProxy, Location), we want to be able to
+  // throw rather than allow private fields on these objects.
+  //
+  // As a simplfying assumption, if throwOnPrivateFields returns true,
+  // we should also return true to useProxyExpandoObjectForPrivateFields.
+  virtual bool throwOnPrivateField() const { return false; }
+
   /*
    * [[Call]] and [[Construct]] are standard internal methods but according
    * to the spec, they are not present on every object.
@@ -374,7 +381,7 @@ class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
 extern JS_PUBLIC_DATA const JSClass ProxyClass;
 
 inline bool IsProxy(const JSObject* obj) {
-  return JS::GetClass(obj)->isProxyObject();
+  return reinterpret_cast<const JS::shadow::Object*>(obj)->shape->isProxy();
 }
 
 namespace detail {

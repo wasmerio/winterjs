@@ -241,6 +241,18 @@ void MacroAssembler::sub64(Imm64 imm, Register64 dest) {
   as_dsubu(dest.reg, dest.reg, ScratchRegister);
 }
 
+void MacroAssembler::mulHighUnsigned32(Imm32 imm, Register src, Register dest) {
+  ScratchRegisterScope scratch(*this);
+  MOZ_ASSERT(src != scratch);
+  move32(imm, scratch);
+#ifdef MIPSR6
+  as_muhu(dest, src, scratch);
+#else
+  as_multu(src, scratch);
+  as_mfhi(dest);
+#endif
+}
+
 void MacroAssembler::mulPtr(Register rhs, Register srcDest) {
 #ifdef MIPSR6
   as_dmulu(srcDest, srcDest, rhs);
@@ -698,6 +710,27 @@ void MacroAssembler::branchTruncateFloat32MaybeModUint32(FloatRegister src,
   ma_b(ScratchRegister, Imm32(0), fail, Assembler::NotEqual);
 
   as_sll(dest, dest, 0);
+}
+
+void MacroAssembler::branchTruncateDoubleToInt32(FloatRegister src,
+                                                 Register dest, Label* fail) {
+  ScratchRegisterScope scratch(asMasm());
+  ScratchDoubleScope fpscratch(asMasm());
+
+  // Convert scalar to signed 64-bit fixed-point, rounding toward zero.
+  // In the case of -0, the output is zero.
+  // In the case of overflow, the output is:
+  //   - MIPS64R2: 2^63-1
+  //   - MIPS64R6: saturated
+  // In the case of NaN, the output is:
+  //   - MIPS64R2: 2^63-1
+  //   - MIPS64R6: 0
+  as_truncld(fpscratch, src);
+  moveFromDouble(fpscratch, dest);
+
+  // Fail on overflow cases, besides MIPS64R2 will also fail here on NaN cases.
+  as_sll(scratch, dest, 0);
+  ma_b(dest, scratch, fail, Assembler::NotEqual);
 }
 
 void MacroAssembler::fallibleUnboxPtr(const ValueOperand& src, Register dest,

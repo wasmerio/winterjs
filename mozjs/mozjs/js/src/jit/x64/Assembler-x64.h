@@ -168,15 +168,20 @@ static constexpr FloatRegister FloatArgRegs[NumFloatArgRegs] = {
     xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7};
 #endif
 
-// Registerd used in RegExpMatcher instruction (do not use JSReturnOperand).
+// Registers used by RegExpMatcher and RegExpExecMatch stubs (do not use
+// JSReturnOperand).
 static constexpr Register RegExpMatcherRegExpReg = CallTempReg0;
 static constexpr Register RegExpMatcherStringReg = CallTempReg1;
 static constexpr Register RegExpMatcherLastIndexReg = CallTempReg2;
 
-// Registerd used in RegExpTester instruction (do not use ReturnReg).
-static constexpr Register RegExpTesterRegExpReg = CallTempReg1;
-static constexpr Register RegExpTesterStringReg = CallTempReg2;
-static constexpr Register RegExpTesterLastIndexReg = CallTempReg3;
+// Registers used by RegExpExecTest stub (do not use ReturnReg).
+static constexpr Register RegExpExecTestRegExpReg = CallTempReg1;
+static constexpr Register RegExpExecTestStringReg = CallTempReg2;
+
+// Registers used by RegExpSearcher stub (do not use ReturnReg).
+static constexpr Register RegExpSearcherRegExpReg = CallTempReg1;
+static constexpr Register RegExpSearcherStringReg = CallTempReg2;
+static constexpr Register RegExpSearcherLastIndexReg = CallTempReg3;
 
 class ABIArgGenerator {
 #if defined(XP_WIN)
@@ -278,7 +283,6 @@ static constexpr uint32_t WasmTrapInstructionLength = 2;
 // See comments in wasm::GenerateFunctionPrologue.  The difference between these
 // is the size of the largest callable prologue on the platform.
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
-static constexpr uint32_t WasmCheckedTailEntryOffset = 4u;
 
 static constexpr Scale ScalePointer = TimesEight;
 

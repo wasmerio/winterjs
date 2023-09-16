@@ -2,9 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this,
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from compare_locales import paths, mozpath
+import toml
+from compare_locales import mozpath, paths
 from compare_locales.paths.matcher import expand
-import pytoml as toml
 
 from .projectconfig import generate_filename
 
@@ -81,4 +81,8 @@ class HgTOMLParser(paths.TOMLParser):
             data = self.repo.cat(files=[local_path.encode("utf-8")], rev=self.rev)
         except Exception:
             raise paths.ConfigNotFound(parse_ctx.path)
-        parse_ctx.data = toml.loads(data, filename=parse_ctx.path)
+
+        try:
+            parse_ctx.data = toml.loads(data.decode())
+        except toml.TomlDecodeError as e:
+            raise RuntimeError(f"In file '{parse_ctx.path}':\n  {e!s}") from e

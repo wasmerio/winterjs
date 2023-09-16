@@ -2,21 +2,20 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
-
 import os
-import sys
-import tempfile
 import shutil
-import zipfile
-import tarfile
 import subprocess
+import sys
+import tarfile
+import tempfile
+import zipfile
 from pathlib import Path
 
+import mozfile
 import mozpack.path as mozpath
+
 from mozbuild.repackaging.application_ini import get_application_ini_value
 from mozbuild.util import ensureParentDir
-
 
 _BCJ_OPTIONS = {
     "x86": ["--x86"],
@@ -41,10 +40,7 @@ def repackage_mar(topsrcdir, package, mar, output, arch=None, mar_channel_id=Non
     tmpdir = tempfile.mkdtemp()
     try:
         if tarfile.is_tarfile(package):
-            z = tarfile.open(package)
-            z.extractall(tmpdir)
-            filelist = z.getnames()
-            z.close()
+            filelist = mozfile.extract_tarball(package, tmpdir)
         else:
             z = zipfile.ZipFile(package)
             z.extractall(tmpdir)

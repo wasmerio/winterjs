@@ -4,28 +4,31 @@
 
 ###
 # This script generates a web manifest JSON file based on the xpi-stage
-# directory structure. It extracts the data from defines.inc files from
-# the locale directory, chrome registry entries and other information
-# necessary to produce the complete manifest file for a language pack.
+# directory structure. It extracts data necessary to produce the complete
+# manifest file for a language pack:
+# from the `langpack-manifest.ftl` file in the locale directory;
+# from chrome registry entries;
+# and from other information in the `xpi-stage` directory.
 ###
-from __future__ import absolute_import, print_function, unicode_literals
 
 import argparse
-import sys
-import os
-import json
-import io
 import datetime
-import requests
-import mozversioncontrol
+import io
+import json
+import logging
+import os
+import re
+import sys
+import time
+
+import fluent.syntax.ast as FTL
 import mozpack.path as mozpath
-from mozpack.chrome.manifest import (
-    Manifest,
-    ManifestLocale,
-    parse_manifest,
-)
+import mozversioncontrol
+import requests
+from fluent.syntax.parser import FluentParser
+from mozpack.chrome.manifest import Manifest, ManifestLocale, parse_manifest
+
 from mozbuild.configure.util import Version
-from mozbuild.preprocessor import Preprocessor
 
 
 def write_file(path, content):
@@ -36,9 +39,17 @@ def write_file(path, content):
 pushlog_api_url = "{0}/json-rev/{1}"
 
 
+def get_build_date():
+    """Return the current date or SOURCE_DATE_EPOCH, if set."""
+    return datetime.datetime.utcfromtimestamp(
+        int(os.environ.get("SOURCE_DATE_EPOCH", time.time()))
+    )
+
+
 ###
-# Retrievers a UTC datetime of the push for the current commit
-# from a mercurial clone directory.
+# Retrieves a UTC datetime of the push for the current commit from a
+# mercurial clone directory. The SOURCE_DATE_EPOCH environment
+# variable is honored, for reproducibility.
 #
 # Args:
 #    path (str) - path to a directory
@@ -54,7 +65,7 @@ def get_dt_from_hg(path):
     with mozversioncontrol.get_repository_object(path=path) as repo:
         phase = repo._run("log", "-r", ".", "-T" "{phase}")
         if phase.strip() != "public":
-            return datetime.datetime.utcnow()
+            return get_build_date()
         repo_url = repo._run("paths", "default")
         repo_url = repo_url.strip().replace("ssh://", "https://")
         repo_url = repo_url.replace("hg://", "https://")
@@ -105,60 +116,111 @@ def get_timestamp_for_locale(path):
         dt = get_dt_from_hg(path)
 
     if dt is None:
-        dt = datetime.datetime.utcnow()
+        dt = get_build_date()
 
     dt = dt.replace(microsecond=0)
     return dt.strftime("%Y%m%d%H%M%S")
 
 
 ###
-# Parses multiple defines files into a single key-value pair object.
+# Parses an FTL file into a key-value pair object.
+# Does not support attributes, terms, variables, functions or selectors;
+# only messages with values consisting of text elements and literals.
 #
 # Args:
-#    paths (str) - a comma separated list of paths to defines files
+#    path (str) - a path to an FTL file
 #
 # Returns:
-#    (dict) - a key-value dict with defines
+#    (dict) - A mapping of message keys to formatted string values.
+#             Empty if the file at `path` was not found.
 #
 # Example:
-#    res = parse_defines('./toolkit/defines.inc,./browser/defines.inc')
+#    res = parse_flat_ftl('./browser/langpack-metadata.ftl')
 #    res == {
-#        'MOZ_LANG_TITLE': 'Polski',
-#        'MOZ_LANGPACK_CREATOR': 'Aviary.pl',
-#        'MOZ_LANGPACK_CONTRIBUTORS': 'Marek Stepien, Marek Wawoczny'
+#        'langpack-title': 'Polski',
+#        'langpack-creator': 'mozilla.org',
+#        'langpack-contributors': 'Joe Solon, Suzy Solon'
 #    }
 ###
-def parse_defines(paths):
-    pp = Preprocessor()
-    for path in paths:
-        pp.do_include(path)
+def parse_flat_ftl(path):
+    parser = FluentParser(with_spans=False)
+    try:
+        with open(path, encoding="utf-8") as file:
+            res = parser.parse(file.read())
+    except FileNotFoundError as err:
+        logging.warning(err)
+        return {}
 
-    return pp.context
+    result = {}
+    for entry in res.body:
+        if isinstance(entry, FTL.Message) and isinstance(entry.value, FTL.Pattern):
+            flat = ""
+            for elem in entry.value.elements:
+                if isinstance(elem, FTL.TextElement):
+                    flat += elem.value
+                elif isinstance(elem.expression, FTL.Literal):
+                    flat += elem.expression.parse()["value"]
+                else:
+                    name = type(elem.expression).__name__
+                    raise Exception(f"Unsupported {name} for {entry.id.name} in {path}")
+            result[entry.id.name] = flat.strip()
+    return result
 
 
-###
-# Converts the list of contributors from the old RDF based list
-# of entries, into a comma separated list.
+##
+# Generates the title and description for the langpack.
+#
+# Uses data stored in a JSON file next to this source,
+# which is expected to have the following format:
+#   Record<string, { native: string, english?: string }>
+#
+# If an English name is given and is different from the native one,
+# it will be included in the description and, if within the character limits,
+# also in the name.
+#
+# Length limit for names is 45 characters, for descriptions is 132,
+# return values are truncated if needed.
+#
+# NOTE: If you're updating the native locale names,
+#       you should also update the data in
+#       toolkit/components/mozintl/mozIntl.sys.mjs.
 #
 # Args:
-#    str (str) - a string with an RDF list of contributors entries
+#    app    (str) - Application name
+#    locale (str) - Locale identifier
 #
 # Returns:
-#    (str) - a comma separated list of contributors
+#    (str, str) - Tuple of title and description
 #
-# Example:
-#    s = convert_contributors('
-#        <em:contributor>Marek Wawoczny</em:contributor>
-#        <em:contributor>Marek Stepien</em:contributor>
-#    ')
-#    s == 'Marek Wawoczny, Marek Stepien'
 ###
-def convert_contributors(str):
-    str = str.replace("<em:contributor>", "")
-    tokens = str.split("</em:contributor>")
-    tokens = map(lambda t: t.strip(), tokens)
-    tokens = filter(lambda t: t != "", tokens)
-    return ", ".join(tokens)
+def get_title_and_description(app, locale):
+    dir = os.path.dirname(__file__)
+    with open(os.path.join(dir, "langpack_localeNames.json"), encoding="utf-8") as nf:
+        names = json.load(nf)
+
+    nameCharLimit = 45
+    descCharLimit = 132
+    nameTemplate = "Language: {}"
+    descTemplate = "{} Language Pack for {}"
+
+    if locale in names:
+        data = names[locale]
+        native = data["native"]
+        english = data["english"] if "english" in data else native
+
+        if english != native:
+            title = nameTemplate.format(f"{native} ({english})")
+            if len(title) > nameCharLimit:
+                title = nameTemplate.format(native)
+            description = descTemplate.format(app, f"{native} ({locale}) – {english}")
+        else:
+            title = nameTemplate.format(native)
+            description = descTemplate.format(app, f"{native} ({locale})")
+    else:
+        title = nameTemplate.format(locale)
+        description = descTemplate.format(app, locale)
+
+    return title[:nameCharLimit], description[:descCharLimit]
 
 
 ###
@@ -166,26 +228,25 @@ def convert_contributors(str):
 # and optionally adding the list of contributors, if provided.
 #
 # Args:
-#    author (str)       - a string with the name of the author
-#    contributors (str) - RDF based list of contributors from a chrome manifest
+#    ftl (dict) - a key-value mapping of locale-specific strings
 #
 # Returns:
 #    (str) - a string to be placed in the author field of the manifest.json
 #
 # Example:
-#    s = build_author_string(
-#    'Aviary.pl',
-#    '
-#        <em:contributor>Marek Wawoczny</em:contributor>
-#        <em:contributor>Marek Stepien</em:contributor>
-#    ')
-#    s == 'Aviary.pl (contributors: Marek Wawoczny, Marek Stepien)'
+#    s = get_author({
+#      'langpack-creator': 'mozilla.org',
+#      'langpack-contributors': 'Joe Solon, Suzy Solon'
+#    })
+#    s == 'mozilla.org (contributors: Joe Solon, Suzy Solon)'
 ###
-def build_author_string(author, contributors):
-    contrib = convert_contributors(contributors)
-    if len(contrib) == 0:
+def get_author(ftl):
+    author = ftl["langpack-creator"] if "langpack-creator" in ftl else "mozilla.org"
+    contrib = ftl["langpack-contributors"] if "langpack-contributors" in ftl else ""
+    if contrib:
+        return f"{author} (contributors: {contrib})"
+    else:
         return author
-    return "{0} (contributors: {1})".format(author, contrib)
 
 
 ##
@@ -294,29 +355,50 @@ def parse_chrome_manifest(path, base_path, chrome_entries):
             raise Exception("Unknown type {0}".format(entry.name))
 
 
-##
+###
 # Gets the version to use in the langpack.
 #
-# This uses the env variable MOZ_BUILD_DATE if it exists to expand the version to be unique
-# in automation.
+# This uses the env variable MOZ_BUILD_DATE if it exists to expand the version
+# to be unique in automation.
 #
 # Args:
-#    min_version - Application version
+#    app_version - Application version
 #
 # Returns:
-#    str - Version to use, may include buildid
+#    str - Version to use
 #
 ###
-def get_version_maybe_buildid(version):
+def get_version_maybe_buildid(app_version):
+    def _extract_numeric_part(part):
+        matches = re.compile("[^\d]").search(part)
+        if matches:
+            part = part[0 : matches.start()]
+        if len(part) == 0:
+            return "0"
+        return part
+
+    parts = [_extract_numeric_part(part) for part in app_version.split(".")]
+
     buildid = os.environ.get("MOZ_BUILD_DATE")
     if buildid and len(buildid) != 14:
         print("Ignoring invalid MOZ_BUILD_DATE: %s" % buildid, file=sys.stderr)
         buildid = None
+
     if buildid:
-        # Split into date/time parts so no part is >= 2^31 (bug 1732676)
-        # Bug 1733396 may revisit that limit
+        # Use simple versioning format, see: Bug 1793925 - The version string
+        # should start with: <firefox major>.<firefox minor>
+        version = ".".join(parts[0:2])
+        # We then break the buildid into two version parts so that the full
+        # version looks like: <firefox major>.<firefox minor>.YYYYMMDD.HHmmss
         date, time = buildid[:8], buildid[8:]
-        version = f"{version}buildid{date}.{time}"
+        # Leading zeros are not allowed.
+        time = time.lstrip("0")
+        if len(time) == 0:
+            time = "0"
+        version = f"{version}.{date}.{time}"
+    else:
+        version = ".".join(parts)
+
     return version
 
 
@@ -333,7 +415,7 @@ def get_version_maybe_buildid(version):
 #                            resources are for
 #    app_name       (str)  - The name of the application the language
 #                            resources are for
-#    defines        (dict) - A dictionary of defines entries
+#    ftl            (dict) - A dictionary of locale-specific strings
 #    chrome_entries (dict) - A dictionary of chrome registry entries
 #
 # Returns:
@@ -346,7 +428,7 @@ def get_version_maybe_buildid(version):
 #      '57.0.*',
 #      'Firefox',
 #      '/var/vcs/l10n-central',
-#      {'MOZ_LANG_TITLE': 'Polski'},
+#      {'langpack-title': 'Polski'},
 #      chrome_entries
 #    )
 #    manifest == {
@@ -372,7 +454,7 @@ def get_version_maybe_buildid(version):
 #                'base_path': 'browser/'
 #            }
 #        },
-#        'applications': {
+#        'browser_specific_settings': {
 #            'gecko':  {
 #                'strict_min_version': '57.0',
 #                'strict_max_version': '57.0.*',
@@ -392,31 +474,26 @@ def create_webmanifest(
     app_name,
     l10n_basedir,
     langpack_eid,
-    defines,
+    ftl,
     chrome_entries,
 ):
     locales = list(map(lambda loc: loc.strip(), locstr.split(",")))
     main_locale = locales[0]
-
-    author = build_author_string(
-        defines["MOZ_LANGPACK_CREATOR"],
-        defines["MOZ_LANGPACK_CONTRIBUTORS"]
-        if "MOZ_LANGPACK_CONTRIBUTORS" in defines
-        else "",
-    )
+    title, description = get_title_and_description(app_name, main_locale)
+    author = get_author(ftl)
 
     manifest = {
         "langpack_id": main_locale,
         "manifest_version": 2,
-        "applications": {
+        "browser_specific_settings": {
             "gecko": {
                 "id": langpack_eid,
                 "strict_min_version": min_app_ver,
                 "strict_max_version": max_app_ver,
             }
         },
-        "name": "{0} Language Pack".format(defines["MOZ_LANG_TITLE"]),
-        "description": "Language pack for {0} for {1}".format(app_name, main_locale),
+        "name": title,
+        "description": description,
         "version": get_version_maybe_buildid(version),
         "languages": {},
         "sources": {"browser": {"base_path": "browser/"}},
@@ -466,10 +543,8 @@ def main(args):
         "--langpack-eid", help="Language pack id to use for this locale"
     )
     parser.add_argument(
-        "--defines",
-        default=[],
-        nargs="+",
-        help="List of defines files to load data from",
+        "--metadata",
+        help="FTL file defining langpack metadata",
     )
     parser.add_argument("--input", help="Langpack directory.")
 
@@ -480,7 +555,7 @@ def main(args):
         os.path.join(args.input, "chrome.manifest"), args.input, chrome_entries
     )
 
-    defines = parse_defines(args.defines)
+    ftl = parse_flat_ftl(args.metadata)
 
     # Mangle the app version to set min version (remove patch level)
     min_app_version = args.app_version
@@ -502,7 +577,7 @@ def main(args):
         args.app_name,
         args.l10n_basedir,
         args.langpack_eid,
-        defines,
+        ftl,
         chrome_entries,
     )
     write_file(os.path.join(args.input, "manifest.json"), res)

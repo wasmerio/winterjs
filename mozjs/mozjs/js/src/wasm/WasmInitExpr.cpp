@@ -35,10 +35,12 @@ using namespace js;
 using namespace js::wasm;
 
 static bool ValidateInitExpr(Decoder& d, ModuleEnvironment* env,
-                             ValType expected, Maybe<LitVal>* literal) {
+                             ValType expected,
+                             uint32_t maxInitializedGlobalsIndexPlus1,
+                             Maybe<LitVal>* literal) {
   ValidatingOpIter iter(*env, d, ValidatingOpIter::InitExpr);
 
-  if (!iter.startInitExpr(expected)) {
+  if (!iter.startInitExpr(expected, maxInitializedGlobalsIndexPlus1)) {
     return false;
   }
 
@@ -207,7 +209,7 @@ static bool ValidateInitExpr(Decoder& d, ModuleEnvironment* env,
           }
           case uint32_t(GcOp::ArrayNewFixed): {
             uint32_t typeIndex, len;
-            if (!iter.readArrayNewFixed(&typeIndex, &len)) {
+            if (!iter.readArrayNewFixed(&typeIndex, &len, &nothings)) {
               return false;
             }
             break;
@@ -237,12 +239,11 @@ static bool ValidateInitExpr(Decoder& d, ModuleEnvironment* env,
 class MOZ_STACK_CLASS InitExprInterpreter {
  public:
   explicit InitExprInterpreter(JSContext* cx,
-                               const ValVector& globalImportValues,
                                Handle<WasmInstanceObject*> instanceObj)
       : features(FeatureArgs::build(cx, FeatureOptions())),
         stack(cx),
-        globalImportValues(globalImportValues),
-        instanceObj(cx, instanceObj) {}
+        instanceObj(cx, instanceObj),
+        types(instanceObj->instance().metadata().types) {}
 
   bool evaluate(JSContext* cx, Decoder& d);
 
@@ -253,9 +254,9 @@ class MOZ_STACK_CLASS InitExprInterpreter {
 
  private:
   FeatureArgs features;
-  RootedValVector stack;
-  const ValVector& globalImportValues;
+  RootedValVectorN<48> stack;
   Rooted<WasmInstanceObject*> instanceObj;
+  SharedTypeContext types;
 
   Instance& instance() { return instanceObj->instance(); }
 
@@ -290,8 +291,10 @@ class MOZ_STACK_CLASS InitExprInterpreter {
   }
 #endif
 
-  bool evalGetGlobal(uint32_t index) {
-    return stack.append(globalImportValues[index]);
+  bool evalGlobalGet(JSContext* cx, uint32_t index) {
+    RootedVal val(cx);
+    instance().constantGlobalGet(index, &val);
+    return stack.append(val);
   }
   bool evalI32Const(int32_t c) { return pushI32(c); }
   bool evalI64Const(int64_t c) { return pushI64(c); }
@@ -308,117 +311,119 @@ class MOZ_STACK_CLASS InitExprInterpreter {
   bool evalRefNull(RefType type) { return pushRef(type, AnyRef::null()); }
 #ifdef ENABLE_WASM_EXTENDED_CONST
   bool evalI32Add() {
-    uint32_t a = popI32();
     uint32_t b = popI32();
+    uint32_t a = popI32();
     return pushI32(a + b);
   }
   bool evalI32Sub() {
-    uint32_t a = popI32();
     uint32_t b = popI32();
+    uint32_t a = popI32();
     return pushI32(a - b);
   }
   bool evalI32Mul() {
-    uint32_t a = popI32();
     uint32_t b = popI32();
+    uint32_t a = popI32();
     return pushI32(a * b);
   }
   bool evalI64Add() {
-    uint64_t a = popI64();
     uint64_t b = popI64();
+    uint64_t a = popI64();
     return pushI64(a + b);
   }
   bool evalI64Sub() {
-    uint64_t a = popI64();
     uint64_t b = popI64();
+    uint64_t a = popI64();
     return pushI64(a - b);
   }
   bool evalI64Mul() {
-    uint64_t a = popI64();
     uint64_t b = popI64();
+    uint64_t a = popI64();
     return pushI64(a * b);
   }
 #endif  // ENABLE_WASM_EXTENDED_CONST
 #ifdef ENABLE_WASM_GC
-  WasmStructObject* createStruct(JSContext* cx, uint32_t typeIndex) {
-    Rooted<RttValue*> rttValue(cx, instance().rttCanon(typeIndex));
-    return WasmStructObject::createStruct(cx, rttValue);
-  }
-
   bool evalStructNew(JSContext* cx, uint32_t typeIndex) {
-    Rooted<WasmStructObject*> structObj(cx, createStruct(cx, typeIndex));
+    const TypeDef& typeDef = instance().metadata().types->type(typeIndex);
+    const StructType& structType = typeDef.structType();
+
+    Rooted<WasmStructObject*> structObj(
+        cx, instance().constantStructNewDefault(cx, typeIndex));
     if (!structObj) {
       return false;
     }
 
-    const StructType& structType =
-        instance().metadata().types[typeIndex].structType();
-
-    uint32_t fieldIndex = structType.fields_.length();
-    while (fieldIndex-- > 0) {
+    uint32_t numFields = structType.fields_.length();
+    for (uint32_t forwardIndex = 0; forwardIndex < numFields; forwardIndex++) {
+      uint32_t reverseIndex = numFields - forwardIndex - 1;
       const Val& val = stack.back();
-      structObj->storeVal(val, fieldIndex);
+      structObj->storeVal(val, reverseIndex);
       stack.popBack();
     }
 
-    return pushRef(RefType::fromTypeIndex(typeIndex, false),
+    return pushRef(RefType::fromTypeDef(&typeDef, false),
                    AnyRef::fromJSObject(structObj));
   }
 
   bool evalStructNewDefault(JSContext* cx, uint32_t typeIndex) {
-    Rooted<WasmStructObject*> structObj(cx, createStruct(cx, typeIndex));
+    Rooted<WasmStructObject*> structObj(
+        cx, instance().constantStructNewDefault(cx, typeIndex));
     if (!structObj) {
       return false;
     }
 
-    return pushRef(RefType::fromTypeIndex(typeIndex, false),
+    const TypeDef& typeDef = instance().metadata().types->type(typeIndex);
+    return pushRef(RefType::fromTypeDef(&typeDef, false),
                    AnyRef::fromJSObject(structObj));
   }
 
-  WasmArrayObject* createArray(JSContext* cx, uint32_t typeIndex,
-                               uint32_t numElements) {
-    Rooted<RttValue*> rttValue(cx, instance().rttCanon(typeIndex));
-    return WasmArrayObject::createArray(cx, rttValue, numElements);
-  }
-
   bool evalArrayNew(JSContext* cx, uint32_t typeIndex) {
-    uint32_t len = popI32();
-    Rooted<WasmArrayObject*> arrayObj(cx, createArray(cx, typeIndex, len));
+    uint32_t numElements = popI32();
+    Rooted<WasmArrayObject*> arrayObj(
+        cx, instance().constantArrayNewDefault(cx, typeIndex, numElements));
     if (!arrayObj) {
       return false;
     }
 
     const Val& val = stack.back();
-    arrayObj->fillVal(val, 0, len);
+    arrayObj->fillVal(val, 0, numElements);
     stack.popBack();
 
-    return pushRef(RefType::fromTypeIndex(typeIndex, false),
+    const TypeDef& typeDef = instance().metadata().types->type(typeIndex);
+    return pushRef(RefType::fromTypeDef(&typeDef, false),
                    AnyRef::fromJSObject(arrayObj));
   }
 
   bool evalArrayNewDefault(JSContext* cx, uint32_t typeIndex) {
-    uint32_t len = popI32();
-    Rooted<WasmArrayObject*> arrayObj(cx, createArray(cx, typeIndex, len));
+    uint32_t numElements = popI32();
+    Rooted<WasmArrayObject*> arrayObj(
+        cx, instance().constantArrayNewDefault(cx, typeIndex, numElements));
     if (!arrayObj) {
       return false;
     }
 
-    return pushRef(RefType::fromTypeIndex(typeIndex, false),
+    const TypeDef& typeDef = instance().metadata().types->type(typeIndex);
+    return pushRef(RefType::fromTypeDef(&typeDef, false),
                    AnyRef::fromJSObject(arrayObj));
   }
 
-  bool evalArrayNewFixed(JSContext* cx, uint32_t typeIndex, uint32_t len) {
-    Rooted<WasmArrayObject*> arrayObj(cx, createArray(cx, typeIndex, len));
+  bool evalArrayNewFixed(JSContext* cx, uint32_t typeIndex,
+                         uint32_t numElements) {
+    Rooted<WasmArrayObject*> arrayObj(
+        cx, instance().constantArrayNewDefault(cx, typeIndex, numElements));
     if (!arrayObj) {
       return false;
     }
 
-    for (uint32_t i = len; i-- > 0;) {
+    for (uint32_t forwardIndex = 0; forwardIndex < numElements;
+         forwardIndex++) {
+      uint32_t reverseIndex = numElements - forwardIndex - 1;
       const Val& val = stack.back();
-      arrayObj->storeVal(val, i);
+      arrayObj->storeVal(val, reverseIndex);
       stack.popBack();
     }
 
-    return pushRef(RefType::fromTypeIndex(typeIndex, false),
+    const TypeDef& typeDef = instance().metadata().types->type(typeIndex);
+    return pushRef(RefType::fromTypeDef(&typeDef, false),
                    AnyRef::fromJSObject(arrayObj));
   }
 #endif  // ENABLE_WASM_GC
@@ -444,7 +449,7 @@ bool InitExprInterpreter::evaluate(JSContext* cx, Decoder& d) {
         if (!d.readGlobalIndex(&index)) {
           return false;
         }
-        CHECK(evalGetGlobal(index));
+        CHECK(evalGlobalGet(cx, index));
       }
       case uint16_t(Op::I32Const): {
         int32_t c;
@@ -493,7 +498,7 @@ bool InitExprInterpreter::evaluate(JSContext* cx, Decoder& d) {
       }
       case uint16_t(Op::RefNull): {
         RefType type;
-        if (!d.readRefNull(features, &type)) {
+        if (!d.readRefNull(*types, features, &type)) {
           return false;
         }
         CHECK(evalRefNull(type));
@@ -594,10 +599,13 @@ bool InitExprInterpreter::evaluate(JSContext* cx, Decoder& d) {
 }
 
 bool InitExpr::decodeAndValidate(Decoder& d, ModuleEnvironment* env,
-                                 ValType expected, InitExpr* expr) {
+                                 ValType expected,
+                                 uint32_t maxInitializedGlobalsIndexPlus1,
+                                 InitExpr* expr) {
   Maybe<LitVal> literal = Nothing();
   const uint8_t* exprStart = d.currentPosition();
-  if (!ValidateInitExpr(d, env, expected, &literal)) {
+  if (!ValidateInitExpr(d, env, expected, maxInitializedGlobalsIndexPlus1,
+                        &literal)) {
     return false;
   }
   const uint8_t* exprEnd = d.currentPosition();
@@ -617,8 +625,7 @@ bool InitExpr::decodeAndValidate(Decoder& d, ModuleEnvironment* env,
          expr->bytecode_.append(exprStart, exprEnd);
 }
 
-bool InitExpr::evaluate(JSContext* cx, const ValVector& globalImportValues,
-                        Handle<WasmInstanceObject*> instanceObj,
+bool InitExpr::evaluate(JSContext* cx, Handle<WasmInstanceObject*> instanceObj,
                         MutableHandleVal result) const {
   MOZ_ASSERT(kind_ != InitExprKind::None);
 
@@ -629,7 +636,7 @@ bool InitExpr::evaluate(JSContext* cx, const ValVector& globalImportValues,
 
   UniqueChars error;
   Decoder d(bytecode_.begin(), bytecode_.end(), 0, &error);
-  InitExprInterpreter interp(cx, globalImportValues, instanceObj);
+  InitExprInterpreter interp(cx, instanceObj);
   if (!interp.evaluate(cx, d)) {
     // This expression should have been validated already. So we should only be
     // able to OOM, which is reported by having no error message.

@@ -1,42 +1,34 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
-from __future__ import absolute_import, print_function, unicode_literals
-
 import concurrent.futures
-import logging
 import json
+import logging
 import multiprocessing
 import ntpath
 import os
 import pathlib
 import posixpath
 import re
-import sys
-import subprocess
 import shutil
+import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
-import yaml
 from types import SimpleNamespace
 
+import mozpack.path as mozpath
 import six
+import yaml
+from mach.decorators import Command, CommandArgument, SubCommand
+from mach.main import Mach
+from mozversioncontrol import get_repository_object
 from six.moves import input
 
-from mach.decorators import CommandArgument, Command, SubCommand
-
-from mach.main import Mach
-
 from mozbuild import build_commands
-from mozbuild.nodeutil import find_node_executable
-
-import mozpack.path as mozpath
-
-from mozbuild.util import memoize
-
-from mozversioncontrol import get_repository_object
-
 from mozbuild.controller.clobber import Clobberer
+from mozbuild.nodeutil import find_node_executable
+from mozbuild.util import memoize
 
 
 # Function used to run clang-format on a batch of files. It is a helper function
@@ -1600,38 +1592,12 @@ def get_clang_tools(
     if source:
         return _get_clang_tools_from_source(command_context, clang_paths, source)
 
-    from mozbuild.artifact_commands import artifact_toolchain
-
     if not download_if_needed:
         return 0, clang_paths
 
-    job, _ = command_context.platform
+    from mozbuild.bootstrap import bootstrap_toolchain
 
-    if job is None:
-        raise Exception(
-            "The current platform isn't supported. "
-            "Currently only the following platforms are "
-            "supported: win32/win64, linux64 and macosx64."
-        )
-
-    job += "-clang-tidy"
-
-    # We want to unpack data in the clang-tidy mozbuild folder
-    currentWorkingDir = os.getcwd()
-    os.chdir(clang_paths._clang_tools_path)
-    rc = artifact_toolchain(
-        command_context,
-        verbose=verbose,
-        skip_cache=skip_cache,
-        from_build=[job],
-        no_unpack=False,
-        retry=0,
-    )
-    # Change back the cwd
-    os.chdir(currentWorkingDir)
-
-    if rc:
-        return rc, clang_paths
+    bootstrap_toolchain("clang-tools/clang-tidy")
 
     return 0 if _is_version_eligible(command_context, clang_paths) else 1, clang_paths
 
@@ -1704,7 +1670,7 @@ def _run_clang_format_diff(
 ):
     # Run clang-format on the diff
     # Note that this will potentially miss a lot things
-    from subprocess import Popen, PIPE, check_output, CalledProcessError
+    from subprocess import PIPE, CalledProcessError, Popen, check_output
 
     diff_process = Popen(
         _get_clang_format_diff_command(command_context, commit), stdout=PIPE
@@ -1839,7 +1805,7 @@ def _run_clang_format_path(
 ):
 
     # Run clang-format on files or directories directly
-    from subprocess import check_output, CalledProcessError
+    from subprocess import CalledProcessError, check_output
 
     if output_format == "json":
         # Get replacements in xml, then process to json

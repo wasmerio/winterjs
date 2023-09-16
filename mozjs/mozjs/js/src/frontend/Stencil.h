@@ -64,6 +64,8 @@ using ParserModuleScopeSlotInfo = ParserScopeSlotInfo<ModuleScope>;
 using ParserVarScopeSlotInfo = ParserScopeSlotInfo<VarScope>;
 
 using ParserBindingIter = AbstractBindingIter<TaggedParserAtomIndex>;
+using ParserPositionalFormalParameterIter =
+    AbstractPositionalFormalParameterIter<TaggedParserAtomIndex>;
 
 // [SMDOC] Script Stencil (Frontend Representation)
 //
@@ -107,18 +109,76 @@ using ParserBindingIter = AbstractBindingIter<TaggedParserAtomIndex>;
 //   * StencilModuleMetadata
 //
 //
-// CompilationStencil
-// ------------------
+// CompilationStencil / ExtensibleCompilationStencil
+// -------------------------------------------------
 // Parsing a single JavaScript file may generate a tree of `ScriptStencil` that
-// we then package up into the `CompilationStencil` type. This contains a series
-// of vectors segregated by stencil type for fast processing. Delazifying a
-// function will generate its bytecode but some fields remain unchanged from the
-// initial lazy parse.
+// we then package up into the `ExtensibleCompilationStencil` type or
+// `CompilationStencil`. They contain a series of vectors/spans segregated by
+// data type for fast processing (a.k.a Data Oriented Design).
 //
-// When we delazify a function that was lazily parsed, we generate a new Stencil
-// at the point too. These delazifications can be merged into the Stencil of
-// the initial parse.
+// `ExtensibleCompilationStencil` is mutable type used during parsing, and
+// can be allocated either on stack or heap.
+// `ExtensibleCompilationStencil` holds vectors of stencils.
 //
+// `CompilationStencil` is immutable type used for caching the compilation
+// result, and is allocated on heap with refcount.
+// `CompilationStencil` holds spans of stencils, and it can point either
+// owned data or borrowed data.
+// The borrowed data can be from other `ExtensibleCompilationStencil` or
+// from serialized stencil (XDR) on memory or mmap.
+//
+// Delazifying a function will generate its bytecode but some fields remain
+// unchanged from the initial lazy parse.
+// When we delazify a function that was lazily parsed, we generate a new
+// Stencil at the point too. These delazifications can be merged into the
+// Stencil of the initial parse by using `CompilationStencilMerger`.
+//
+// Conversion from ExtensibleCompilationStencil to CompilationStencil
+// ------------------------------------------------------------------
+// There are multiple ways to convert from `ExtensibleCompilationStencil` to
+// `CompilationStencil`:
+//
+// 1. Temporarily borrow `ExtensibleCompilationStencil` content and call
+// function that takes `CompilationStencil` reference, and keep using the
+// `ExtensibleCompilationStencil` after that:
+//
+//   ExtensibleCompilationStencil extensible = ...;
+//   {
+//     BorrowingCompilationStencil stencil(extensible);
+//     // Use `stencil reference.
+//   }
+//
+// 2. Take the ownership of an on-heap ExtensibleCompilationStencil. This makes
+// the `CompilationStencil` self-contained and it's useful for caching:
+//
+//   UniquePtr<ExtensibleCompilationStencil> extensible = ...;
+//   CompilationStencil stencil(std::move(extensible));
+//
+// Conversion from CompilationStencil to ExtensibleCompilationStencil
+// ------------------------------------------------------------------
+// In the same way, there are multiple ways to convert from
+// `CompilationStencil` to `ExtensibleCompilationStencil`:
+//
+// 1. Take the ownership of `CompilationStencil`'s underlying data, Only when
+// stencil owns the data and the refcount is 1:
+//
+//   RefPtr<CompilationStencil> stencil = ...;
+//   ExtensibleCompilationStencil extensible(...);
+//   // NOTE: This is equivalent to cloneFrom below if `stencil` has refcount
+//   //       more than 2, or it doesn't own the data.
+//   extensible.steal(fc, std::move(stencil));
+//
+// 2. Clone the underlying data. This is slow but safe operation:
+//
+//   CompilationStencil stencil = ...;
+//   ExtensibleCompilationStencil extensible(...);
+//   extensible.cloneFrom(fc, stencil);
+//
+// 3. Take the ownership back from the `CompilationStencil` which is created by
+// taking the ownership of an on-heap `ExtensibleCompilationStencil`:
+//
+//   CompilationStencil stencil = ...;
+//   ExtensibleCompilationStencil* extensible = stencil.takeOwnedBorrow();
 //
 // CompilationGCOutput
 // -------------------
@@ -166,7 +226,7 @@ class RegExpStencil {
   // This is used by `Reflect.parse` when we need the RegExpObject but are not
   // doing a complete instantiation of the CompilationStencil.
   RegExpObject* createRegExpAndEnsureAtom(
-      JSContext* cx, ErrorContext* ec, ParserAtomsTable& parserAtoms,
+      JSContext* cx, FrontendContext* fc, ParserAtomsTable& parserAtoms,
       CompilationAtomCache& atomCache) const;
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
@@ -189,7 +249,7 @@ class BigIntStencil {
  public:
   BigIntStencil() = default;
 
-  [[nodiscard]] bool init(ErrorContext* ec, LifoAlloc& alloc,
+  [[nodiscard]] bool init(FrontendContext* fc, LifoAlloc& alloc,
                           const mozilla::Span<const char16_t> buf);
 
   BigInt* createBigInt(JSContext* cx) const;
@@ -278,54 +338,54 @@ class ScopeStencil {
   // Create ScopeStencil with `args`, and append ScopeStencil and `data` to
   // `compilationState`, and return the index of them as `indexOut`.
   template <typename... Args>
-  static bool appendScopeStencilAndData(ErrorContext* ec,
+  static bool appendScopeStencilAndData(FrontendContext* fc,
                                         CompilationState& compilationState,
                                         BaseParserScopeData* data,
                                         ScopeIndex* indexOut, Args&&... args);
 
  public:
   static bool createForFunctionScope(
-      ErrorContext* ec, CompilationState& compilationState,
+      FrontendContext* fc, CompilationState& compilationState,
       FunctionScope::ParserData* dataArg, bool hasParameterExprs,
       bool needsEnvironment, ScriptIndex functionIndex, bool isArrow,
       mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
 
   static bool createForLexicalScope(
-      ErrorContext* ec, CompilationState& compilationState, ScopeKind kind,
+      FrontendContext* fc, CompilationState& compilationState, ScopeKind kind,
       LexicalScope::ParserData* dataArg, uint32_t firstFrameSlot,
       mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
 
   static bool createForClassBodyScope(
-      ErrorContext* ec, CompilationState& compilationState, ScopeKind kind,
+      FrontendContext* fc, CompilationState& compilationState, ScopeKind kind,
       ClassBodyScope::ParserData* dataArg, uint32_t firstFrameSlot,
       mozilla::Maybe<ScopeIndex> enclosing, ScopeIndex* index);
 
-  static bool createForVarScope(ErrorContext* ec,
+  static bool createForVarScope(FrontendContext* fc,
                                 CompilationState& compilationState,
                                 ScopeKind kind, VarScope::ParserData* dataArg,
                                 uint32_t firstFrameSlot, bool needsEnvironment,
                                 mozilla::Maybe<ScopeIndex> enclosing,
                                 ScopeIndex* index);
 
-  static bool createForGlobalScope(ErrorContext* ec,
+  static bool createForGlobalScope(FrontendContext* fc,
                                    CompilationState& compilationState,
                                    ScopeKind kind,
                                    GlobalScope::ParserData* dataArg,
                                    ScopeIndex* index);
 
-  static bool createForEvalScope(ErrorContext* ec,
+  static bool createForEvalScope(FrontendContext* fc,
                                  CompilationState& compilationState,
                                  ScopeKind kind, EvalScope::ParserData* dataArg,
                                  mozilla::Maybe<ScopeIndex> enclosing,
                                  ScopeIndex* index);
 
-  static bool createForModuleScope(ErrorContext* ec,
+  static bool createForModuleScope(FrontendContext* fc,
                                    CompilationState& compilationState,
                                    ModuleScope::ParserData* dataArg,
                                    mozilla::Maybe<ScopeIndex> enclosing,
                                    ScopeIndex* index);
 
-  static bool createForWithScope(ErrorContext* ec,
+  static bool createForWithScope(FrontendContext* fc,
                                  CompilationState& compilationState,
                                  mozilla::Maybe<ScopeIndex> enclosing,
                                  ScopeIndex* index);
@@ -389,9 +449,9 @@ class ScopeStencil {
       BaseParserScopeData* baseData) const;
 
   template <typename SpecificEnvironmentType>
-  [[nodiscard]] bool createSpecificShape(JSContext* cx, ScopeKind kind,
-                                         BaseScopeData* scopeData,
-                                         MutableHandle<Shape*> shape) const;
+  [[nodiscard]] bool createSpecificShape(
+      JSContext* cx, ScopeKind kind, BaseScopeData* scopeData,
+      MutableHandle<SharedShape*> shape) const;
 
   template <typename SpecificScopeType, typename SpecificEnvironmentType>
   Scope* createSpecificScope(JSContext* cx, CompilationAtomCache& atomCache,
@@ -441,11 +501,6 @@ class ScopeStencil {
   }
 };
 
-// See JSOp::Lambda for interepretation of this index.
-using FunctionDeclaration = GCThingIndex;
-using FunctionDeclarationVector =
-    Vector<FunctionDeclaration, 0, js::SystemAllocPolicy>;
-
 class StencilModuleAssertion {
  public:
   TaggedParserAtomIndex key;
@@ -454,6 +509,73 @@ class StencilModuleAssertion {
   StencilModuleAssertion() = default;
   StencilModuleAssertion(TaggedParserAtomIndex key, TaggedParserAtomIndex value)
       : key(key), value(value) {}
+};
+
+class StencilModuleRequest {
+ public:
+  TaggedParserAtomIndex specifier;
+
+  using AssertionVector =
+      Vector<StencilModuleAssertion, 0, js::SystemAllocPolicy>;
+  AssertionVector assertions;
+
+  // For XDR only.
+  StencilModuleRequest() = default;
+
+  explicit StencilModuleRequest(TaggedParserAtomIndex specifier)
+      : specifier(specifier) {
+    MOZ_ASSERT(specifier);
+  }
+
+  StencilModuleRequest(const StencilModuleRequest& other)
+      : specifier(other.specifier) {
+    AutoEnterOOMUnsafeRegion oomUnsafe;
+    if (!assertions.appendAll(other.assertions)) {
+      oomUnsafe.crash("StencilModuleRequest::StencilModuleRequest");
+    }
+  }
+
+  StencilModuleRequest(StencilModuleRequest&& other) noexcept
+      : specifier(other.specifier), assertions(std::move(other.assertions)) {}
+
+  StencilModuleRequest& operator=(StencilModuleRequest& other) {
+    specifier = other.specifier;
+    assertions = std::move(other.assertions);
+    return *this;
+  }
+
+  StencilModuleRequest& operator=(StencilModuleRequest&& other) noexcept {
+    specifier = other.specifier;
+    assertions = std::move(other.assertions);
+    return *this;
+  }
+};
+
+class MaybeModuleRequestIndex {
+  static constexpr uint32_t NOTHING = UINT32_MAX;
+
+  uint32_t bits = NOTHING;
+
+ public:
+  MaybeModuleRequestIndex() = default;
+  explicit MaybeModuleRequestIndex(uint32_t index) : bits(index) {
+    MOZ_ASSERT(isSome());
+  }
+
+  MaybeModuleRequestIndex(const MaybeModuleRequestIndex& other) = default;
+  MaybeModuleRequestIndex& operator=(const MaybeModuleRequestIndex& other) =
+      default;
+
+  bool isNothing() const { return bits == NOTHING; }
+  bool isSome() const { return !isNothing(); }
+  explicit operator bool() const { return isSome(); }
+
+  uint32_t value() const {
+    MOZ_ASSERT(isSome());
+    return bits;
+  }
+
+  uint32_t* operator&() { return &bits; }
 };
 
 // Common type for ImportEntry / ExportEntry / ModuleRequest within frontend. We
@@ -468,20 +590,18 @@ class StencilModuleEntry {
  public:
   // clang-format off
   //
-  //              | ModuleRequest | ImportEntry | ImportNamespaceEntry | ExportAs | ExportFrom | ExportNamespaceFrom | ExportBatchFrom |
-  //              |--------------------------------------------------------------------------------------------------------------------|
-  // specifier    | required      | required    | required             | null     | required   | required            | required        |
-  // localName    | null          | required    | required             | required | null       | null                | null            |
-  // importName   | null          | required    | null                 | null     | required   | null                | null            |
-  // exportName   | null          | null        | null                 | required | required   | required            | null            |
+  //               | RequestedModule | ImportEntry | ImportNamespaceEntry | ExportAs | ExportFrom | ExportNamespaceFrom | ExportBatchFrom |
+  //               |----------------------------------------------------------------------------------------------------------------------|
+  // moduleRequest | required        | required    | required             | null     | required   | required            | required        |
+  // localName     | null            | required    | required             | required | null       | null                | null            |
+  // importName    | null            | required    | null                 | null     | required   | null                | null            |
+  // exportName    | null            | null        | null                 | required | required   | required            | null            |
   //
   // clang-format on
-  TaggedParserAtomIndex specifier;
+  MaybeModuleRequestIndex moduleRequest;
   TaggedParserAtomIndex localName;
   TaggedParserAtomIndex importName;
   TaggedParserAtomIndex exportName;
-
-  Vector<StencilModuleAssertion, 0, js::SystemAllocPolicy> assertions;
 
   // Location used for error messages. If this is for a module request entry
   // then it is the module specifier string, otherwise the import/export spec
@@ -499,76 +619,69 @@ class StencilModuleEntry {
   StencilModuleEntry() = default;
 
   StencilModuleEntry(const StencilModuleEntry& other)
-      : specifier(other.specifier),
+      : moduleRequest(other.moduleRequest),
         localName(other.localName),
         importName(other.importName),
         exportName(other.exportName),
-        assertions(other.assertions.allocPolicy()),
         lineno(other.lineno),
-        column(other.column) {
-    AutoEnterOOMUnsafeRegion oomUnsafe;
-    if (!assertions.appendAll(other.assertions)) {
-      oomUnsafe.crash("StencilModuleEntry::StencilModuleEntry");
-    }
-  }
+        column(other.column) {}
 
   StencilModuleEntry(StencilModuleEntry&& other) noexcept
-      : specifier(other.specifier),
+      : moduleRequest(other.moduleRequest),
         localName(other.localName),
         importName(other.importName),
         exportName(other.exportName),
-        assertions(std::move(other.assertions)),
         lineno(other.lineno),
         column(other.column) {}
 
   StencilModuleEntry& operator=(StencilModuleEntry& other) {
-    specifier = other.specifier;
+    moduleRequest = other.moduleRequest;
     localName = other.localName;
     importName = other.importName;
     exportName = other.exportName;
     lineno = other.lineno;
     column = other.column;
-    assertions = std::move(other.assertions);
     return *this;
   }
 
   StencilModuleEntry& operator=(StencilModuleEntry&& other) noexcept {
-    specifier = other.specifier;
+    moduleRequest = other.moduleRequest;
     localName = other.localName;
     importName = other.importName;
     exportName = other.exportName;
     lineno = other.lineno;
     column = other.column;
-    assertions = std::move(other.assertions);
     return *this;
   }
 
-  static StencilModuleEntry moduleRequest(TaggedParserAtomIndex specifier,
-                                          uint32_t lineno, uint32_t column) {
-    MOZ_ASSERT(!!specifier);
+  static StencilModuleEntry requestedModule(
+      MaybeModuleRequestIndex moduleRequest, uint32_t lineno, uint32_t column) {
+    MOZ_ASSERT(moduleRequest.isSome());
     StencilModuleEntry entry(lineno, column);
-    entry.specifier = specifier;
+    entry.moduleRequest = moduleRequest;
     return entry;
   }
 
-  static StencilModuleEntry importEntry(TaggedParserAtomIndex specifier,
+  static StencilModuleEntry importEntry(MaybeModuleRequestIndex moduleRequest,
                                         TaggedParserAtomIndex localName,
                                         TaggedParserAtomIndex importName,
                                         uint32_t lineno, uint32_t column) {
-    MOZ_ASSERT(specifier && localName && importName);
+    MOZ_ASSERT(moduleRequest.isSome());
+    MOZ_ASSERT(localName && importName);
     StencilModuleEntry entry(lineno, column);
-    entry.specifier = specifier;
+    entry.moduleRequest = moduleRequest;
     entry.localName = localName;
     entry.importName = importName;
     return entry;
   }
 
   static StencilModuleEntry importNamespaceEntry(
-      TaggedParserAtomIndex specifier, TaggedParserAtomIndex localName,
+      MaybeModuleRequestIndex moduleRequest, TaggedParserAtomIndex localName,
       uint32_t lineno, uint32_t column) {
-    MOZ_ASSERT(specifier && localName);
+    MOZ_ASSERT(moduleRequest.isSome());
+    MOZ_ASSERT(localName);
     StencilModuleEntry entry(lineno, column);
-    entry.specifier = specifier;
+    entry.moduleRequest = moduleRequest;
     entry.localName = localName;
     return entry;
   }
@@ -583,33 +696,34 @@ class StencilModuleEntry {
     return entry;
   }
 
-  static StencilModuleEntry exportFromEntry(TaggedParserAtomIndex specifier,
-                                            TaggedParserAtomIndex importName,
-                                            TaggedParserAtomIndex exportName,
-                                            uint32_t lineno, uint32_t column) {
-    MOZ_ASSERT(specifier && importName && exportName);
+  static StencilModuleEntry exportFromEntry(
+      MaybeModuleRequestIndex moduleRequest, TaggedParserAtomIndex importName,
+      TaggedParserAtomIndex exportName, uint32_t lineno, uint32_t column) {
+    MOZ_ASSERT(moduleRequest.isSome());
+    MOZ_ASSERT(importName && exportName);
     StencilModuleEntry entry(lineno, column);
-    entry.specifier = specifier;
+    entry.moduleRequest = moduleRequest;
     entry.importName = importName;
     entry.exportName = exportName;
     return entry;
   }
 
   static StencilModuleEntry exportNamespaceFromEntry(
-      TaggedParserAtomIndex specifier, TaggedParserAtomIndex exportName,
+      MaybeModuleRequestIndex moduleRequest, TaggedParserAtomIndex exportName,
       uint32_t lineno, uint32_t column) {
-    MOZ_ASSERT(specifier && exportName);
+    MOZ_ASSERT(moduleRequest.isSome());
+    MOZ_ASSERT(exportName);
     StencilModuleEntry entry(lineno, column);
-    entry.specifier = specifier;
+    entry.moduleRequest = MaybeModuleRequestIndex(moduleRequest);
     entry.exportName = exportName;
     return entry;
   }
 
   static StencilModuleEntry exportBatchFromEntry(
-      TaggedParserAtomIndex specifier, uint32_t lineno, uint32_t column) {
-    MOZ_ASSERT(specifier);
+      MaybeModuleRequestIndex moduleRequest, uint32_t lineno, uint32_t column) {
+    MOZ_ASSERT(moduleRequest.isSome());
     StencilModuleEntry entry(lineno, column);
-    entry.specifier = specifier;
+    entry.moduleRequest = MaybeModuleRequestIndex(moduleRequest);
     return entry;
   }
 };
@@ -618,8 +732,10 @@ class StencilModuleEntry {
 class StencilModuleMetadata
     : public js::AtomicRefCounted<StencilModuleMetadata> {
  public:
+  using RequestVector = Vector<StencilModuleRequest, 0, js::SystemAllocPolicy>;
   using EntryVector = Vector<StencilModuleEntry, 0, js::SystemAllocPolicy>;
 
+  RequestVector moduleRequests;
   EntryVector requestedModules;
   EntryVector importEntries;
   EntryVector localExportEntries;
@@ -631,7 +747,8 @@ class StencilModuleMetadata
 
   StencilModuleMetadata() = default;
 
-  bool initModule(JSContext* cx, CompilationAtomCache& atomCache,
+  bool initModule(JSContext* cx, FrontendContext* fc,
+                  CompilationAtomCache& atomCache,
                   JS::Handle<ModuleObject*> module) const;
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
@@ -649,6 +766,25 @@ class StencilModuleMetadata
   void dump(JSONPrinter& json, const CompilationStencil* stencil) const;
   void dumpFields(JSONPrinter& json, const CompilationStencil* stencil) const;
 #endif
+
+ private:
+  bool createModuleRequestObjects(
+      JSContext* cx, CompilationAtomCache& atomCache,
+      MutableHandle<ModuleRequestVector> output) const;
+  bool createRequestedModules(
+      JSContext* cx, CompilationAtomCache& atomCache,
+      Handle<ModuleRequestVector> moduleRequests,
+      MutableHandle<RequestedModuleVector> output) const;
+  bool createImportEntries(JSContext* cx, CompilationAtomCache& atomCache,
+                           Handle<ModuleRequestVector> moduleRequests,
+                           MutableHandle<ImportEntryVector> output) const;
+  bool createExportEntries(JSContext* cx, CompilationAtomCache& atomCache,
+                           Handle<ModuleRequestVector> moduleRequests,
+                           const EntryVector& input,
+                           MutableHandle<ExportEntryVector> output) const;
+  ModuleRequestObject* createModuleRequestObject(
+      JSContext* cx, CompilationAtomCache& atomCache,
+      const StencilModuleRequest& request) const;
 };
 
 // As an alternative to a ScopeIndex (which references a ScopeStencil), we may

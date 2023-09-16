@@ -32,6 +32,7 @@
 #include "vm/Scope.h"                 // for ScopeKind, ScopeKindString
 #include "vm/StringType.h"            // for JSAtom
 
+#include "gc/StableCellHasher-inl.h"
 #include "vm/Compartment-inl.h"        // for Compartment::wrap
 #include "vm/EnvironmentObject-inl.h"  // for JSObject::enclosingEnvironment
 #include "vm/JSObject-inl.h"  // for IsInternalFunctionObject, NewObjectWithGivenProtoAndKind
@@ -73,7 +74,9 @@ void DebuggerEnvironment::trace(JSTracer* trc) {
   if (Env* referent = maybeReferent()) {
     TraceManuallyBarrieredCrossCompartmentEdge(trc, this, &referent,
                                                "Debugger.Environment referent");
-    setReservedSlotGCThingAsPrivateUnbarriered(ENV_SLOT, referent);
+    if (referent != maybeReferent()) {
+      setReservedSlotGCThingAsPrivateUnbarriered(ENV_SLOT, referent);
+    }
   }
 }
 
@@ -90,17 +93,7 @@ static DebuggerEnvironment* DebuggerEnvironment_checkThis(
     return nullptr;
   }
 
-  // Forbid Debugger.Environment.prototype, which is of class
-  // DebuggerEnvironment::class_ but isn't a real working Debugger.Environment.
-  DebuggerEnvironment* nthisobj = &thisobj->as<DebuggerEnvironment>();
-  if (!nthisobj->isInstance()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_INCOMPATIBLE_PROTO, "Debugger.Environment",
-                              "method", "prototype object");
-    return nullptr;
-  }
-
-  return nthisobj;
+  return &thisobj->as<DebuggerEnvironment>();
 }
 
 struct MOZ_STACK_CLASS DebuggerEnvironment::CallData {
@@ -385,8 +378,8 @@ const JSFunctionSpec DebuggerEnvironment::methods_[] = {
 NativeObject* DebuggerEnvironment::initClass(JSContext* cx,
                                              Handle<GlobalObject*> global,
                                              HandleObject dbgCtor) {
-  return InitClass(cx, dbgCtor, nullptr, &DebuggerEnvironment::class_,
-                   construct, 0, properties_, methods_, nullptr, nullptr);
+  return InitClass(cx, dbgCtor, nullptr, nullptr, "Environment", construct, 0,
+                   properties_, methods_, nullptr, nullptr);
 }
 
 /* static */

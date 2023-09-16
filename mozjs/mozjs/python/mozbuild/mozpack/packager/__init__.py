@@ -2,15 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import codecs
-from collections import deque
 import json
 import os
 import re
+from collections import deque
+
 import six
-from mozpack.errors import errors
+
+import mozpack.path as mozpath
+from mozbuild.preprocessor import Preprocessor
 from mozpack.chrome.manifest import (
     Manifest,
     ManifestBinaryComponent,
@@ -19,8 +20,7 @@ from mozpack.chrome.manifest import (
     is_manifest,
     parse_manifest,
 )
-import mozpack.path as mozpath
-from mozbuild.preprocessor import Preprocessor
+from mozpack.errors import errors
 
 
 class Component(object):

@@ -1918,6 +1918,7 @@ void MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(
           FramePointer);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfStackPointer()),
           StackPointer);
+  ma_li(InstanceReg, ImmWord(wasm::FailInstanceReg));
   ret();
 
   // Found a wasm catch handler, restore state and jump to it.
@@ -2237,9 +2238,8 @@ void MacroAssembler::branchValueIsNurseryCellImpl(Condition cond,
   // temp may be InvalidReg, use scratch2 instead.
   SecondScratchRegisterScope scratch2(*this);
 
-  unboxGCThingForGCBarrier(value, scratch2);
-  orPtr(Imm32(gc::ChunkMask), scratch2);
-  loadPtr(Address(scratch2, gc::ChunkStoreBufferOffsetFromLastByte), scratch2);
+  getGCThingValueChunk(value, scratch2);
+  loadPtr(Address(scratch2, gc::ChunkStoreBufferOffset), scratch2);
   branchPtr(InvertCondition(cond), scratch2, ImmWord(0), label);
 
   bind(&done);

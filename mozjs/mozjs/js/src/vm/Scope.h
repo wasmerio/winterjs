@@ -43,7 +43,7 @@ struct JSContext;
 
 namespace js {
 
-class GenericPrinter;
+class JS_PUBLIC_API GenericPrinter;
 
 namespace frontend {
 class ScopeStencil;
@@ -59,6 +59,9 @@ class BaseAbstractBindingIter;
 
 template <typename NameT>
 class AbstractBindingIter;
+
+template <typename NameT>
+class AbstractPositionalFormalParameterIter;
 
 using BindingIter = AbstractBindingIter<JSAtom>;
 
@@ -329,19 +332,19 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
 
   // If there are any aliased bindings, the shape for the
   // EnvironmentObject. Otherwise nullptr.
-  const HeapPtr<Shape*> environmentShape_;
+  const HeapPtr<SharedShape*> environmentShape_;
 
   // The enclosing scope or nullptr.
   HeapPtr<Scope*> enclosingScope_;
 
-  Scope(ScopeKind kind, Scope* enclosing, Shape* environmentShape)
+  Scope(ScopeKind kind, Scope* enclosing, SharedShape* environmentShape)
       : TenuredCellWithNonGCPointer(nullptr),
         kind_(kind),
         environmentShape_(environmentShape),
         enclosingScope_(enclosing) {}
 
   static Scope* create(JSContext* cx, ScopeKind kind, Handle<Scope*> enclosing,
-                       Handle<Shape*> envShape);
+                       Handle<SharedShape*> envShape);
 
   template <typename ConcreteScope>
   void initData(
@@ -357,7 +360,7 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
   template <typename ConcreteScope>
   static ConcreteScope* create(
       JSContext* cx, ScopeKind kind, Handle<Scope*> enclosing,
-      Handle<Shape*> envShape,
+      Handle<SharedShape*> envShape,
       MutableHandle<UniquePtr<typename ConcreteScope::RuntimeData>> data);
 
   static const JS::TraceKind TraceKind = JS::TraceKind::Scope;
@@ -386,7 +389,7 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
            kind() == ScopeKind::StrictNamedLambda;
   }
 
-  Shape* environmentShape() const { return environmentShape_; }
+  SharedShape* environmentShape() const { return environmentShape_; }
 
   Scope* enclosing() const { return enclosingScope_; }
 
@@ -549,7 +552,7 @@ class LexicalScope : public Scope {
 
   // Returns an empty shape for extensible global and non-syntactic lexical
   // scopes.
-  static Shape* getEmptyExtensibleEnvironmentShape(JSContext* cx);
+  static SharedShape* getEmptyExtensibleEnvironmentShape(JSContext* cx);
 };
 
 template <>
@@ -624,7 +627,7 @@ class ClassBodyScope : public Scope {
 
   // Returns an empty shape for extensible global and non-syntactic lexical
   // scopes.
-  static Shape* getEmptyExtensibleEnvironmentShape(JSContext* cx);
+  static SharedShape* getEmptyExtensibleEnvironmentShape(JSContext* cx);
 };
 
 //
@@ -648,7 +651,7 @@ class ClassBodyScope : public Scope {
 class FunctionScope : public Scope {
   friend class GCMarker;
   friend class AbstractBindingIter<JSAtom>;
-  friend class PositionalFormalParameterIter;
+  friend class AbstractPositionalFormalParameterIter<JSAtom>;
   friend class Scope;
   friend class AbstractScopePtr;
   static const ScopeKind classScopeKind_ = ScopeKind::Function;
@@ -750,8 +753,7 @@ class FunctionScope : public Scope {
     return data().slotInfo.nonPositionalFormalStart;
   }
 
-  static bool isSpecialName(JSContext* cx,
-                            frontend::TaggedParserAtomIndex name);
+  static bool isSpecialName(frontend::TaggedParserAtomIndex name);
 };
 
 //
@@ -1567,37 +1569,75 @@ class AbstractBindingIter<frontend::TaggedParserAtomIndex>
 void DumpBindings(JSContext* cx, Scope* scope);
 JSAtom* FrameSlotName(JSScript* script, jsbytecode* pc);
 
-Shape* EmptyEnvironmentShape(JSContext* cx, const JSClass* cls,
-                             uint32_t numSlots, ObjectFlags objectFlags);
+SharedShape* EmptyEnvironmentShape(JSContext* cx, const JSClass* cls,
+                                   uint32_t numSlots, ObjectFlags objectFlags);
 
 template <class T>
-Shape* EmptyEnvironmentShape(JSContext* cx) {
+SharedShape* EmptyEnvironmentShape(JSContext* cx) {
   return EmptyEnvironmentShape(cx, &T::class_, T::RESERVED_SLOTS,
                                T::OBJECT_FLAGS);
 }
 
 //
-// A refinement BindingIter that only iterates over positional formal
-// parameters of a function.
+// PositionalFormalParameterIter is a refinement BindingIter that only iterates
+// over positional formal parameters of a function.
 //
-class PositionalFormalParameterIter : public BindingIter {
+template <typename NameT>
+class BasePositionalFormalParamterIter : public AbstractBindingIter<NameT> {
+  using Base = AbstractBindingIter<NameT>;
+
+ protected:
   void settle() {
-    if (index_ >= nonPositionalFormalStart_) {
-      index_ = length_;
+    if (this->index_ >= this->nonPositionalFormalStart_) {
+      this->index_ = this->length_;
     }
   }
 
  public:
-  explicit PositionalFormalParameterIter(Scope* scope);
-  explicit PositionalFormalParameterIter(JSScript* script);
+  using Base::Base;
 
   void operator++(int) {
-    BindingIter::operator++(1);
+    Base::operator++(1);
     settle();
   }
 
-  bool isDestructured() const { return !name(); }
+  bool isDestructured() const { return !this->name(); }
 };
+
+template <typename NameT>
+class AbstractPositionalFormalParameterIter;
+
+template <>
+class AbstractPositionalFormalParameterIter<JSAtom>
+    : public BasePositionalFormalParamterIter<JSAtom> {
+  using Base = BasePositionalFormalParamterIter<JSAtom>;
+
+ public:
+  explicit AbstractPositionalFormalParameterIter(Scope* scope);
+  explicit AbstractPositionalFormalParameterIter(JSScript* script);
+
+  using Base::Base;
+};
+
+template <>
+class AbstractPositionalFormalParameterIter<frontend::TaggedParserAtomIndex>
+    : public BasePositionalFormalParamterIter<frontend::TaggedParserAtomIndex> {
+  using Base =
+      BasePositionalFormalParamterIter<frontend::TaggedParserAtomIndex>;
+
+ public:
+  AbstractPositionalFormalParameterIter(
+      FunctionScope::AbstractData<frontend::TaggedParserAtomIndex>& data,
+      bool hasParameterExprs)
+      : Base(data, hasParameterExprs) {
+    settle();
+  }
+
+  using Base::Base;
+};
+
+using PositionalFormalParameterIter =
+    AbstractPositionalFormalParameterIter<JSAtom>;
 
 //
 // Iterator for walking the scope chain.
@@ -1641,7 +1681,7 @@ class MOZ_STACK_CLASS ScopeIter {
 
   // Returns the shape of the environment if it is known. It is possible to
   // hasSyntacticEnvironment and to have no known shape, e.g., eval.
-  Shape* environmentShape() const { return scope()->environmentShape(); }
+  SharedShape* environmentShape() const { return scope()->environmentShape(); }
 
   // Returns whether this scope has a syntactic environment (i.e., an
   // Environment that isn't a non-syntactic With or NonSyntacticVariables)
@@ -1705,7 +1745,7 @@ class WrappedPtrOperations<ScopeIter, Wrapper> {
   explicit operator bool() const { return !done(); }
   Scope* scope() const { return iter().scope(); }
   ScopeKind kind() const { return iter().kind(); }
-  Shape* environmentShape() const { return iter().environmentShape(); }
+  SharedShape* environmentShape() const { return iter().environmentShape(); }
   bool hasSyntacticEnvironment() const {
     return iter().hasSyntacticEnvironment();
   }
@@ -1720,12 +1760,12 @@ class MutableWrappedPtrOperations<ScopeIter, Wrapper>
   void operator++(int) { iter().operator++(1); }
 };
 
-Shape* CreateEnvironmentShape(JSContext* cx, BindingIter& bi,
-                              const JSClass* cls, uint32_t numSlots,
-                              ObjectFlags objectFlags);
+SharedShape* CreateEnvironmentShape(JSContext* cx, BindingIter& bi,
+                                    const JSClass* cls, uint32_t numSlots,
+                                    ObjectFlags objectFlags);
 
-Shape* EmptyEnvironmentShape(JSContext* cx, const JSClass* cls,
-                             uint32_t numSlots, ObjectFlags objectFlags);
+SharedShape* EmptyEnvironmentShape(JSContext* cx, const JSClass* cls,
+                                   uint32_t numSlots, ObjectFlags objectFlags);
 
 static inline size_t GetOffsetOfParserScopeDataTrailingNames(ScopeKind kind) {
   switch (kind) {

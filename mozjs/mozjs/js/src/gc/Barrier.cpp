@@ -18,7 +18,7 @@
 #include "vm/PropMap.h"
 #include "wasm/WasmJS.h"
 
-#include "gc/Zone-inl.h"
+#include "gc/StableCellHasher-inl.h"
 
 namespace js {
 
@@ -67,93 +67,9 @@ bool CurrentThreadIsIonCompiling() {
 
 #endif  // DEBUG
 
-template <typename T>
-/* static */ bool MovableCellHasher<T>::hasHash(const Lookup& l) {
-  if (!l) {
-    return true;
-  }
-
-  return l->zoneFromAnyThread()->hasUniqueId(l);
-}
-
-template <typename T>
-/* static */ bool MovableCellHasher<T>::ensureHash(const Lookup& l) {
-  if (!l) {
-    return true;
-  }
-
-  uint64_t unusedId;
-  return l->zoneFromAnyThread()->getOrCreateUniqueId(l, &unusedId);
-}
-
-template <typename T>
-/* static */ HashNumber MovableCellHasher<T>::hash(const Lookup& l) {
-  if (!l) {
-    return 0;
-  }
-
-  // We have to access the zone from-any-thread here: a worker thread may be
-  // cloning a self-hosted object from the main runtime's self- hosting zone
-  // into another runtime. The zone's uid lock will protect against multiple
-  // workers doing this simultaneously.
-  MOZ_ASSERT(CurrentThreadCanAccessZone(l->zoneFromAnyThread()) ||
-             CurrentThreadIsPerformingGC());
-
-  return l->zoneFromAnyThread()->getHashCodeInfallible(l);
-}
-
-template <typename T>
-/* static */ bool MovableCellHasher<T>::match(const Key& k, const Lookup& l) {
-  // Return true if both are null or false if only one is null.
-  if (!k) {
-    return !l;
-  }
-  if (!l) {
-    return false;
-  }
-
-  MOZ_ASSERT(k);
-  MOZ_ASSERT(l);
-  MOZ_ASSERT(CurrentThreadCanAccessZone(l->zoneFromAnyThread()));
-
-  Zone* zone = k->zoneFromAnyThread();
-  if (zone != l->zoneFromAnyThread()) {
-    return false;
-  }
-
-#ifdef DEBUG
-  // Incremental table sweeping means that existing table entries may no
-  // longer have unique IDs. We fail the match in that case and the entry is
-  // removed from the table later on.
-  if (!zone->hasUniqueId(k)) {
-    Key key = k;
-    MOZ_ASSERT(IsAboutToBeFinalizedUnbarriered(key));
-  }
-  MOZ_ASSERT(zone->hasUniqueId(l));
-#endif
-
-  uint64_t keyId;
-  if (!zone->maybeGetUniqueId(k, &keyId)) {
-    // Key is dead and cannot match lookup which must be live.
-    return false;
-  }
-
-  return keyId == zone->getUniqueIdInfallible(l);
-}
-
 #if !MOZ_IS_GCC
-template struct JS_PUBLIC_API MovableCellHasher<JSObject*>;
+template struct JS_PUBLIC_API StableCellHasher<JSObject*>;
 #endif
-
-template struct JS_PUBLIC_API MovableCellHasher<AbstractGeneratorObject*>;
-template struct JS_PUBLIC_API MovableCellHasher<EnvironmentObject*>;
-template struct JS_PUBLIC_API MovableCellHasher<GlobalObject*>;
-template struct JS_PUBLIC_API MovableCellHasher<JSScript*>;
-template struct JS_PUBLIC_API MovableCellHasher<BaseScript*>;
-template struct JS_PUBLIC_API MovableCellHasher<PropMap*>;
-template struct JS_PUBLIC_API MovableCellHasher<ScriptSourceObject*>;
-template struct JS_PUBLIC_API MovableCellHasher<SavedFrame*>;
-template struct JS_PUBLIC_API MovableCellHasher<WasmInstanceObject*>;
 
 }  // namespace js
 

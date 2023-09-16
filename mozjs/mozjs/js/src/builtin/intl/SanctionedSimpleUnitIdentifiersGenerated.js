@@ -5,7 +5,7 @@
  *
  * Intl.NumberFormat Unified API Proposal
  */
-/* eslint-disable prettier/prettier */
+// prettier-ignore
 var sanctionedSimpleUnitIdentifiers = {
   "acre": true,
   "bit": true,
@@ -32,6 +32,7 @@ var sanctionedSimpleUnitIdentifiers = {
   "megabit": true,
   "megabyte": true,
   "meter": true,
+  "microsecond": true,
   "mile": true,
   "mile-scandinavian": true,
   "milliliter": true,
@@ -39,6 +40,7 @@ var sanctionedSimpleUnitIdentifiers = {
   "millisecond": true,
   "minute": true,
   "month": true,
+  "nanosecond": true,
   "ounce": true,
   "percent": true,
   "petabyte": true,
@@ -51,4 +53,3 @@ var sanctionedSimpleUnitIdentifiers = {
   "yard": true,
   "year": true
 };
-/* eslint-enable prettier/prettier */

@@ -2,13 +2,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
 import os
+
 import six
 
 
 def toolchain_task_definitions():
-    from gecko_taskgraph.generator import load_tasks_for_kind
+    import gecko_taskgraph  # noqa: triggers override of the `graph_config_schema`
+    from taskgraph.generator import load_tasks_for_kind
 
     # Don't import globally to allow this module being imported without
     # the taskgraph module being available (e.g. standalone js)

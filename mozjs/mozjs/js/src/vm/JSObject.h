@@ -90,6 +90,9 @@ class JSObject
   // The Shape is stored in the cell header.
   js::Shape* shape() const { return headerPtr(); }
 
+  // Like shape(), but uses getAtomic to read the header word.
+  js::Shape* shapeMaybeForwarded() const { return headerPtrAtomic(); }
+
 #ifndef JS_64BIT
   // Ensure fixed slots have 8-byte alignment on 32-bit platforms.
   uint32_t padding_;
@@ -186,12 +189,18 @@ class JSObject
     return setFlag(cx, obj, js::ObjectFlag::IsUsedAsPrototype);
   }
 
-  bool useWatchtowerTestingCallback() const {
-    return hasFlag(js::ObjectFlag::UseWatchtowerTestingCallback);
+  bool useWatchtowerTestingLog() const {
+    return hasFlag(js::ObjectFlag::UseWatchtowerTestingLog);
   }
-  static bool setUseWatchtowerTestingCallback(JSContext* cx,
-                                              JS::HandleObject obj) {
-    return setFlag(cx, obj, js::ObjectFlag::UseWatchtowerTestingCallback);
+  static bool setUseWatchtowerTestingLog(JSContext* cx, JS::HandleObject obj) {
+    return setFlag(cx, obj, js::ObjectFlag::UseWatchtowerTestingLog);
+  }
+
+  bool isGenerationCountedGlobal() const {
+    return hasFlag(js::ObjectFlag::GenerationCountedGlobal);
+  }
+  static bool setGenerationCountedGlobal(JSContext* cx, JS::HandleObject obj) {
+    return setFlag(cx, obj, js::ObjectFlag::GenerationCountedGlobal);
   }
 
   // A "qualified" varobj is the object on which "qualified" variable
@@ -307,10 +316,10 @@ class JSObject
 
 #ifdef DEBUG
   static void debugCheckNewObject(js::Shape* shape, js::gc::AllocKind allocKind,
-                                  js::gc::InitialHeap heap);
+                                  js::gc::Heap heap);
 #else
   static void debugCheckNewObject(js::Shape* shape, js::gc::AllocKind allocKind,
-                                  js::gc::InitialHeap heap) {}
+                                  js::gc::Heap heap) {}
 #endif
 
   /*
@@ -424,6 +433,8 @@ class JSObject
   MOZ_ALWAYS_INLINE bool isConstructor() const;
   MOZ_ALWAYS_INLINE JSNative callHook() const;
   MOZ_ALWAYS_INLINE JSNative constructHook() const;
+
+  bool isBackgroundFinalized() const;
 
   MOZ_ALWAYS_INLINE void finalize(JS::GCContext* gcx);
 
@@ -807,10 +818,6 @@ MOZ_ALWAYS_INLINE bool GetPrototypeFromBuiltinConstructor(
   return GetPrototypeFromConstructor(cx, newTarget, intrinsicDefaultProto,
                                      proto);
 }
-
-// Generic call for constructing |this|.
-extern JSObject* CreateThis(JSContext* cx, const JSClass* clasp,
-                            js::HandleObject callee);
 
 /* ES6 draft rev 32 (2015 Feb 2) 6.2.4.5 ToPropertyDescriptor(Obj) */
 bool ToPropertyDescriptor(JSContext* cx, HandleValue descval,

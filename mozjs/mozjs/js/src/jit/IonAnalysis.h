@@ -20,7 +20,7 @@
 
 namespace js {
 
-class GenericPrinter;
+class JS_PUBLIC_API GenericPrinter;
 class PlainObject;
 
 namespace jit {
@@ -39,6 +39,8 @@ class MTest;
 [[nodiscard]] bool FoldEmptyBlocks(MIRGraph& graph);
 
 [[nodiscard]] bool SplitCriticalEdges(MIRGraph& graph);
+
+[[nodiscard]] bool OptimizeIteratorIndices(MIRGenerator* mir, MIRGraph& graph);
 
 bool IsUint32Type(const MDefinition* def);
 
@@ -91,6 +93,8 @@ void AssertExtendedGraphCoherency(MIRGraph& graph,
 [[nodiscard]] bool EliminateRedundantChecks(MIRGraph& graph);
 
 [[nodiscard]] bool EliminateRedundantShapeGuards(MIRGraph& graph);
+
+[[nodiscard]] bool EliminateRedundantGCBarriers(MIRGraph& graph);
 
 [[nodiscard]] bool AddKeepAliveInstructions(MIRGraph& graph);
 
@@ -179,8 +183,9 @@ bool IsDiscardable(const MDefinition* def);
 bool IsDiscardableAllowEffectful(const MDefinition* def);
 
 class CompileInfo;
-void DumpMIRExpressions(MIRGraph& graph, const CompileInfo& info,
-                        const char* phase);
+void DumpMIRExpressions(GenericPrinter& out, MIRGraph& graph,
+                        const CompileInfo& info, const char* phase);
+void DumpMIRDefinition(GenericPrinter& out, MDefinition* def);
 
 }  // namespace jit
 }  // namespace js

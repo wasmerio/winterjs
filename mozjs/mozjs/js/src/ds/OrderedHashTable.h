@@ -38,11 +38,17 @@
  */
 
 #include "mozilla/HashFunctions.h"
+#include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/TemplateLib.h"
 
 #include <utility>
 
+#include "gc/Barrier.h"
+#include "js/GCPolicyAPI.h"
 #include "js/HashTable.h"
+
+class JSTracer;
 
 namespace js {
 
@@ -499,48 +505,9 @@ class OrderedHashTable {
       return this->ht->data[this->i].element;
     }
 
-    /*
-     * Change the key of the front entry.
-     *
-     * This calls Ops::hash on both the current key and the new key.
-     * Ops::hash on the current key must return the same hash code as
-     * when the entry was added to the table.
-     */
     void rekeyFront(const Key& k) {
       MOZ_ASSERT(this->valid());
-      OrderedHashTable* ht = this->ht;
-      uint32_t i = this->i;
-
-      Data& entry = ht->data[i];
-      HashNumber oldHash =
-          ht->prepareHash(Ops::getKey(entry.element)) >> ht->hashShift;
-      HashNumber newHash = ht->prepareHash(k) >> ht->hashShift;
-      Ops::setKey(entry.element, k);
-      if (newHash != oldHash) {
-        // Remove this entry from its old hash chain. (If this crashes
-        // reading nullptr, it would mean we did not find this entry on
-        // the hash chain where we expected it. That probably means the
-        // key's hash code changed since it was inserted, breaking the
-        // hash code invariant.)
-        Data** ep = &ht->hashTable[oldHash];
-        while (*ep != &entry) {
-          ep = &(*ep)->chain;
-        }
-        *ep = entry.chain;
-
-        // Add it to the new hash chain. We could just insert it at the
-        // beginning of the chain. Instead, we do a bit of work to
-        // preserve the invariant that hash chains always go in reverse
-        // insertion order (descending memory order). No code currently
-        // depends on this invariant, so it's fine to kill it if
-        // needed.
-        ep = &ht->hashTable[newHash];
-        while (*ep && *ep > &entry) {
-          ep = &(*ep)->chain;
-        }
-        entry.chain = *ep;
-        *ep = &entry;
-      }
+      this->ht->rekey(&this->ht->data[this->i], k);
     }
   };
 
@@ -551,6 +518,31 @@ class OrderedHashTable {
     return Range(self, &self->ranges);
   }
   MutableRange mutableAll() { return MutableRange(this, &ranges); }
+
+  void trace(JSTracer* trc) {
+    for (uint32_t i = 0; i < dataLength; i++) {
+      if (!Ops::isEmpty(Ops::getKey(data[i].element))) {
+        Ops::trace(trc, this, i, data[i].element);
+      }
+    }
+  }
+
+  // For use by the implementation of Ops::trace.
+  template <typename Key>
+  void traceKey(JSTracer* trc, uint32_t index, Key& key) {
+    MOZ_ASSERT(index < dataLength);
+    using MutableKey = std::remove_const_t<Key>;
+    using UnbarrieredKey = typename RemoveBarrier<MutableKey>::Type;
+    UnbarrieredKey newKey = key;
+    JS::GCPolicy<UnbarrieredKey>::trace(trc, &newKey, "OrderedHashMap key");
+    if (newKey != key) {
+      rekey(&data[index], newKey);
+    }
+  }
+  template <typename Value>
+  void traceValue(JSTracer* trc, Value& value) {
+    JS::GCPolicy<Value>::trace(trc, &value, "OrderedHashMap value");
+  }
 
   /*
    * Allocate a new Range, possibly in nursery memory. The buffer must be
@@ -624,6 +616,9 @@ class OrderedHashTable {
   static constexpr size_t offsetOfHashShift() {
     return offsetof(OrderedHashTable, hashShift);
   }
+  static constexpr size_t offsetOfLiveCount() {
+    return offsetof(OrderedHashTable, liveCount);
+  }
   static constexpr size_t offsetOfDataElement() {
     static_assert(offsetof(Data, element) == 0,
                   "RangeFront and RangePopFront depend on offsetof(Data, "
@@ -657,7 +652,7 @@ class OrderedHashTable {
    * This fixed fill factor was chosen to make the size of the data
    * array, in bytes, close to a power of two when sizeof(T) is 16.
    */
-  static double fillFactor() { return 8.0 / 3.0; }
+  static constexpr double fillFactor() { return 8.0 / 3.0; }
 
   /*
    * The minimum permitted value of (liveCount / dataLength).
@@ -749,6 +744,19 @@ class OrderedHashTable {
       return true;
     }
 
+    // Ensure the new capacity fits into INT32_MAX.
+    constexpr size_t maxCapacityLog2 =
+        mozilla::tl::FloorLog2<size_t(INT32_MAX / fillFactor())>::value;
+    static_assert(maxCapacityLog2 < kHashNumberBits);
+
+    // Fail if |(js::kHashNumberBits - newHashShift) > maxCapacityLog2|.
+    //
+    // Reorder |kHashNumberBits| so both constants are on the right-hand side.
+    if (MOZ_UNLIKELY(newHashShift < (js::kHashNumberBits - maxCapacityLog2))) {
+      alloc.reportAllocOverflow();
+      return false;
+    }
+
     size_t newHashBuckets = size_t(1) << (js::kHashNumberBits - newHashShift);
     Data** newHashTable = alloc.template pod_malloc<Data*>(newHashBuckets);
     if (!newHashTable) {
@@ -791,6 +799,40 @@ class OrderedHashTable {
     return true;
   }
 
+  // Change the key of the front entry.
+  //
+  // This calls Ops::hash on both the current key and the new key. Ops::hash on
+  // the current key must return the same hash code as when the entry was added
+  // to the table.
+  void rekey(Data* entry, const Key& k) {
+    HashNumber oldHash = prepareHash(Ops::getKey(entry->element)) >> hashShift;
+    HashNumber newHash = prepareHash(k) >> hashShift;
+    Ops::setKey(entry->element, k);
+    if (newHash != oldHash) {
+      // Remove this entry from its old hash chain. (If this crashes reading
+      // nullptr, it would mean we did not find this entry on the hash chain
+      // where we expected it. That probably means the key's hash code changed
+      // since it was inserted, breaking the hash code invariant.)
+      Data** ep = &hashTable[oldHash];
+      while (*ep != entry) {
+        ep = &(*ep)->chain;
+      }
+      *ep = entry->chain;
+
+      // Add it to the new hash chain. We could just insert it at the beginning
+      // of the chain. Instead, we do a bit of work to preserve the invariant
+      // that hash chains always go in reverse insertion order (descending
+      // memory order). No code currently depends on this invariant, so it's
+      // fine to kill it if needed.
+      ep = &hashTable[newHash];
+      while (*ep && *ep > entry) {
+        ep = &(*ep)->chain;
+      }
+      entry->chain = *ep;
+      *ep = entry;
+    }
+  }
+
   // Not copyable.
   OrderedHashTable& operator=(const OrderedHashTable&) = delete;
   OrderedHashTable(const OrderedHashTable&) = delete;
@@ -829,6 +871,9 @@ class OrderedHashMap {
   };
 
  private:
+  struct MapOps;
+  using Impl = detail::OrderedHashTable<Entry, MapOps, AllocPolicy>;
+
   struct MapOps : OrderedHashPolicy {
     using KeyType = Key;
     static void makeEmpty(Entry* e) {
@@ -840,12 +885,17 @@ class OrderedHashMap {
     }
     static const Key& getKey(const Entry& e) { return e.key; }
     static void setKey(Entry& e, const Key& k) { const_cast<Key&>(e.key) = k; }
+    static void trace(JSTracer* trc, Impl* table, uint32_t index,
+                      Entry& entry) {
+      table->traceKey(trc, index, entry.key);
+      table->traceValue(trc, entry.value);
+    }
   };
 
-  typedef detail::OrderedHashTable<Entry, MapOps, AllocPolicy> Impl;
   Impl impl;
 
  public:
+  using Lookup = typename Impl::Lookup;
   using Range = typename Impl::Range;
   using MutableRange = typename Impl::MutableRange;
 
@@ -853,23 +903,25 @@ class OrderedHashMap {
       : impl(std::move(ap), hcs) {}
   [[nodiscard]] bool init() { return impl.init(); }
   uint32_t count() const { return impl.count(); }
-  bool has(const Key& key) const { return impl.has(key); }
+  bool has(const Lookup& key) const { return impl.has(key); }
   Range all() const { return impl.all(); }
   MutableRange mutableAll() { return impl.mutableAll(); }
-  const Entry* get(const Key& key) const { return impl.get(key); }
-  Entry* get(const Key& key) { return impl.get(key); }
-  bool remove(const Key& key, bool* foundp) { return impl.remove(key, foundp); }
+  const Entry* get(const Lookup& key) const { return impl.get(key); }
+  Entry* get(const Lookup& key) { return impl.get(key); }
+  bool remove(const Lookup& key, bool* foundp) {
+    return impl.remove(key, foundp);
+  }
   [[nodiscard]] bool clear() { return impl.clear(); }
 
-  template <typename V>
-  [[nodiscard]] bool put(const Key& key, V&& value) {
-    return impl.put(Entry(key, std::forward<V>(value)));
+  template <typename K, typename V>
+  [[nodiscard]] bool put(K&& key, V&& value) {
+    return impl.put(Entry(std::forward<K>(key), std::forward<V>(value)));
   }
 
-  HashNumber hash(const Key& key) const { return impl.prepareHash(key); }
+  HashNumber hash(const Lookup& key) const { return impl.prepareHash(key); }
 
   template <typename GetNewKey>
-  void rekeyOneEntry(const Key& current, const GetNewKey& getNewKey) {
+  void rekeyOneEntry(const Lookup& current, const GetNewKey& getNewKey) {
     const Entry* e = get(current);
     if (!e) {
       return;
@@ -884,6 +936,8 @@ class OrderedHashMap {
 
   void destroyNurseryRanges() { impl.destroyNurseryRanges(); }
 
+  void trace(JSTracer* trc) { impl.trace(trc); }
+
   static size_t offsetOfEntryKey() { return Entry::offsetOfKey(); }
   static size_t offsetOfImplDataLength() { return Impl::offsetOfDataLength(); }
   static size_t offsetOfImplData() { return Impl::offsetOfData(); }
@@ -892,6 +946,9 @@ class OrderedHashMap {
   }
   static constexpr size_t offsetOfImplHashShift() {
     return Impl::offsetOfHashShift();
+  }
+  static constexpr size_t offsetOfImplLiveCount() {
+    return Impl::offsetOfLiveCount();
   }
   static constexpr size_t offsetOfImplDataElement() {
     return Impl::offsetOfDataElement();
@@ -915,16 +972,22 @@ class OrderedHashMap {
 template <class T, class OrderedHashPolicy, class AllocPolicy>
 class OrderedHashSet {
  private:
+  struct SetOps;
+  using Impl = detail::OrderedHashTable<T, SetOps, AllocPolicy>;
+
   struct SetOps : OrderedHashPolicy {
     using KeyType = const T;
     static const T& getKey(const T& v) { return v; }
     static void setKey(const T& e, const T& v) { const_cast<T&>(e) = v; }
+    static void trace(JSTracer* trc, Impl* table, uint32_t index, T& entry) {
+      table->traceKey(trc, index, entry);
+    }
   };
 
-  typedef detail::OrderedHashTable<T, SetOps, AllocPolicy> Impl;
   Impl impl;
 
  public:
+  using Lookup = typename Impl::Lookup;
   using Range = typename Impl::Range;
   using MutableRange = typename Impl::MutableRange;
 
@@ -932,19 +995,22 @@ class OrderedHashSet {
       : impl(std::move(ap), hcs) {}
   [[nodiscard]] bool init() { return impl.init(); }
   uint32_t count() const { return impl.count(); }
-  bool has(const T& value) const { return impl.has(value); }
+  bool has(const Lookup& value) const { return impl.has(value); }
   Range all() const { return impl.all(); }
   MutableRange mutableAll() { return impl.mutableAll(); }
-  [[nodiscard]] bool put(const T& value) { return impl.put(value); }
-  bool remove(const T& value, bool* foundp) {
+  template <typename Input>
+  [[nodiscard]] bool put(Input&& value) {
+    return impl.put(std::forward<Input>(value));
+  }
+  bool remove(const Lookup& value, bool* foundp) {
     return impl.remove(value, foundp);
   }
   [[nodiscard]] bool clear() { return impl.clear(); }
 
-  HashNumber hash(const T& value) const { return impl.prepareHash(value); }
+  HashNumber hash(const Lookup& value) const { return impl.prepareHash(value); }
 
   template <typename GetNewKey>
-  void rekeyOneEntry(const T& current, const GetNewKey& getNewKey) {
+  void rekeyOneEntry(const Lookup& current, const GetNewKey& getNewKey) {
     if (!has(current)) {
       return;
     }
@@ -958,6 +1024,8 @@ class OrderedHashSet {
 
   void destroyNurseryRanges() { impl.destroyNurseryRanges(); }
 
+  void trace(JSTracer* trc) { impl.trace(trc); }
+
   static size_t offsetOfEntryKey() { return 0; }
   static size_t offsetOfImplDataLength() { return Impl::offsetOfDataLength(); }
   static size_t offsetOfImplData() { return Impl::offsetOfData(); }
@@ -966,6 +1034,9 @@ class OrderedHashSet {
   }
   static constexpr size_t offsetOfImplHashShift() {
     return Impl::offsetOfHashShift();
+  }
+  static constexpr size_t offsetOfImplLiveCount() {
+    return Impl::offsetOfLiveCount();
   }
   static constexpr size_t offsetOfImplDataElement() {
     return Impl::offsetOfDataElement();

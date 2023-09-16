@@ -153,15 +153,20 @@ static constexpr Register IntArgReg6 = a6;
 static constexpr Register IntArgReg7 = a7;
 static constexpr Register HeapReg = s7;
 
-// Registerd used in RegExpMatcher instruction (do not use JSReturnOperand).
+// Registers used by RegExpMatcher and RegExpExecMatch stubs (do not use
+// JSReturnOperand).
 static constexpr Register RegExpMatcherRegExpReg = CallTempReg0;
 static constexpr Register RegExpMatcherStringReg = CallTempReg1;
 static constexpr Register RegExpMatcherLastIndexReg = CallTempReg2;
 
-// Registerd used in RegExpTester instruction (do not use ReturnReg).
-static constexpr Register RegExpTesterRegExpReg = CallTempReg0;
-static constexpr Register RegExpTesterStringReg = CallTempReg1;
-static constexpr Register RegExpTesterLastIndexReg = CallTempReg2;
+// Registers used by RegExpExecTest stub (do not use ReturnReg).
+static constexpr Register RegExpExecTestRegExpReg = CallTempReg0;
+static constexpr Register RegExpExecTestStringReg = CallTempReg1;
+
+// Registers used by RegExpSearcher stub (do not use ReturnReg).
+static constexpr Register RegExpSearcherRegExpReg = CallTempReg0;
+static constexpr Register RegExpSearcherStringReg = CallTempReg1;
+static constexpr Register RegExpSearcherLastIndexReg = CallTempReg2;
 
 static constexpr Register JSReturnReg_Type = a3;
 static constexpr Register JSReturnReg_Data = a2;
@@ -239,7 +244,6 @@ static const uint32_t WasmTrapInstructionLength = 4;
 // See comments in wasm::GenerateFunctionPrologue.  The difference between these
 // is the size of the largest callable prologue on the platform.
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
-static constexpr uint32_t WasmCheckedTailEntryOffset = 20u;
 
 static constexpr Scale ScalePointer = TimesEight;
 

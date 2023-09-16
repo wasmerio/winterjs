@@ -223,7 +223,9 @@ const multiValueModule = moduleWithSections([sigSection([v2vSig]), declSection([
 // In this test module, 0 denotes a void-to-void block type.
 assertEq(WebAssembly.validate(multiValueModule), true);
 
-// Ensure all invalid opcodes rejected
+// Ensure all invalid opcodes are rejected.  Note that the game here (and for
+// the prefixed cases below) is to present only opcodes which will be rejected by
+// *both* Baseline and Ion.
 for (let op of undefinedOpcodes) {
     let binary = moduleWithSections([v2vSigSection, declSection([0]), bodySection([funcBody({locals:[], body:[op]})])]);
     assertErrorMessage(() => wasmEval(binary), CompileError, /((unrecognized|Unknown) opcode)|(tail calls support is not enabled)|(Exceptions support is not enabled)|(Unexpected EOF)/);
@@ -246,10 +248,13 @@ function checkIllegalPrefixed(prefix, opcode) {
 let reservedGc = {};
 if (wasmGcEnabled()) {
     reservedGc = {
-        0x0: true,
-        0x3: true,
-        0x6: true,
-        0x7: true
+      // Structure operations
+      0x07: true, 0x08: true, 0x03: true, 0x04: true, 0x05: true, 0x06: true,
+      // Array operations
+      0x1b: true, 0x1a: true, 0x1c: true, 0x1d: true, 0x10: true, 0x13: true,
+      0x14: true, 0x15: true, 0x16: true, 0x17: true, 0x18: true,
+      // Ref operations
+      0x44: true, 0x45: true, 0x46: true, 0x47: true,
     };
 }
 for (let i = 0; i < 256; i++) {
@@ -381,3 +386,19 @@ function testValidNameSectionWithProfiling() {
     disableGeckoProfiling();
 }
 testValidNameSectionWithProfiling();
+
+// Memory alignment can use non-minimal LEB128
+wasmEval(moduleWithSections([
+    v2vSigSection,
+    declSection([0]),
+    memorySection(0),
+    bodySection([
+        funcBody({locals: [], body: [
+            I32ConstCode, 0x00, // i32.const 0
+            I32Load,
+                0x81, 0x00, // alignment 1, non-minimal
+                0x00, // offset 0
+            DropCode,
+        ]}),
+    ]),
+]));

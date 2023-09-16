@@ -1,23 +1,24 @@
 import json
-from mozperftest.tests.support import (
-    get_running_env,
-    EXAMPLE_WPT_TEST,
-)
-import requests
-from unittest import mock
 import random
-import mozperftest.test.webpagetest as webpagetest
+from unittest import mock
+
 import pytest
+import requests
+
+import mozperftest.test.webpagetest as webpagetest
 from mozperftest.test.webpagetest import (
-    WPTTimeOutError,
+    ACCEPTED_STATISTICS,
+    WPT_API_EXPIRED_MESSAGE,
     WPTBrowserSelectionError,
+    WPTDataProcessingError,
+    WPTExpiredAPIKeyError,
+    WPTInvalidConnectionSelection,
+    WPTInvalidStatisticsError,
     WPTInvalidURLError,
     WPTLocationSelectionError,
-    WPTInvalidConnectionSelection,
-    ACCEPTED_STATISTICS,
-    WPTInvalidStatisticsError,
-    WPTDataProcessingError,
+    WPTTimeOutError,
 )
+from mozperftest.tests.support import EXAMPLE_WPT_TEST, get_running_env
 
 WPT_METRICS = [
     "firstContentfulPaint",
@@ -82,7 +83,9 @@ def init_placeholder_wpt_data(fvonly=False, invalid_results=False):
     return placeholder_data
 
 
-def init_mocked_request(status_code, WPT_test_status_code=200, **kwargs):
+def init_mocked_request(
+    status_code, WPT_test_status_code=200, WPT_test_status_text="Ok", **kwargs
+):
     mock_data = {
         "data": {
             "ec2-us-east-1": {"PendingTests": {"Queued": 3}, "Label": "California"},
@@ -92,6 +95,7 @@ def init_mocked_request(status_code, WPT_test_status_code=200, **kwargs):
             "remaining": 2000,
         },
         "statusCode": WPT_test_status_code,
+        "statusText": WPT_test_status_text,
     }
     for key, value in kwargs.items():
         mock_data["data"][key] = value
@@ -244,4 +248,24 @@ def test_webpagetest_test_metric_not_found(*mocked):
     metadata.script["options"]["test_parameters"]["wait_between_requests"] = 1
     test = webpagetest.WebPageTest(env, mach_cmd)
     with pytest.raises(WPTDataProcessingError):
+        test.run(metadata)
+
+
+@mock.patch("mozperftest.utils.get_tc_secret", return_value={"wpt_key": "fake_key"})
+@mock.patch(
+    "mozperftest.test.webpagetest.WebPageTest.location_queue", return_value=None
+)
+@mock.patch(
+    "requests.get",
+    return_value=init_mocked_request(
+        200, WPT_test_status_code=400, WPT_test_status_text=WPT_API_EXPIRED_MESSAGE
+    ),
+)
+@mock.patch("mozperftest.test.webpagetest.WPT_KEY_FILE", "tests/data/WPT_fakekey.txt")
+def test_webpagetest_test_expired_api_key(*mocked):
+    mach_cmd, metadata, env = running_env(tests=[str(EXAMPLE_WPT_TEST)])
+    metadata.script["options"]["test_list"] = ["google.ca"]
+    metadata.script["options"]["test_parameters"]["wait_between_requests"] = 1
+    test = webpagetest.WebPageTest(env, mach_cmd)
+    with pytest.raises(WPTExpiredAPIKeyError):
         test.run(metadata)

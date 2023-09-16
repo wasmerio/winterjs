@@ -2,28 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import hashlib
 import os
-import sys
-
 from pathlib import Path
+from urllib.request import urlopen
 
+import certifi
 from mach.site import PythonVirtualenv
 from mach.util import get_state_dir
 
-# NOTE: This script is intended to be run with a vanilla Python install.  We
-# have to rely on the standard library instead of Python 2+3 helpers like
-# the six module.
-if sys.version_info < (3,):
-    from urllib2 import urlopen
-
-    input = raw_input  # noqa
-else:
-    from urllib.request import urlopen
-
-MINIMUM_RUST_VERSION = "1.61.0"
+MINIMUM_RUST_VERSION = "1.66.0"
 
 
 def get_tools_dir(srcdir=False):
@@ -46,7 +34,7 @@ def http_download_and_save(url, dest: Path, hexhash, digest="sha256"):
     that will be used to validate the downloaded file using the given
     digest algorithm.  The value of digest can be any value accepted by
     hashlib.new.  The default digest used is 'sha256'."""
-    f = urlopen(url)
+    f = urlopen(url, cafile=certifi.where())
     h = hashlib.new(digest)
     with open(dest, "wb") as out:
         while True:

@@ -11,12 +11,13 @@
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/Utf8.h"
 
+#include "frontend/FrontendContext.h"
 #include "js/Vector.h"
 #include "vm/StringType.h"
 
 namespace js {
 
-class ErrorContext;
+class FrontendContext;
 
 namespace frontend {
 class ParserAtomsTable;
@@ -52,10 +53,12 @@ inline size_t GrowEltsAggressively(size_t aOldElts, size_t aIncr) {
 
 class StringBufferAllocPolicy {
   TempAllocPolicy impl_;
-
   const arena_id_t& arenaId_;
 
  public:
+  StringBufferAllocPolicy(FrontendContext* fc, const arena_id_t& arenaId)
+      : impl_(fc), arenaId_(arenaId) {}
+
   StringBufferAllocPolicy(JSContext* cx, const arena_id_t& arenaId)
       : impl_(cx), arenaId_(arenaId) {}
 
@@ -120,8 +123,7 @@ class StringBuffer {
   using Latin1CharBuffer = BufferType<Latin1Char>;
   using TwoByteCharBuffer = BufferType<char16_t>;
 
-  JSContext* cx_;
-  const arena_id_t& arenaId_;
+  JSContext* maybeCx_ = nullptr;
 
   /*
    * If Latin1 strings are enabled, cb starts out as a Latin1CharBuffer. When
@@ -131,7 +133,7 @@ class StringBuffer {
   mozilla::MaybeOneOf<Latin1CharBuffer, TwoByteCharBuffer> cb;
 
   /* Number of reserve()'d chars, see inflateChars. */
-  size_t reserved_;
+  size_t reserved_ = 0;
 
   StringBuffer(const StringBuffer& other) = delete;
   void operator=(const StringBuffer& other) = delete;
@@ -181,8 +183,20 @@ class StringBuffer {
  public:
   explicit StringBuffer(JSContext* cx,
                         const arena_id_t& arenaId = js::MallocArena)
-      : cx_(cx), arenaId_(arenaId), reserved_(0) {
-    cb.construct<Latin1CharBuffer>(StringBufferAllocPolicy{cx_, arenaId_});
+      : maybeCx_(cx) {
+    MOZ_ASSERT(cx);
+    cb.construct<Latin1CharBuffer>(StringBufferAllocPolicy{cx, arenaId});
+  }
+
+  // This constructor should only be used if the methods related to the
+  // following are not used, because they require a JSContext:
+  //   * JSString
+  //   * JSAtom
+  //   * mozilla::Utf8Unit
+  explicit StringBuffer(FrontendContext* fc,
+                        const arena_id_t& arenaId = js::MallocArena) {
+    MOZ_ASSERT(fc);
+    cb.construct<Latin1CharBuffer>(StringBufferAllocPolicy{fc, arenaId});
   }
 
   void clear() {
@@ -354,7 +368,7 @@ class StringBuffer {
   /* Identical to finishString() except that an atom is created. */
   JSAtom* finishAtom();
   frontend::TaggedParserAtomIndex finishParserAtom(
-      frontend::ParserAtomsTable& parserAtoms, ErrorContext* ec);
+      frontend::ParserAtomsTable& parserAtoms, FrontendContext* fc);
 
   /*
    * Creates a raw string from the characters in this buffer.  The string is
@@ -364,6 +378,7 @@ class StringBuffer {
   char16_t* stealChars();
 };
 
+// Like StringBuffer, but uses StringBufferArena for the characters.
 class JSStringBuilder : public StringBuffer {
  public:
   explicit JSStringBuilder(JSContext* cx)
@@ -372,6 +387,8 @@ class JSStringBuilder : public StringBuffer {
   /*
    * Creates a string from the characters in this buffer, then (regardless
    * whether string creation succeeded or failed) empties the buffer.
+   *
+   * Returns nullptr if string creation failed.
    */
   JSLinearString* finishString();
 };
@@ -446,7 +463,9 @@ inline bool StringBuffer::appendSubstring(JSLinearString* base, size_t off,
 
 inline bool StringBuffer::appendSubstring(JSString* base, size_t off,
                                           size_t len) {
-  JSLinearString* linear = base->ensureLinear(cx_);
+  MOZ_ASSERT(maybeCx_);
+
+  JSLinearString* linear = base->ensureLinear(maybeCx_);
   if (!linear) {
     return false;
   }
@@ -455,7 +474,9 @@ inline bool StringBuffer::appendSubstring(JSString* base, size_t off,
 }
 
 inline bool StringBuffer::append(JSString* str) {
-  JSLinearString* linear = str->ensureLinear(cx_);
+  MOZ_ASSERT(maybeCx_);
+
+  JSLinearString* linear = str->ensureLinear(maybeCx_);
   if (!linear) {
     return false;
   }

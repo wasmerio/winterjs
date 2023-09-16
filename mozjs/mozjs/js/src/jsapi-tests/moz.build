@@ -28,6 +28,7 @@ UNIFIED_SOURCES += [
     "testCallNonGenericMethodOnProxy.cpp",
     "testChromeBuffer.cpp",
     "testCompileNonSyntactic.cpp",
+    "testCompileScript.cpp",
     "testCompileUtf8.cpp",
     "testDateToLocaleString.cpp",
     "testDebugger.cpp",
@@ -48,6 +49,8 @@ UNIFIED_SOURCES += [
     "testForOfIterator.cpp",
     "testForwardSetProperty.cpp",
     "testFreshGlobalEvalRedefinition.cpp",
+    "testFrontendCompileStencil.cpp",
+    "testFrontendJSON.cpp",
     "testFunctionBinding.cpp",
     "testFunctionNonSyntactic.cpp",
     "testFunctionProperties.cpp",
@@ -74,6 +77,7 @@ UNIFIED_SOURCES += [
     "testIsInsideNursery.cpp",
     "testIteratorObject.cpp",
     "testJSEvaluateScript.cpp",
+    "testJSON.cpp",
     "testLargeArrayBuffers.cpp",
     "testLookup.cpp",
     "testLooselyEqual.cpp",
@@ -96,9 +100,11 @@ UNIFIED_SOURCES += [
     "testProfileStrings.cpp",
     "testPromise.cpp",
     "testPropCache.cpp",
+    "testPropertyKey.cpp",
     "testRecordTupleToSource.cpp",
     "testRegExp.cpp",
     "testResolveRecursion.cpp",
+    "testResult.cpp",
     "tests.cpp",
     "testSABAccounting.cpp",
     "testSameValue.cpp",
@@ -160,11 +166,6 @@ if not CONFIG["JS_CODEGEN_NONE"]:
         "testJitRegisterSet.cpp",
         "testJitRValueAlloc.cpp",
         "testsJit.cpp",
-    ]
-
-if CONFIG["MOZ_JS_STREAMS"]:
-    UNIFIED_SOURCES += [
-        "testReadableStream.cpp",
     ]
 
 if CONFIG["NIGHTLY_BUILD"]:

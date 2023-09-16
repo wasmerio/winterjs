@@ -346,7 +346,7 @@ def test_tests_affected_idlharness(capsys, manifest_dir):
             "webrtc-encoded-transform/idlharness.https.window.js\n" +
             "webrtc-identity/idlharness.https.window.js\n" +
             "webrtc-stats/idlharness.window.js\n" +
-            "webrtc-stats/supported-stats.html\n" +
+            "webrtc-stats/supported-stats.https.html\n" +
             "webrtc/idlharness.https.window.js\n") == out
 
 
@@ -399,6 +399,7 @@ def test_serve():
                 break
     finally:
         os.killpg(p.pid, 15)
+        p.wait(10)
 
 # The following commands are slow running and used implicitly in other CI
 # jobs, so we skip them here:

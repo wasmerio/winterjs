@@ -37,6 +37,7 @@
 #include "util/Memory.h"
 #include "vm/JSFunction.h"
 #include "vm/JSScript.h"
+#include "vm/List.h"
 #include "vm/Opcodes.h"
 #include "vm/Shape.h"
 #include "wasm/WasmConstants.h"
@@ -100,7 +101,7 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   // instruction.
   TrialInliningState trialInliningState_ = TrialInliningState::Failure;
 
-  // Basic caching to avoid quadatic lookup behaviour in readStubFieldForIon.
+  // Basic caching to avoid quadatic lookup behaviour in readStubField.
   mutable uint32_t lastOffset_;
   mutable uint32_t lastIndex_;
 
@@ -215,6 +216,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   void writeBaseScriptField(BaseScript* script) {
     MOZ_ASSERT(script);
     addStubField(uintptr_t(script), StubField::Type::BaseScript);
+  }
+  void writeJitCodeField(JitCode* code) {
+    MOZ_ASSERT(code);
+    addStubField(uintptr_t(code), StubField::Type::JitCode);
   }
   void writeRawInt32Field(uint32_t val) {
     addStubField(val, StubField::Type::RawInt32);
@@ -351,6 +356,8 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   size_t stubDataSize() const { return stubDataSize_; }
   void copyStubData(uint8_t* dest) const;
   bool stubDataEquals(const uint8_t* stubData) const;
+  bool stubDataEqualsIgnoring(const uint8_t* stubData,
+                              uint32_t ignoreOffset) const;
 
   bool operandIsDead(uint32_t operandId, uint32_t currentInstruction) const {
     if (operandId >= operandLastUsed_.length()) {
@@ -376,7 +383,7 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
 
   // This should not be used when compiling Baseline code, as Baseline code
   // shouldn't bake in stub values.
-  StubField readStubFieldForIon(uint32_t offset, StubField::Type type) const;
+  StubField readStubField(uint32_t offset, StubField::Type type) const;
 
   ObjOperandId guardToObject(ValOperandId input) {
     guardToObject_(input);
@@ -618,6 +625,12 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   void metaScriptedThisShape(Shape* thisShape) {
     metaScriptedThisShape_(thisShape);
   }
+
+  void guardMultipleShapes(ObjOperandId obj, ListObject* shapes) {
+    MOZ_ASSERT(shapes->length() > 0);
+    guardMultipleShapes_(obj, shapes);
+  }
+
   friend class CacheIRCloner;
 
   CACHE_IR_WRITER_GENERATED

@@ -85,11 +85,6 @@ endif
 .PHONY: recurse_syms
 recurse_syms: $(syms_targets)
 
-# Ensure dump_syms gets built before any syms targets, all of which depend on it.
-ifneq (,$(filter toolkit/crashreporter/google-breakpad/src/tools/%/dump_syms/host,$(compile_targets)))
-$(syms_targets): $(filter toolkit/crashreporter/google-breakpad/src/tools/%/dump_syms/host,$(compile_targets))
-endif
-
 # The compile tier has different rules from other tiers.
 ifneq ($(CURRENT_TIER),compile)
 
@@ -184,7 +179,7 @@ endif
 
 ifdef ENABLE_CLANG_PLUGIN
 # Only target rules use the clang plugin.
-$(filter %/target %/target-objects,$(filter-out config/export config/host build/unix/stdc++compat/% build/clang-plugin/%,$(compile_targets))): build/clang-plugin/host build/clang-plugin/tests/target-objects
+$(filter %/target %/target-objects,$(filter-out config/export config/host build/unix/stdc++compat/% build/clang-plugin/%,$(compile_targets))) security/rlbox/pre-compile: build/clang-plugin/host build/clang-plugin/tests/target-objects
 build/clang-plugin/tests/target-objects: build/clang-plugin/host
 # clang-plugin tests require js-confdefs.h on js standalone builds and mozilla-config.h on
 # other builds, because they are -include'd.
@@ -215,14 +210,25 @@ endif
 endif
 
 ifdef MOZ_USING_WASM_SANDBOXING
-security/rlbox/target-objects: config/external/wasm2c_sandbox_compiler/host
-security/rlbox/target: security/rlbox/target-objects
-dom/media/ogg/target-objects extensions/spellcheck/hunspell/glue/target-objects gfx/thebes/target-objects parser/expat/target-objects parser/htmlparser/target-objects gfx/ots/src/target-objects: security/rlbox/target-objects
+security/rlbox/pre-compile: config/external/wasm2c_sandbox_compiler/host
+dom/media/ogg/target-objects extensions/spellcheck/hunspell/glue/target-objects gfx/thebes/target-objects parser/expat/target-objects parser/htmlparser/target-objects gfx/ots/src/target-objects: security/rlbox/pre-compile
 endif
 
 # Most things are built during compile (target/host), but some things happen during export
 # Those need to depend on config/export for system wrappers.
 $(addprefix build/unix/stdc++compat/,target host) build/clang-plugin/host: config/export
+
+# Rust targets, and export targets that run cbindgen need
+# $topobjdir/.cargo/config to be preprocessed first. Ideally, we'd only set it
+# as a dependency of the rust targets, but unfortunately, that pushes Make to
+# execute them much later than we'd like them to be when the file doesn't exist
+# prior to Make running. So we also set it as a dependency of pre-export, which
+# ensures it exists before recursing the rust targets and the export targets
+# that run cbindgen, tricking Make into keeping them early.
+$(rust_targets): $(DEPTH)/.cargo/config
+ifndef TEST_MOZBUILD
+pre-export:: $(DEPTH)/.cargo/config
+endif
 
 # When building gtest as part of the build (LINK_GTEST_DURING_COMPILE),
 # force the build system to get to it first, so that it can be linked

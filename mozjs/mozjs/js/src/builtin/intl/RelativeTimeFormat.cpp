@@ -17,11 +17,11 @@
 #include "builtin/intl/LanguageTag.h"
 #include "gc/GCContext.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/Printer.h"
 #include "js/PropertySpec.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/PlainObject.h"  // js::PlainObject
-#include "vm/Printer.h"
 #include "vm/StringType.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
 
@@ -300,7 +300,7 @@ bool js::intl_FormatRelativeTime(JSContext* cx, unsigned argc, Value* vp) {
 
   // PartitionRelativeTimePattern, step 4.
   double t = args[1].toNumber();
-  if (!mozilla::IsFinite(t)) {
+  if (!std::isfinite(t)) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_DATE_NOT_FINITE, "RelativeTimeFormat",
                               formatToParts ? "formatToParts" : "format");

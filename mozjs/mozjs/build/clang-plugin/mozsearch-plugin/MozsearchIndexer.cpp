@@ -37,6 +37,7 @@
 
 #include "FileOperations.h"
 #include "StringOperations.h"
+#include "from-clangd/HeuristicResolver.h"
 
 #if CLANG_VERSION_MAJOR < 8
 // Starting with Clang 8.0 some basic functions have been renamed
@@ -180,7 +181,9 @@ public:
                                   StringRef FileName,
                                   bool IsAngled,
                                   CharSourceRange FileNameRange,
-#if CLANG_VERSION_MAJOR >= 15
+#if CLANG_VERSION_MAJOR >= 16
+                                  OptionalFileEntryRef File,
+#elif CLANG_VERSION_MAJOR >= 15
                                   Optional<FileEntryRef> File,
 #else
                                   const FileEntry *File,
@@ -215,6 +218,7 @@ private:
   std::map<FileID, std::unique_ptr<FileInfo>> FileMap;
   MangleContext *CurMangleContext;
   ASTContext *AstContext;
+  std::unique_ptr<clangd::HeuristicResolver> Resolver;
 
   typedef RecursiveASTVisitor<IndexConsumer> Super;
 
@@ -439,7 +443,7 @@ private:
     // In order to accomplish this, we keep alphanumeric chars, underscores,
     // and slashes, and replace everything else with an "@xx" hex encoding.
     // The majority of path characters are letters and slashes which don't get
-    // encoded, so that satisifies (1). Since "@" characters in the unsanitized
+    // encoded, so that satisfies (1). Since "@" characters in the unsanitized
     // path get encoded, there should be no "@" characters in the sanitized path
     // that got preserved from the unsanitized input, so that should satisfy (2).
     // And (3) was done by trial-and-error. Note in particular the dot (.)
@@ -597,6 +601,7 @@ public:
       clang::ItaniumMangleContext::create(Ctx, CI.getDiagnostics());
 
     AstContext = &Ctx;
+    Resolver = std::make_unique<clangd::HeuristicResolver>(Ctx);
     TraverseDecl(Ctx.getTranslationUnitDecl());
 
     // Emit the JSON data for all files now.
@@ -654,7 +659,7 @@ public:
 
         // Write any results from Info.Output that are lexicographically
         // smaller than OldLine (read from the existing file), but make sure
-        // to skip duplicates. Keep advacing NewLinesIter until we reach an
+        // to skip duplicates. Keep advancing NewLinesIter until we reach an
         // entry that is lexicographically greater than OldLine.
         for (; NewLinesIter != Info.Output.end(); NewLinesIter++) {
           if (*NewLinesIter > OldLine) {
@@ -1898,6 +1903,20 @@ public:
     return true;
   }
 
+  bool VisitDependentNameTypeLoc(DependentNameTypeLoc L) {
+    SourceLocation Loc = L.getNameLoc();
+    normalizeLocation(&Loc);
+    if (!isInterestingLocation(Loc)) {
+      return true;
+    }
+
+    for (const NamedDecl *D :
+         Resolver->resolveDependentNameType(L.getTypePtr())) {
+      visitHeuristicResult(Loc, D);
+    }
+    return true;
+  }
+
   bool VisitDeclRefExpr(DeclRefExpr *E) {
     SourceLocation Loc = E->getExprLoc();
     normalizeLocation(&Loc);
@@ -1980,6 +1999,55 @@ public:
     return true;
   }
 
+  // Helper function for producing heuristic results for usages in dependent
+  // code. These should be distinguished from concrete results (obtained for
+  // dependent code using the AutoTemplateContext machinery) once bug 1833552 is
+  // fixed.
+  // We don't expect this method to be intentionally called multiple times for
+  // a given (Loc, NamedDecl) pair because our callers should be mutually
+  // exclusive AST node types. However, it's fine if this method is called
+  // multiple time for a given pair because we explicitly de-duplicate records
+  // with an identical string representation (which is a good reason to have
+  // this helper, as it ensures identical representations).
+  void visitHeuristicResult(SourceLocation Loc, const NamedDecl *ND) {
+    if (const TemplateDecl *TD = dyn_cast<TemplateDecl>(ND)) {
+      ND = TD->getTemplatedDecl();
+    }
+    QualType MaybeType;
+    const char *SyntaxKind = nullptr;
+    if (const FunctionDecl *F = dyn_cast<FunctionDecl>(ND)) {
+      MaybeType = F->getType();
+      SyntaxKind = "function";
+    } else if (const FieldDecl *F = dyn_cast<FieldDecl>(ND)) {
+      MaybeType = F->getType();
+      SyntaxKind = "field";
+    } else if (const EnumConstantDecl *E = dyn_cast<EnumConstantDecl>(ND)) {
+      MaybeType = E->getType();
+      SyntaxKind = "enum";
+    } else if (const TypedefNameDecl *T = dyn_cast<TypedefNameDecl>(ND)) {
+      MaybeType = T->getUnderlyingType();
+      SyntaxKind = "type";
+    }
+    if (SyntaxKind) {
+      std::string Mangled = getMangledName(CurMangleContext, ND);
+      visitIdentifier("use", SyntaxKind, getQualifiedName(ND), Loc, Mangled,
+                      MaybeType, getContext(Loc));
+    }
+  }
+
+  bool VisitOverloadExpr(OverloadExpr *E) {
+    SourceLocation Loc = E->getExprLoc();
+    normalizeLocation(&Loc);
+    if (!isInterestingLocation(Loc)) {
+      return true;
+    }
+
+    for (auto *Candidate : E->decls()) {
+      visitHeuristicResult(Loc, Candidate);
+    }
+    return true;
+  }
+
   bool VisitCXXDependentScopeMemberExpr(CXXDependentScopeMemberExpr *E) {
     SourceLocation Loc = E->getMemberLoc();
     normalizeLocation(&Loc);
@@ -1987,8 +2055,28 @@ public:
       return true;
     }
 
+    // If possible, provide a heuristic result without instantiation.
+    for (const NamedDecl *D : Resolver->resolveMemberExpr(E)) {
+      visitHeuristicResult(Loc, D);
+    }
+
+    // Also record this location so that if we have instantiations, we can
+    // gather more accurate results from them.
     if (TemplateStack) {
       TemplateStack->visitDependent(Loc);
+    }
+    return true;
+  }
+
+  bool VisitDependentScopeDeclRefExpr(DependentScopeDeclRefExpr *E) {
+    SourceLocation Loc = E->getLocation();
+    normalizeLocation(&Loc);
+    if (!isInterestingLocation(Loc)) {
+      return true;
+    }
+
+    for (const NamedDecl *D : Resolver->resolveDeclRefExpr(E)) {
+      visitHeuristicResult(Loc, D);
     }
     return true;
   }
@@ -2088,7 +2176,9 @@ void PreprocessorHook::InclusionDirective(SourceLocation HashLoc,
                                           StringRef FileName,
                                           bool IsAngled,
                                           CharSourceRange FileNameRange,
-#if CLANG_VERSION_MAJOR >= 15
+#if CLANG_VERSION_MAJOR >= 16
+                                          OptionalFileEntryRef File,
+#elif CLANG_VERSION_MAJOR >= 15
                                           Optional<FileEntryRef> File,
 #else
                                           const FileEntry *File,

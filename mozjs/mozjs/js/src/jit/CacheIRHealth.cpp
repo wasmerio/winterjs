@@ -110,14 +110,15 @@ void CacheIRHealth::spewShapeInformation(AutoStructuredSpewer& spew,
         spew->beginListProperty("shapes");
       }
 
-      const PropMap* propMap = shape->propMap();
+      const PropMap* propMap =
+          shape->isNative() ? shape->asNative().propMap() : nullptr;
       if (propMap) {
         spew->beginObject();
         {
           if (!propMap->isDictionary()) {
-            uint32_t mapLength = shape->propMapLength();
+            uint32_t mapLength = shape->asNative().propMapLength();
             if (mapLength) {
-              PropertyKey lastKey = shape->lastProperty().key();
+              PropertyKey lastKey = shape->asNative().lastProperty().key();
               if (lastKey.isInt()) {
                 spew->property("lastProperty", lastKey.toInt());
               } else if (lastKey.isString()) {
@@ -321,7 +322,7 @@ static bool addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
   }
 
   SharedImmutableString sfilename =
-      cx->runtime()->sharedImmutableStrings().getOrCreate(
+      SharedImmutableStringsCache::getSingleton().getOrCreate(
           script->filename(), strlen(script->filename()));
   if (!sfilename) {
     ReportOutOfMemory(cx);
@@ -329,7 +330,7 @@ static bool addScriptToFinalWarmUpCountMap(JSContext* cx, HandleScript script) {
   }
 
   if (!zone->scriptFinalWarmUpCountMap->put(
-          script, mozilla::MakeTuple(uint32_t(0), std::move(sfilename)))) {
+          script, std::make_tuple(uint32_t(0), std::move(sfilename)))) {
     ReportOutOfMemory(cx);
     return false;
   }

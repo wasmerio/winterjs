@@ -88,8 +88,8 @@ MoveOperand CodeGeneratorLOONG64::toMoveOperand(LAllocation a) const {
   if (a.isFloatReg()) {
     return MoveOperand(ToFloatRegister(a));
   }
-  MoveOperand::Kind kind =
-      a.isStackArea() ? MoveOperand::EFFECTIVE_ADDRESS : MoveOperand::MEMORY;
+  MoveOperand::Kind kind = a.isStackArea() ? MoveOperand::Kind::EffectiveAddress
+                                           : MoveOperand::Kind::Memory;
   Address address = ToAddress(a);
   MOZ_ASSERT((address.offset & 3) == 0);
 
@@ -617,7 +617,13 @@ void CodeGenerator::visitWasmLoadI64(LWasmLoadI64* lir) {
     ptrScratch = ToRegister(lir->ptrCopy());
   }
 
-  masm.wasmLoadI64(mir->access(), HeapReg, ToRegister(lir->ptr()), ptrScratch,
+  Register ptrReg = ToRegister(lir->ptr());
+  if (mir->base()->type() == MIRType::Int32) {
+    // See comment in visitWasmLoad re the type of 'base'.
+    masm.move32ZeroExtendToPtr(ptrReg, ptrReg);
+  }
+
+  masm.wasmLoadI64(mir->access(), HeapReg, ptrReg, ptrScratch,
                    ToOutRegister64(lir));
 }
 
@@ -629,8 +635,14 @@ void CodeGenerator::visitWasmStoreI64(LWasmStoreI64* lir) {
     ptrScratch = ToRegister(lir->ptrCopy());
   }
 
-  masm.wasmStoreI64(mir->access(), ToRegister64(lir->value()), HeapReg,
-                    ToRegister(lir->ptr()), ptrScratch);
+  Register ptrReg = ToRegister(lir->ptr());
+  if (mir->base()->type() == MIRType::Int32) {
+    // See comment in visitWasmLoad re the type of 'base'.
+    masm.move32ZeroExtendToPtr(ptrReg, ptrReg);
+  }
+
+  masm.wasmStoreI64(mir->access(), ToRegister64(lir->value()), HeapReg, ptrReg,
+                    ptrScratch);
 }
 
 void CodeGenerator::visitWasmSelectI64(LWasmSelectI64* lir) {
@@ -1060,6 +1072,7 @@ void CodeGenerator::visitMulI64(LMulI64* lir) {
   const LInt64Allocation lhs = lir->getInt64Operand(LMulI64::Lhs);
   const LInt64Allocation rhs = lir->getInt64Operand(LMulI64::Rhs);
   const Register64 output = ToOutRegister64(lir);
+  MOZ_ASSERT(ToRegister64(lhs) == output);
 
   if (IsConstant(rhs)) {
     int64_t constant = ToInt64(rhs);
@@ -1073,18 +1086,30 @@ void CodeGenerator::visitMulI64(LMulI64* lir) {
       case 1:
         // nop
         return;
+      case 2:
+        masm.as_add_d(output.reg, ToRegister64(lhs).reg, ToRegister64(lhs).reg);
+        return;
       default:
         if (constant > 0) {
-          if (mozilla::IsPowerOfTwo(static_cast<uint32_t>(constant + 1))) {
-            masm.move64(ToRegister64(lhs), output);
-            masm.lshift64(Imm32(FloorLog2(constant + 1)), output);
-            masm.sub64(ToRegister64(lhs), output);
+          if (mozilla::IsPowerOfTwo(static_cast<uint64_t>(constant + 1))) {
+            ScratchRegisterScope scratch(masm);
+            masm.movePtr(ToRegister64(lhs).reg, scratch);
+            masm.as_slli_d(output.reg, ToRegister64(lhs).reg,
+                           FloorLog2(constant + 1));
+            masm.sub64(scratch, output);
             return;
           } else if (mozilla::IsPowerOfTwo(
-                         static_cast<uint32_t>(constant - 1))) {
-            masm.move64(ToRegister64(lhs), output);
-            masm.lshift64(Imm32(FloorLog2(constant - 1u)), output);
-            masm.add64(ToRegister64(lhs), output);
+                         static_cast<uint64_t>(constant - 1))) {
+            int32_t shift = mozilla::FloorLog2(constant - 1);
+            if (shift < 5) {
+              masm.as_alsl_d(output.reg, ToRegister64(lhs).reg,
+                             ToRegister64(lhs).reg, shift - 1);
+            } else {
+              ScratchRegisterScope scratch(masm);
+              masm.movePtr(ToRegister64(lhs).reg, scratch);
+              masm.as_slli_d(output.reg, ToRegister64(lhs).reg, shift);
+              masm.add64(scratch, output);
+            }
             return;
           }
           // Use shift if constant is power of 2.

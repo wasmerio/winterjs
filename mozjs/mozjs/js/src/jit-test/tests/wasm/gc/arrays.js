@@ -46,7 +46,7 @@ for (let [valtype, def, nondef] of GENERAL_TESTS) {
     (; 0[1] ;)
     (func (export "get") (param eqref i32) (result ${valtype})
       local.get 0
-      ref.cast $a
+      ref.cast (ref null $a)
       local.get 1
       array.get $a
     )
@@ -54,7 +54,7 @@ for (let [valtype, def, nondef] of GENERAL_TESTS) {
     (; 0[1] = 2 ;)
     (func (export "set") (param eqref i32 ${valtype})
       local.get 0
-      ref.cast $a
+      ref.cast (ref null $a)
       local.get 1
       local.get 2
       array.set $a
@@ -63,8 +63,8 @@ for (let [valtype, def, nondef] of GENERAL_TESTS) {
     (; len(a) ;)
     (func (export "len") (param eqref) (result i32)
       local.get 0
-      ref.cast $a
-      array.len $a
+      ref.cast (ref null $a)
+      array.len
     )
   )`).exports;
 
@@ -131,7 +131,7 @@ for (let [fieldtype, max] of [
     (; 0[1] ;)
     (func (export "getS") (param eqref i32) (result i32)
       local.get 0
-      ref.cast $a
+      ref.cast (ref null $a)
       local.get 1
       array.get_s $a
     )
@@ -139,7 +139,7 @@ for (let [fieldtype, max] of [
     (; 0[1] ;)
     (func (export "getU") (param eqref i32) (result i32)
       local.get 0
-      ref.cast $a
+      ref.cast (ref null $a)
       local.get 1
       array.get_u $a
     )
@@ -147,7 +147,7 @@ for (let [fieldtype, max] of [
     (; 0[1] = 2 ;)
     (func (export "set") (param eqref i32 i32)
       local.get 0
-      ref.cast $a
+      ref.cast (ref null $a)
       local.get 1
       local.get 2
       array.set $a
@@ -227,7 +227,7 @@ assertErrorMessage(() => {
     (type $a (array (mut i32)))
     (func
       ref.null $a
-      array.len $a
+      array.len
       drop
     )
     (start 0)
@@ -393,7 +393,6 @@ assertErrorMessage(() => wasmEvalText(`(module
     let { newFixed } = wasmEvalText(`(module
         (type $a (array i8))
         (func (export "newFixed") (result eqref)
-                (; the spec seems ambiguous about the operand ordering here ;)
                 i32.const 66
                 i32.const 77
                 i32.const 88
@@ -403,10 +402,10 @@ assertErrorMessage(() => wasmEvalText(`(module
         )`).exports;
     let a = newFixed();
     assertEq(a.length, 4);
-    assertEq(a[0], 99);
-    assertEq(a[1], 88);
-    assertEq(a[2], 77);
-    assertEq(a[3], 66);
+    assertEq(a[0], 66);
+    assertEq(a[1], 77);
+    assertEq(a[2], 88);
+    assertEq(a[3], 99);
 }
 
 // run: resulting zero-element array is as expected
@@ -462,7 +461,7 @@ assertErrorMessage(() => wasmEvalText(`(module
     let a = newFixed();
     assertEq(a.length, 30);
     for (i = 0; i < 30; i++) {
-        assertEq(a[i], 30 - i);
+        assertEq(a[i], i + 1);
     }
 }
 
@@ -942,19 +941,19 @@ for (let [elemTy, valueTy, src, exp1, exp2] of ARRAY_COPY_TESTS) {
               (param ${valueTy} ${valueTy} ${valueTy}
                      ${valueTy} ${valueTy} ${valueTy})
               (result eqref)
-          local.get 5
-          local.get 4
-          local.get 3
-          local.get 2
-          local.get 1
           local.get 0
+          local.get 1
+          local.get 2
+          local.get 3
+          local.get 4
+          local.get 5
           array.new_fixed $arrTy 6
         )
         (func (export "arrayCopy")
               (param eqref i32 eqref i32 i32)
           (array.copy $arrTy $arrTy
-            (ref.cast $arrTy local.get 0) (local.get 1)
-            (ref.cast $arrTy local.get 2) (local.get 3) (local.get 4)
+            (ref.cast (ref null $arrTy) local.get 0) (local.get 1)
+            (ref.cast (ref null $arrTy) local.get 2) (local.get 3) (local.get 4)
           )
         )
       )`
@@ -1058,3 +1057,48 @@ for (let [elemTy, valueTy, src, exp1, exp2] of ARRAY_COPY_TESTS) {
     shouldTrap();
   }, WebAssembly.RuntimeError, /null/);
 }
+
+//////////////////////////////////////////////////////////////////////////////
+//
+// Checks for requests for oversize arrays (more than MaxArrayPayloadBytes),
+// where MaxArrayPayloadBytes == 1,987,654,321.
+
+// array.new
+assertErrorMessage(() => wasmEvalText(`(module
+    (type $a (array i32))
+    (func
+        ;; request exactly 2,000,000,000 bytes
+        (array.new $a (i32.const 0xABCD1234) (i32.const 500000000))
+        drop
+    )
+    (start 0)
+)
+`), WebAssembly.RuntimeError, /too many array elements/);
+
+// array.new_default
+assertErrorMessage(() => wasmEvalText(`(module
+    (type $a (array f64))
+    (func
+        ;; request exactly 2,000,000,000 bytes
+        (array.new_default $a (i32.const 250000000))
+        drop
+    )
+    (start 0)
+)
+`), WebAssembly.RuntimeError, /too many array elements/);
+
+// array.new_fixed
+// This is impossible to test because it would require to create, at a
+// minimum, 1,987,654,321 (MaxArrayPayloadBytes) / 16 = 124.3 million
+// values, if each value is a v128.  However, the max number of bytes per
+// function is 7,654,321 (MaxFunctionBytes).  Even if it were possible to
+// create a value using just one insn byte, there wouldn't be enough.
+
+// array.new_data
+// Similarly, impossible to test because the max data segment length is 1GB
+// (1,073,741,824 bytes) (MaxDataSegmentLengthPages * PageSize), which is less
+// than MaxArrayPayloadBytes.
+
+// array.new_element
+// Similarly, impossible to test because an element segment can contain at
+// most 10,000,000 (MaxElemSegmentLength) entries.

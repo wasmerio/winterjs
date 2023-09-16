@@ -16,10 +16,14 @@ for (const name of ["gczeal",
                     "selectforgc",
                     "verifyprebarriers",
                     "verifypostbarriers",
-                    "gcPreserveCode"]) {
+                    "gcPreserveCode",
+                    "setMarkStackLimit"]) {
     const present = name in this;
     if (!present) {
         this[name] = function() {};
     }
     hasFunction[name] = present;
 }
+
+// Set the minimum heap size for parallel marking to zero for testing purposes.
+gcparam('parallelMarkingThresholdKB', 0);

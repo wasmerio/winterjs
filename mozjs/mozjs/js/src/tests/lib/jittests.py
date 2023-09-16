@@ -6,7 +6,6 @@
 
 # jit_test.py -- Python harness for JavaScript trace tests.
 
-from __future__ import print_function
 import os
 import re
 import sys
@@ -18,7 +17,7 @@ if sys.platform.startswith("linux") or sys.platform.startswith("darwin"):
 else:
     from .tasks_win import run_all_tests
 
-from .progressbar import ProgressBar, NullProgressBar
+from .progressbar import NullProgressBar, ProgressBar
 from .results import escape_cmdline
 from .structuredlog import TestLogger
 from .tempfile import TemporaryDirectory
@@ -799,8 +798,9 @@ def run_tests_local(tests, num_tests, prefix, options, slog):
 
 def run_tests_remote(tests, num_tests, prefix, options, slog):
     # Setup device with everything needed to run our tests.
-    from .tasks_adb_remote import get_remote_results
     from mozdevice import ADBError, ADBTimeoutError
+
+    from .tasks_adb_remote import get_remote_results
 
     # Run all tests.
     pb = create_progressbar(num_tests, options)
@@ -811,23 +811,6 @@ def run_tests_remote(tests, num_tests, prefix, options, slog):
         print("TEST-UNEXPECTED-FAIL | jit_test.py" + " : Device error during test")
         raise
     return ok
-
-
-def platform_might_be_android():
-    try:
-        # The python package for SL4A provides an |android| module.
-        # If that module is present, we're likely in SL4A-python on
-        # device.  False positives and negatives are possible,
-        # however.
-        import android  # NOQA: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-def stdio_might_be_broken():
-    return platform_might_be_android()
 
 
 if __name__ == "__main__":

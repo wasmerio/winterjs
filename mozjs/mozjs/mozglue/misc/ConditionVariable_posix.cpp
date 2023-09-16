@@ -20,9 +20,6 @@ using mozilla::TimeDuration;
 
 static const long NanoSecPerSec = 1000000000;
 
-// mozjs patch note: This following patched lines come from the upstream version
-// of SpiderMonkey:
-//
 // Android 4.4 or earlier & macOS 10.12 has the clock functions, but not
 // pthread_condattr_setclock.
 #if defined(HAVE_CLOCK_MONOTONIC) && \

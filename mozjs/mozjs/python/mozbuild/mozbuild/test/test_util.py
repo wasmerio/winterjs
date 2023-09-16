@@ -3,24 +3,31 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import copy
 import hashlib
-import io
 import itertools
 import os
-import unittest
-import six
 import string
 import sys
-import textwrap
+import unittest
 
 import pytest
+import six
 from mozfile.mozfile import NamedTemporaryFile
 from mozunit import main
 
 from mozbuild.util import (
+    EnumString,
+    EnumStringComparisonError,
+    HierarchicalStringList,
+    MozbuildDeletionError,
+    ReadOnlyDict,
+    StrictOrderingOnAppendList,
+    StrictOrderingOnAppendListWithAction,
+    StrictOrderingOnAppendListWithFlagsFactory,
+    TypedList,
+    TypedNamedTuple,
+    UnsortedError,
     expand_variables,
     group_unified_files,
     hash_file,
@@ -29,18 +36,6 @@ from mozbuild.util import (
     memoized_property,
     pair,
     resolve_target_to_make,
-    write_indented_repr,
-    MozbuildDeletionError,
-    HierarchicalStringList,
-    EnumString,
-    EnumStringComparisonError,
-    ReadOnlyDict,
-    StrictOrderingOnAppendList,
-    StrictOrderingOnAppendListWithAction,
-    StrictOrderingOnAppendListWithFlagsFactory,
-    TypedList,
-    TypedNamedTuple,
-    UnsortedError,
 )
 
 if sys.version_info[0] == 3:
@@ -849,64 +844,6 @@ class TestEnumString(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             type = CompilerType("foo")
-
-
-class TestIndentedRepr(unittest.TestCase):
-    @unittest.skipUnless(six.PY2, "requires Python 2")
-    def test_write_indented_repr_py2(self):
-        data = textwrap.dedent(
-            r"""
-        {
-            'a': 1,
-            'b': b'abc',
-            b'c': 'xyz',
-            'd': False,
-            'e': {
-                'a': 1,
-                'b': b'2',
-                'c': '3',
-            },
-            'f': [
-                1,
-                b'2',
-                '3',
-            ],
-            'pile_of_bytes': b'\xf0\x9f\x92\xa9',
-            'pile_of_poo': '💩',
-            'special_chars': '\\\'"\x08\n\t',
-            'with_accents': 'éàñ',
-        }
-        """
-        ).lstrip()
-
-        obj = eval(data)
-        buf = io.StringIO()
-        write_indented_repr(buf, obj)
-
-        self.assertEqual(buf.getvalue(), data)
-
-    @unittest.skipUnless(six.PY3, "requires Python 3")
-    def test_write_indented_repr(self):
-        data = textwrap.dedent(
-            r"""
-        {   b'c': 'xyz',
-            'a': 1,
-            'b': b'abc',
-            'd': False,
-            'e': {'a': 1, 'b': b'2', 'c': '3'},
-            'f': [1, b'2', '3'],
-            'pile_of_bytes': b'\xf0\x9f\x92\xa9',
-            'pile_of_poo': '💩',
-            'special_chars': '\\\'"\x08\n\t',
-            'with_accents': 'éàñ'}
-        """
-        ).lstrip()
-
-        obj = eval(data)
-        buf = six.StringIO()
-        write_indented_repr(buf, obj)
-
-        self.assertEqual(buf.getvalue(), data)
 
 
 class TestHexDump(unittest.TestCase):

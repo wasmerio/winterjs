@@ -8,8 +8,6 @@ dictionary of values, and returns a new iterable of test objects. It is
 possible to define custom filters if the built-in ones are not enough.
 """
 
-from __future__ import absolute_import, division
-
 import itertools
 import os
 from collections import defaultdict
@@ -18,10 +16,7 @@ from collections.abc import MutableSequence
 import six
 from six import string_types
 
-from .expression import (
-    parse,
-    ParseError,
-)
+from .expression import ParseError, parse
 from .util import normsep
 
 logger = None
@@ -444,9 +439,11 @@ class tags(InstanceFilter):
 
 class failures(InstanceFilter):
     """
-    [test_foobar.html]
-    fail-if =
-      keyword # <comment>
+    .. code-block:: ini
+
+        [test_foobar.html]
+        fail-if =
+          keyword # <comment>
 
     :param keywords: A keyword to filter tests on
     """

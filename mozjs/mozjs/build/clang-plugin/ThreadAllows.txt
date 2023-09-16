@@ -15,8 +15,11 @@
 
 ######
 # Gecko/Firefox thread names
-#
-# (None documented yet -- but see "Unsorted thread names", below.)
+# (See also "Unsorted thread names", below.)
+
+# Used by `nsUpdateProcessor` to check for updates. May also be used for polling
+# the update process.
+UpdateProcessor
 
 ######
 # Thunderbird-only thread names
@@ -25,6 +28,7 @@ IMAP
 ######
 # Other
 Checker Test  # used only as part of tests for the thread-checker itself
+Testing Thread  # used only as part of tests for toolkit/components/url-classifier/tests/gtest/
 
 ######
 # Unsorted thread names
@@ -51,6 +55,7 @@ DDMediaLogs
 DOMCacheThread
 DataChannel IO
 DataStorage
+DesktopCapture
 FileWatcher IO
 Font Loader
 FontEnumThread
@@ -97,7 +102,7 @@ Timer
 ToastBgThread
 TRR Background
 URL Classifier
-Update Watcher
+VideoCapture
 VRService
 VsyncIOThread
 Wifi Monitor
@@ -106,3 +111,4 @@ speechd init
 thread
 thread shutdown
 wifi tickler
+WMFCDMThread

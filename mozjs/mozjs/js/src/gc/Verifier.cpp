@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/Maybe.h"
 #include "mozilla/Sprintf.h"
 
 #include <algorithm>
@@ -256,7 +257,7 @@ void gc::GCRuntime::startVerifyPreBarriers() {
 
   verifyPreData = trc;
   incrementalState = State::Mark;
-  marker.start();
+  marker().start();
 
   for (ZonesIter zone(this, WithAtoms); !zone.done(); zone.next()) {
     zone->changeGCState(Zone::NoGC, Zone::VerifyPreBarriers);
@@ -339,11 +340,6 @@ void gc::GCRuntime::endVerifyPreBarriers() {
 
   MOZ_ASSERT(!JS::IsGenerationalGCEnabled(rt));
 
-  // Flush the barrier tracer's buffer to ensure the pre-barrier has marked
-  // everything it's going to. This usually happens as part of GC.
-  SliceBudget budget = SliceBudget::unlimited();
-  marker.traceBarrieredCells(budget);
-
   // Now that barrier marking has finished, prepare the heap to allow this
   // method to trace cells and discover their outgoing edges.
   AutoPrepareForTracing prep(rt->mainContextFromOwnThread());
@@ -396,8 +392,9 @@ void gc::GCRuntime::endVerifyPreBarriers() {
     }
   }
 
-  marker.reset();
-  marker.stop();
+  marker().reset();
+  marker().stop();
+  resetDelayedMarking();
 
   js_delete(trc);
 }
@@ -496,7 +493,7 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
    */
 
   JSRuntime* runtime = gc->rt;
-  GCMarker* gcmarker = &gc->marker;
+  GCMarker* gcmarker = &gc->marker();
 
   MOZ_ASSERT(!gcmarker->isWeakMarking());
 
@@ -562,6 +559,12 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
     }
   }
 
+  /* Save and restore test mark queue state. */
+#  ifdef DEBUG
+  size_t savedQueuePos = gc->queuePos;
+  mozilla::Maybe<MarkColor> savedQueueColor = gc->queueMarkColor;
+#  endif
+
   /*
    * After this point, the function should run to completion, so we shouldn't
    * do anything fallible.
@@ -592,7 +595,7 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
   {
     gcstats::AutoPhase ap(gc->stats(), gcstats::PhaseKind::MARK);
 
-    gc->traceRuntimeForMajorGC(gcmarker, session);
+    gc->traceRuntimeForMajorGC(gcmarker->tracer(), session);
 
     gc->incrementalState = State::Mark;
     gc->drainMarkStack();
@@ -601,7 +604,7 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
   gc->incrementalState = State::Sweep;
   {
     gcstats::AutoPhase ap1(gc->stats(), gcstats::PhaseKind::SWEEP);
-    gcstats::AutoPhase ap2(gc->stats(), gcstats::PhaseKind::SWEEP_MARK);
+    gcstats::AutoPhase ap2(gc->stats(), gcstats::PhaseKind::MARK);
 
     gc->markAllWeakReferences();
 
@@ -612,14 +615,14 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
 
     AutoSetMarkColor setColorGray(*gcmarker, MarkColor::Gray);
 
-    gc->markAllGrayReferences(gcstats::PhaseKind::SWEEP_MARK_GRAY);
+    gc->markAllGrayReferences(gcstats::PhaseKind::MARK_GRAY);
     gc->markAllWeakReferences();
 
     /* Restore zone state. */
     for (GCZonesIter zone(gc); !zone.done(); zone.next()) {
       zone->changeGCState(Zone::MarkBlackAndGray, zone->initialMarkingState());
     }
-    MOZ_ASSERT(gc->marker.isDrained());
+    MOZ_ASSERT(gc->marker().isDrained());
   }
 
   /* Take a copy of the non-incremental mark state and restore the original. */
@@ -658,6 +661,11 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
     }
   }
 
+#  ifdef DEBUG
+  gc->queuePos = savedQueuePos;
+  gc->queueMarkColor = savedQueueColor;
+#  endif
+
   gc->incrementalState = state;
 }
 
@@ -671,7 +679,7 @@ void js::gc::MarkingValidator::validate() {
     return;
   }
 
-  MOZ_ASSERT(!gc->marker.isWeakMarking());
+  MOZ_ASSERT(!gc->marker().isWeakMarking());
 
   gc->waitBackgroundSweepEnd();
 
@@ -713,7 +721,7 @@ void js::gc::MarkingValidator::validate() {
             ok = false;
             const char* color = TenuredCell::getColor(bitmap, cell).name();
             fprintf(stderr,
-                    "%p: cell not marked, but would be marked by %s "
+                    "%p: cell not marked, but would be marked %s by "
                     "non-incremental marking\n",
                     cell, color);
 #  ifdef DEBUG

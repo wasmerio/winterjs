@@ -2,23 +2,20 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
-from six import StringIO
 import os
 import sys
 import textwrap
 import unittest
 
-from mozunit import main, MockedOpen
-
-from mozbuild.configure import ConfigureError, ConfigureSandbox
-from mozbuild.util import exec_
-from mozbuild.shellutil import quote as shell_quote
-from mozpack import path as mozpath
-
 from buildconfig import topsrcdir
+from mozpack import path as mozpath
+from mozunit import MockedOpen, main
+from six import StringIO
+
 from common import ConfigureTestSandbox, ensure_exe_extension, fake_short_path
+from mozbuild.configure import ConfigureError, ConfigureSandbox
+from mozbuild.shellutil import quote as shell_quote
+from mozbuild.util import exec_
 
 
 class TestChecksConfigure(unittest.TestCase):
@@ -596,7 +593,7 @@ class TestChecksConfigure(unittest.TestCase):
         javac = mozpath.abspath("/usr/bin/javac")
         paths = {java: None, javac: None}
         expected_error_message = (
-            "ERROR: Could not locate Java at /mozbuild/jdk/jdk-17.0.4.1+1/bin, "
+            "ERROR: Could not locate Java at /mozbuild/jdk/jdk-17.0.7+7/bin, "
             "please run ./mach bootstrap --no-system-changes\n"
         )
 

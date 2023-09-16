@@ -48,17 +48,19 @@ extern JSString* NumberToStringPure(JSContext* cx, double d);
 extern JSAtom* NumberToAtom(JSContext* cx, double d);
 
 frontend::TaggedParserAtomIndex NumberToParserAtom(
-    ErrorContext* ec, frontend::ParserAtomsTable& parserAtoms, double d);
+    FrontendContext* fc, frontend::ParserAtomsTable& parserAtoms, double d);
 
 template <AllowGC allowGC>
 extern JSLinearString* Int32ToString(JSContext* cx, int32_t i);
 
 extern JSLinearString* Int32ToStringPure(JSContext* cx, int32_t i);
 
+extern JSString* Int32ToStringWithBase(JSContext* cx, int32_t i, int32_t base);
+
 extern JSAtom* Int32ToAtom(JSContext* cx, int32_t si);
 
 frontend::TaggedParserAtomIndex Int32ToParserAtom(
-    ErrorContext* ec, frontend::ParserAtomsTable& parserAtoms, int32_t si);
+    FrontendContext* fc, frontend::ParserAtomsTable& parserAtoms, int32_t si);
 
 // ES6 15.7.3.12
 extern bool IsInteger(double d);
@@ -119,6 +121,18 @@ extern char* Uint32ToHexCString(Int32ToCStringBuf* cbuf, uint32_t value,
 constexpr double DOUBLE_INTEGRAL_PRECISION_LIMIT = uint64_t(1) << 53;
 
 /*
+ * The smallest positive double such that all positive doubles larger or equal
+ * than it have an exact decimal representation without exponential form.
+ */
+constexpr double DOUBLE_DECIMAL_IN_SHORTEST_LOW = 1.0e-6;
+
+/*
+ * The largest positive double such that all positive doubles less than it
+ * have an exact decimal representation without exponential form.
+ */
+constexpr double DOUBLE_DECIMAL_IN_SHORTEST_HIGH = 1.0e21;
+
+/*
  * Parse a decimal number encoded in |chars|.  The decimal number must be
  * sufficiently small that it will not overflow the integrally-precise range of
  * the double type -- that is, the number will be smaller than
@@ -148,7 +162,7 @@ enum class IntegerSeparatorHandling : bool { None, SkipUnderscore };
  */
 template <typename CharT>
 [[nodiscard]] extern bool GetPrefixInteger(
-    JSContext* cx, const CharT* start, const CharT* end, int base,
+    const CharT* start, const CharT* end, int base,
     IntegerSeparatorHandling separatorHandling, const CharT** endp, double* dp);
 
 inline const char16_t* ToRawChars(const char16_t* units) { return units; }
@@ -167,10 +181,10 @@ inline const unsigned char* ToRawChars(const mozilla::Utf8Unit* units) {
  */
 template <typename CharT>
 [[nodiscard]] extern bool GetFullInteger(
-    JSContext* cx, const CharT* start, const CharT* end, int base,
+    const CharT* start, const CharT* end, int base,
     IntegerSeparatorHandling separatorHandling, double* dp) {
   decltype(ToRawChars(start)) realEnd;
-  if (GetPrefixInteger(cx, ToRawChars(start), ToRawChars(end), base,
+  if (GetPrefixInteger(ToRawChars(start), ToRawChars(end), base,
                        separatorHandling, &realEnd, dp)) {
     MOZ_ASSERT(end == static_cast<const void*>(realEnd));
     return true;
@@ -185,7 +199,7 @@ template <typename CharT>
  * Numeric Literals.
  */
 template <typename CharT>
-[[nodiscard]] extern bool GetDecimalInteger(JSContext* cx, const CharT* start,
+[[nodiscard]] extern bool GetDecimalInteger(const CharT* start,
                                             const CharT* end, double* dp);
 
 /*
@@ -194,8 +208,8 @@ template <typename CharT>
  * cf. ES2020, 11.8.3 Numeric Literals.
  */
 template <typename CharT>
-[[nodiscard]] extern bool GetDecimal(JSContext* cx, const CharT* start,
-                                     const CharT* end, double* dp);
+[[nodiscard]] extern bool GetDecimal(const CharT* start, const CharT* end,
+                                     double* dp);
 
 template <typename CharT>
 double CharsToNumber(const CharT* chars, size_t length);
@@ -208,6 +222,10 @@ double CharsToNumber(const CharT* chars, size_t length);
 
 // Infallible version of StringToNumber for linear strings.
 extern double LinearStringToNumber(JSLinearString* str);
+
+// Parse the input string as if Number.parseInt had been called.
+extern bool NumberParseInt(JSContext* cx, JS::HandleString str, int32_t radix,
+                           JS::MutableHandleValue result);
 
 /* ES5 9.3 ToNumber, overwriting *vp with the appropriate number value. */
 [[nodiscard]] MOZ_ALWAYS_INLINE bool ToNumber(JSContext* cx,

@@ -374,6 +374,10 @@ void JSJitFrameIter::dump() const {
       }
       break;
     }
+    case FrameType::BaselineInterpreterEntry:
+      fprintf(stderr, " Baseline Interpreter Entry frame\n");
+      fprintf(stderr, "  Caller frame ptr: %p\n", current()->callerFramePtr());
+      break;
     case FrameType::Rectifier:
       fprintf(stderr, " Rectifier frame\n");
       fprintf(stderr, "  Caller frame ptr: %p\n", current()->callerFramePtr());
@@ -434,7 +438,7 @@ bool JSJitFrameIter::verifyReturnAddressUsingNativeToBytecodeMap() {
           resumePCinCurrentFrame_, entry->nativeStartAddr(),
           entry->nativeEndAddr());
 
-  JitcodeGlobalEntry::BytecodeLocationVector location;
+  BytecodeLocationVector location;
   uint32_t depth = UINT32_MAX;
   if (!entry->callStackAtAddr(rt, resumePCinCurrentFrame_, location, &depth)) {
     return false;
@@ -602,7 +606,7 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
 
   JSScript* callee = frameScript();
 
-  MOZ_ASSERT(entry->isIon() || entry->isBaseline() ||
+  MOZ_ASSERT(entry->isIon() || entry->isIonIC() || entry->isBaseline() ||
              entry->isBaselineInterpreter() || entry->isDummy());
 
   // Treat dummy lookups as an empty frame sequence.
@@ -613,10 +617,17 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
     return true;
   }
 
+  // For IonICEntry, use the corresponding IonEntry.
+  if (entry->isIonIC()) {
+    entry = table->lookup(entry->asIonIC().rejoinAddr());
+    MOZ_ASSERT(entry);
+    MOZ_RELEASE_ASSERT(entry->isIon());
+  }
+
   if (entry->isIon()) {
     // If looked-up callee doesn't match frame callee, don't accept
     // lastProfilingCallSite
-    if (entry->ionEntry().getScript(0) != callee) {
+    if (entry->asIon().getScript(0) != callee) {
       return false;
     }
 
@@ -628,7 +639,7 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
   if (entry->isBaseline()) {
     // If looked-up callee doesn't match frame callee, don't accept
     // lastProfilingCallSite
-    if (forLastCallSite && entry->baselineEntry().script() != callee) {
+    if (forLastCallSite && entry->asBaseline().script() != callee) {
       return false;
     }
 
@@ -703,9 +714,27 @@ void JSJitProfilingFrameIterator::moveToNextFrame(CommonFrameLayout* frame) {
    * |    ^--- Entry Frame (CppToJSJit)
    * |
    * ^--- Entry Frame (CppToJSJit)
+   * |
+   * ^--- Entry Frame (BaselineInterpreter)
+   * |    ^
+   * |    |
+   * |    ^--- Ion
+   * |    |
+   * |    ^--- Baseline Stub <---- Baseline
+   * |    |
+   * |    ^--- WasmToJSJit <--- (other wasm frames)
+   * |    |
+   * |    ^--- Entry Frame (CppToJSJit)
+   * |    |
+   * |    ^--- Arguments Rectifier
    *
    * NOTE: Keep this in sync with JitRuntime::generateProfilerExitFrameTailStub!
    */
+
+  // Unwrap baseline interpreter entry frame.
+  if (frame->prevType() == FrameType::BaselineInterpreterEntry) {
+    frame = GetPreviousRawFrame<BaselineInterpreterEntryFrameLayout*>(frame);
+  }
 
   // Unwrap rectifier frames.
   if (frame->prevType() == FrameType::Rectifier) {
@@ -755,12 +784,13 @@ void JSJitProfilingFrameIterator::moveToNextFrame(CommonFrameLayout* frame) {
       type_ = FrameType::CppToJSJit;
       return;
 
+    case FrameType::BaselineInterpreterEntry:
     case FrameType::Rectifier:
     case FrameType::Exit:
     case FrameType::Bailout:
     case FrameType::JSJitToWasm:
-      // Rectifier frames are handled before this switch. The other frame types
-      // can't call JS functions directly.
+      // Rectifier and Baseline Interpreter entry frames are handled before
+      // this switch. The other frame types can't call JS functions directly.
       break;
   }
 

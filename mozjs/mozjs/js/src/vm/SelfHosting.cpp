@@ -23,7 +23,6 @@
 
 #include "builtin/Array.h"
 #include "builtin/BigInt.h"
-#include "vm/ErrorContext.h"  // AutoReportFrontendContext
 #ifdef JS_HAS_INTL_API
 #  include "builtin/intl/Collator.h"
 #  include "builtin/intl/DateTimeFormat.h"
@@ -47,6 +46,7 @@
 #endif
 #include "frontend/BytecodeCompilation.h"  // CompileGlobalScriptToStencil
 #include "frontend/CompilationStencil.h"   // js::frontend::CompilationStencil
+#include "frontend/FrontendContext.h"      // AutoReportFrontendContext
 #include "jit/AtomicOperations.h"
 #include "jit/InlinableNatives.h"
 #include "js/CompilationAndEvaluation.h"
@@ -56,6 +56,7 @@
 #include "js/experimental/TypedData.h"  // JS_GetArrayBufferViewType
 #include "js/friend/ErrorMessages.h"    // js::GetErrorMessage, JSMSG_*
 #include "js/HashTable.h"
+#include "js/Printer.h"
 #include "js/PropertySpec.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/SourceText.h"  // JS::SourceText
@@ -79,7 +80,6 @@
 #include "vm/JSObject.h"
 #include "vm/PIC.h"
 #include "vm/PlainObject.h"  // js::PlainObject
-#include "vm/Printer.h"
 #include "vm/Realm.h"
 #include "vm/RegExpObject.h"
 #include "vm/StringType.h"
@@ -453,21 +453,6 @@ static bool intrinsic_DumpMessage(JSContext* cx, unsigned argc, Value* vp) {
 #endif
   args.rval().setUndefined();
   return true;
-}
-
-static bool intrinsic_FinishBoundFunctionInit(JSContext* cx, unsigned argc,
-                                              Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 3);
-  MOZ_ASSERT(IsCallable(args[1]));
-  MOZ_RELEASE_ASSERT(args[2].isInt32());
-
-  RootedFunction bound(cx, &args[0].toObject().as<JSFunction>());
-  RootedObject targetObj(cx, &args[1].toObject());
-  int32_t argCount = args[2].toInt32();
-
-  args.rval().setUndefined();
-  return JSFunction::finishBoundFunctionInit(cx, bound, targetObj, argCount);
 }
 
 /*
@@ -1324,6 +1309,32 @@ static bool intrinsic_TypedArrayInitFromPackedArray(JSContext* cx,
   return true;
 }
 
+template <bool ForTest>
+static bool intrinsic_RegExpBuiltinExec(JSContext* cx, unsigned argc,
+                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 2);
+  MOZ_ASSERT(args[0].isObject());
+  MOZ_ASSERT(args[0].toObject().is<RegExpObject>());
+  MOZ_ASSERT(args[1].isString());
+
+  Rooted<RegExpObject*> obj(cx, &args[0].toObject().as<RegExpObject>());
+  Rooted<JSString*> string(cx, args[1].toString());
+  return RegExpBuiltinExec(cx, obj, string, ForTest, args.rval());
+}
+
+template <bool ForTest>
+static bool intrinsic_RegExpExec(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 2);
+  MOZ_ASSERT(args[0].isObject());
+  MOZ_ASSERT(args[1].isString());
+
+  Rooted<JSObject*> obj(cx, &args[0].toObject());
+  Rooted<JSString*> string(cx, args[1].toString());
+  return RegExpExec(cx, obj, string, ForTest, args.rval());
+}
+
 static bool intrinsic_RegExpCreate(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1505,7 +1516,7 @@ bool js::IsCallSelfHostedNonGenericMethod(NativeImpl impl) {
 }
 
 bool js::ReportIncompatibleSelfHostedMethod(JSContext* cx,
-                                            const CallArgs& args) {
+                                            Handle<Value> thisValue) {
   // The contract for this function is the same as
   // CallSelfHostedNonGenericMethod. The normal ReportIncompatible function
   // doesn't work for selfhosted functions, because they always call the
@@ -1521,9 +1532,6 @@ bool js::ReportIncompatibleSelfHostedMethod(JSContext* cx,
 
   static const char* const internalNames[] = {
       "IsTypedArrayEnsuringArrayBuffer",
-      "UnwrapAndCallRegExpBuiltinExec",
-      "RegExpBuiltinExec",
-      "RegExpExec",
       "RegExpSearchSlowPath",
       "RegExpReplaceSlowPath",
       "RegExpMatchSlowPath",
@@ -1533,8 +1541,7 @@ bool js::ReportIncompatibleSelfHostedMethod(JSContext* cx,
   MOZ_ASSERT(iter.isFunctionFrame());
 
   while (!iter.done()) {
-    MOZ_ASSERT(iter.callee(cx)->isSelfHostedOrIntrinsic() &&
-               !iter.callee(cx)->isBoundFunction());
+    MOZ_ASSERT(iter.callee(cx)->isSelfHostedOrIntrinsic());
     UniqueChars funNameBytes;
     const char* funName =
         GetFunctionNameBytes(cx, iter.callee(cx), &funNameBytes);
@@ -1546,7 +1553,7 @@ bool js::ReportIncompatibleSelfHostedMethod(JSContext* cx,
             [funName](auto* name) { return strcmp(funName, name) != 0; })) {
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                JSMSG_INCOMPATIBLE_METHOD, funName, "method",
-                               InformalValueTypeName(args.thisv()));
+                               InformalValueTypeName(thisValue));
       return false;
     }
     ++iter;
@@ -1858,9 +1865,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("DefineDataProperty", intrinsic_DefineDataProperty, 4, 0),
     JS_FN("DefineProperty", intrinsic_DefineProperty, 6, 0),
     JS_FN("DumpMessage", intrinsic_DumpMessage, 1, 0),
-    JS_INLINABLE_FN("FinishBoundFunctionInit",
-                    intrinsic_FinishBoundFunctionInit, 3, 0,
-                    IntrinsicFinishBoundFunctionInit),
     JS_FN("FlatStringMatch", FlatStringMatch, 2, 0),
     JS_FN("FlatStringSearch", FlatStringSearch, 2, 0),
     JS_FN("GeneratorIsRunning", intrinsic_GeneratorIsRunning, 1, 0),
@@ -1987,8 +1991,17 @@ static const JSFunctionSpec intrinsic_functions[] = {
                     intrinsic_PossiblyWrappedTypedArrayLength, 1, 0,
                     IntrinsicPossiblyWrappedTypedArrayLength),
     JS_FN("PromiseResolve", intrinsic_PromiseResolve, 2, 0),
+    JS_INLINABLE_FN("RegExpBuiltinExec", intrinsic_RegExpBuiltinExec<false>, 2,
+                    0, IntrinsicRegExpBuiltinExec),
+    JS_INLINABLE_FN("RegExpBuiltinExecForTest",
+                    intrinsic_RegExpBuiltinExec<true>, 2, 0,
+                    IntrinsicRegExpBuiltinExecForTest),
     JS_FN("RegExpConstructRaw", regexp_construct_raw_flags, 2, 0),
     JS_FN("RegExpCreate", intrinsic_RegExpCreate, 2, 0),
+    JS_INLINABLE_FN("RegExpExec", intrinsic_RegExpExec<false>, 2, 0,
+                    IntrinsicRegExpExec),
+    JS_INLINABLE_FN("RegExpExecForTest", intrinsic_RegExpExec<true>, 2, 0,
+                    IntrinsicRegExpExecForTest),
     JS_FN("RegExpGetSubstitution", intrinsic_RegExpGetSubstitution, 5, 0),
     JS_INLINABLE_FN("RegExpInstanceOptimizable", RegExpInstanceOptimizable, 1,
                     0, RegExpInstanceOptimizable),
@@ -1996,7 +2009,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("RegExpPrototypeOptimizable", RegExpPrototypeOptimizable, 1,
                     0, RegExpPrototypeOptimizable),
     JS_INLINABLE_FN("RegExpSearcher", RegExpSearcher, 3, 0, RegExpSearcher),
-    JS_INLINABLE_FN("RegExpTester", RegExpTester, 3, 0, RegExpTester),
     JS_INLINABLE_FN("SameValue", js::obj_is, 2, 0, ObjectIs),
     JS_FN("SharedArrayBufferByteLength",
           intrinsic_ArrayBufferByteLength<SharedArrayBufferObject>, 1, 0),
@@ -2309,12 +2321,12 @@ void js::FillSelfHostingCompileOptions(CompileOptions& options) {
 // startup process for any other error reporting to be used, and we don't want
 // errors in self-hosted code to be silently swallowed.
 class MOZ_STACK_CLASS AutoPrintSelfHostingFrontendContext
-    : public OffThreadErrorContext {
+    : public FrontendContext {
   JSContext* cx_;
 
  public:
   explicit AutoPrintSelfHostingFrontendContext(JSContext* cx)
-      : OffThreadErrorContext(), cx_(cx) {
+      : FrontendContext(), cx_(cx) {
     setCurrentJSContext(cx_);
   }
   ~AutoPrintSelfHostingFrontendContext() {
@@ -2325,11 +2337,11 @@ class MOZ_STACK_CLASS AutoPrintSelfHostingFrontendContext
       fprintf(stderr, "Out of memory\n");
     }
 
-    for (const UniquePtr<CompileError>& error : errors()) {
-      JS::PrintError(stderr, const_cast<CompileError*>(error.get()), true);
+    if (maybeError()) {
+      JS::PrintError(stderr, &*maybeError(), true);
     }
-    for (const UniquePtr<CompileError>& error : warnings()) {
-      JS::PrintError(stderr, const_cast<CompileError*>(error.get()), true);
+    for (CompileError& error : warnings()) {
+      JS::PrintError(stderr, &error, true);
     }
     if (hadOverRecursed()) {
       fprintf(stderr, "Over recursed\n");
@@ -2424,7 +2436,7 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
 
   // Try initializing from Stencil XDR.
   bool decodeOk = false;
-  AutoPrintSelfHostingFrontendContext ec(cx);
+  AutoPrintSelfHostingFrontendContext fc(cx);
   if (xdrCache.Length() > 0) {
     // Allow the VM to directly use bytecode from the XDR buffer without
     // copying it. The buffer must outlive all runtimes (including workers).
@@ -2436,8 +2448,11 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
     if (!input) {
       return false;
     }
-    if (!input->initForSelfHostingGlobal(cx)) {
-      return false;
+    {
+      AutoReportFrontendContext fc(cx);
+      if (!input->initForSelfHostingGlobal(&fc)) {
+        return false;
+      }
     }
 
     RefPtr<frontend::CompilationStencil> stencil(
@@ -2445,7 +2460,7 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
     if (!stencil) {
       return false;
     }
-    if (!stencil->deserializeStencils(cx, &ec, *input, xdrCache, &decodeOk)) {
+    if (!stencil->deserializeStencils(&fc, options, xdrCache, &decodeOk)) {
       return false;
     }
 
@@ -2487,9 +2502,9 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
   }
   frontend::NoScopeBindingCache scopeCache;
   RefPtr<frontend::CompilationStencil> stencil =
-      frontend::CompileGlobalScriptToStencil(
-          cx, &ec, cx->stackLimitForCurrentPrincipal(), cx->tempLifoAlloc(),
-          *input, &scopeCache, srcBuf, ScopeKind::Global);
+      frontend::CompileGlobalScriptToStencil(cx, &fc, cx->tempLifoAlloc(),
+                                             *input, &scopeCache, srcBuf,
+                                             ScopeKind::Global);
   if (!stencil) {
     return false;
   }
@@ -2497,7 +2512,12 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
   // Serialize the stencil to XDR.
   if (xdrWriter) {
     JS::TranscodeBuffer xdrBuffer;
-    if (!stencil->serializeStencils(cx, *input, xdrBuffer)) {
+    bool succeeded = false;
+    if (!stencil->serializeStencils(cx, *input, xdrBuffer, &succeeded)) {
+      return false;
+    }
+    if (!succeeded) {
+      JS_ReportErrorASCII(cx, "Encoding failure");
       return false;
     }
 
@@ -2596,8 +2616,8 @@ ScriptSourceObject* GlobalObject::getOrCreateSelfHostingScriptSourceObject(
 
   Rooted<ScriptSourceObject*> sourceObject(cx);
   {
-    AutoReportFrontendContext ec(cx);
-    if (!source->initFromOptions(cx, &ec, options)) {
+    AutoReportFrontendContext fc(cx);
+    if (!source->initFromOptions(&fc, options)) {
       return nullptr;
     }
 
@@ -2740,6 +2760,14 @@ void JSRuntime::assertSelfHostedFunctionHasCanonicalName(
 bool js::IsSelfHostedFunctionWithName(JSFunction* fun, JSAtom* name) {
   return fun->isSelfHostedBuiltin() && fun->isExtended() &&
          GetClonedSelfHostedFunctionName(fun) == name;
+}
+
+bool js::IsSelfHostedFunctionWithName(const Value& v, JSAtom* name) {
+  if (!v.isObject() || !v.toObject().is<JSFunction>()) {
+    return false;
+  }
+  JSFunction* fun = &v.toObject().as<JSFunction>();
+  return IsSelfHostedFunctionWithName(fun, name);
 }
 
 static_assert(

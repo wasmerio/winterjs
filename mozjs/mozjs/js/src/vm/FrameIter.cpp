@@ -180,7 +180,7 @@ void JitFrameIter::settle() {
 
   if (isWasm()) {
     const wasm::WasmFrameIter& wasmFrame = asWasm();
-    if (!wasmFrame.unwoundJitCallerFP()) {
+    if (!wasmFrame.hasUnwoundJitFrame()) {
       return;
     }
 
@@ -195,7 +195,7 @@ void JitFrameIter::settle() {
     // The wasm iterator has saved the previous jit frame pointer for us.
 
     MOZ_ASSERT(wasmFrame.done());
-    uint8_t* prevFP = wasmFrame.unwoundJitCallerFP();
+    uint8_t* prevFP = wasmFrame.unwoundCallerFP();
     jit::FrameType prevFrameType = wasmFrame.unwoundJitFrameType();
 
     if (mustUnwindActivation_) {
@@ -1043,4 +1043,18 @@ void NonBuiltinScriptFrameIter::settle() {
       ScriptFrameIter::operator++();
     }
   }
+}
+
+bool FrameIter::inPrologue() const {
+  if (pc() < script()->main()) {
+    return true;
+  }
+  // If we do a VM call before pushing locals in baseline, the stack frame will
+  // not include space for those locals.
+  if (pc() == script()->code() && isBaseline() &&
+      jsJitFrame().baselineFrameNumValueSlots() < script()->nfixed()) {
+    return true;
+  }
+
+  return false;
 }

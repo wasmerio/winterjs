@@ -32,7 +32,7 @@ class Protocol:
     :param Browser browser: The Browser using this protocol"""
     __metaclass__ = ABCMeta
 
-    implements = []  # type: ClassVar[List[Type[ProtocolPart]]]
+    implements: ClassVar[List[Type["ProtocolPart"]]] = []
 
     def __init__(self, executor, browser):
         self.executor = executor
@@ -98,7 +98,7 @@ class ProtocolPart:
     :param Protocol parent: The parent protocol"""
     __metaclass__ = ABCMeta
 
-    name = None  # type: ClassVar[str]
+    name: ClassVar[str]
 
     def __init__(self, parent):
         self.parent = parent
@@ -299,6 +299,27 @@ class ClickProtocolPart(ProtocolPart):
         pass
 
 
+
+class AccessibilityProtocolPart(ProtocolPart):
+    """Protocol part for accessibility introspection"""
+    __metaclass__ = ABCMeta
+
+    name = "accessibility"
+
+    @abstractmethod
+    def get_computed_label(self, element):
+        """Return the computed accessibility label for a specific element.
+
+        :param element: A protocol-specific handle to an element."""
+        pass
+
+    def get_computed_role(self, element):
+        """Return the computed accessibility role for a specific element.
+
+        :param element: A protocol-specific handle to an element."""
+        pass
+
+
 class CookiesProtocolPart(ProtocolPart):
     """Protocol part for managing cookies"""
     __metaclass__ = ABCMeta
@@ -308,6 +329,18 @@ class CookiesProtocolPart(ProtocolPart):
     @abstractmethod
     def delete_all_cookies(self):
         """Delete all cookies."""
+        pass
+
+    @abstractmethod
+    def get_all_cookies(self):
+        """Get all cookies."""
+        pass
+
+    @abstractmethod
+    def get_named_cookie(self, name):
+        """Get named cookie.
+
+        :param name: The name of the cookie to get."""
         pass
 
 
@@ -362,12 +395,11 @@ class SetPermissionProtocolPart(ProtocolPart):
     name = "set_permission"
 
     @abstractmethod
-    def set_permission(self, descriptor, state, one_realm=False):
+    def set_permission(self, descriptor, state):
         """Set permission state.
 
         :param descriptor: A PermissionDescriptor object.
-        :param state: The state to set the permission to.
-        :param one_realm: Whether to set the permission for only one realm."""
+        :param state: The state to set the permission to."""
         pass
 
 

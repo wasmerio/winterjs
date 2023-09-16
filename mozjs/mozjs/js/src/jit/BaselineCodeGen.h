@@ -231,9 +231,8 @@ class BaselineCodeGen {
   [[nodiscard]] bool emitSetElemSuper(bool strict);
   [[nodiscard]] bool emitSetPropSuper(bool strict);
 
-  // Try to bake in the result of GetGName/BindGName instead of using an IC.
+  // Try to bake in the result of BindGName instead of using an IC.
   // Return true if we managed to optimize the op.
-  bool tryOptimizeGetGlobalName();
   bool tryOptimizeBindGlobalName();
 
   [[nodiscard]] bool emitInitPropGetterSetter();
@@ -257,8 +256,6 @@ class BaselineCodeGen {
   [[nodiscard]] bool emitDebugPrologue();
   [[nodiscard]] bool emitDebugEpilogue();
 
-  template <typename F>
-  [[nodiscard]] bool initEnvironmentChainHelper(const F& initFunctionEnv);
   [[nodiscard]] bool initEnvironmentChain();
 
   [[nodiscard]] bool emitHandleCodeCoverageAtPrologue();
@@ -503,6 +500,8 @@ class BaselineInterpreterGenerator final : private BaselineInterpreterCodeGen {
   // Offset of the jump (tail call) to the debug trap handler trampoline code.
   // When the debugger is enabled, NOPs are patched to calls to this location.
   uint32_t debugTrapHandlerOffset_ = 0;
+
+  BaselineInterpreterPerfSpewer perfSpewer_;
 
  public:
   explicit BaselineInterpreterGenerator(JSContext* cx, TempAllocator& alloc);

@@ -203,9 +203,7 @@ enum class CacheKind : uint8_t {
 
 extern const char* const CacheKindNames[];
 
-#ifdef DEBUG
 extern size_t NumInputsForCacheKind(CacheKind kind);
-#endif
 
 enum class CacheOp {
 #define DEFINE_OP(op, ...) op,
@@ -223,6 +221,11 @@ static_assert(sizeof(CacheIROpInfo) == 1);
 extern const CacheIROpInfo CacheIROpInfos[];
 
 extern const char* const CacheIROpNames[];
+
+inline const char* CacheIRCodeName(CacheOp op) {
+  return CacheIROpNames[static_cast<size_t>(op)];
+}
+
 extern const uint32_t CacheIROpHealth[];
 
 class StubField {
@@ -237,6 +240,8 @@ class StubField {
     Symbol,
     String,
     BaseScript,
+    JitCode,
+
     Id,
     AllocSite,
 
@@ -306,7 +311,8 @@ class CallFlags {
     FunCall,
     FunApplyArgsObj,
     FunApplyArray,
-    LastArgFormat = FunApplyArray
+    FunApplyNullUndefined,
+    LastArgFormat = FunApplyNullUndefined
   };
 
   CallFlags() = default;
@@ -462,6 +468,7 @@ inline int32_t GetIndexOfArgument(ArgumentKind kind, CallFlags flags,
     case CallFlags::FunCall:
     case CallFlags::FunApplyArgsObj:
     case CallFlags::FunApplyArray:
+    case CallFlags::FunApplyNullUndefined:
       MOZ_CRASH("Currently unreachable");
       break;
   }
@@ -510,6 +517,7 @@ enum class GuardClassKind : uint8_t {
   UnmappedArguments,
   WindowProxy,
   JSFunction,
+  BoundFunction,
   Set,
   Map,
 };

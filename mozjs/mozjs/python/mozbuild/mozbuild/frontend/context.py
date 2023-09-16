@@ -14,36 +14,32 @@ If you are looking for the absolute authority on what moz.build files can
 contain, you've come to the right place.
 """
 
-from __future__ import absolute_import, print_function, unicode_literals
-
+import itertools
 import operator
 import os
-
 from collections import Counter, OrderedDict
+from types import FunctionType
+
+import mozpack.path as mozpath
+import six
+
 from mozbuild.util import (
     HierarchicalStringList,
     ImmutableStrictOrderingOnAppendList,
     KeyedDefaultDict,
     List,
-    memoize,
-    memoized_property,
     ReadOnlyKeyedDefaultDict,
     StrictOrderingOnAppendList,
     StrictOrderingOnAppendListWithAction,
     StrictOrderingOnAppendListWithFlagsFactory,
     TypedList,
     TypedNamedTuple,
+    memoize,
+    memoized_property,
 )
 
 from .. import schedules
-
 from ..testing import read_manifestparser_manifest, read_reftest_manifest
-
-import mozpack.path as mozpath
-from types import FunctionType
-
-import itertools
-import six
 
 
 class ContextDerivedValue(object):
@@ -380,6 +376,16 @@ class HostCompileFlags(BaseCompileFlags):
                 ["-I%s/dist/include" % context.config.topobjdir],
                 ("HOST_CFLAGS", "HOST_CXXFLAGS"),
             ),
+            (
+                "WARNINGS_CFLAGS",
+                context.config.substs.get("WARNINGS_HOST_CFLAGS"),
+                ("HOST_CFLAGS",),
+            ),
+            (
+                "WARNINGS_CXXFLAGS",
+                context.config.substs.get("WARNINGS_HOST_CXXFLAGS"),
+                ("HOST_CXXFLAGS",),
+            ),
         )
         BaseCompileFlags.__init__(self, context)
 
@@ -645,7 +651,12 @@ class CompileFlags(TargetCompileFlags):
             (
                 "WARNINGS_CFLAGS",
                 context.config.substs.get("WARNINGS_CFLAGS"),
-                ("CFLAGS", "C_LDFLAGS"),
+                ("CFLAGS",),
+            ),
+            (
+                "WARNINGS_CXXFLAGS",
+                context.config.substs.get("WARNINGS_CXXFLAGS"),
+                ("CXXFLAGS",),
             ),
             ("MOZBUILD_CFLAGS", None, ("CFLAGS",)),
             ("MOZBUILD_CXXFLAGS", None, ("CXXFLAGS",)),
@@ -756,6 +767,7 @@ class WasmFlags(TargetCompileFlags):
                 context.config.substs.get("MOZ_FILE_PREFIX_MAP_FLAGS"),
                 ("WASM_CFLAGS", "WASM_CXXFLAGS"),
             ),
+            ("STL", context.config.substs.get("STL_FLAGS"), ("WASM_CXXFLAGS",)),
         )
 
         TargetCompileFlags.__init__(self, context)
@@ -859,7 +871,7 @@ class Path(six.with_metaclass(PathMeta, ContextDerivedValue, six.text_type)):
         return self
 
     def join(self, *p):
-        """ContextDerived equivalent of mozpath.join(self, *p), returning a
+        """ContextDerived equivalent of `mozpath.join(self, *p)`, returning a
         new Path instance.
         """
         return Path(self.context, mozpath.join(self, *p))
@@ -1023,10 +1035,12 @@ def ContextDerivedTypedRecord(*fields):
     This API is extremely similar to the TypedNamedTuple API,
     except that properties may be mutated. This supports syntax like:
 
-    VARIABLE_NAME.property += [
-      'item1',
-      'item2',
-    ]
+    .. code-block:: python
+
+        VARIABLE_NAME.property += [
+          'item1',
+          'item2',
+        ]
     """
 
     class _TypedRecord(ContextDerivedValue):
@@ -1420,12 +1434,6 @@ VARIABLES = {
         int,
         """The number of source files to compile into each unified source file.
 
-        """,
-    ),
-    "REQUIRES_UNIFIED_BUILD": (
-        bool,
-        bool,
-        """Whether this module requires building in unified environment.
         """,
     ),
     "IS_RUST_LIBRARY": (

@@ -5,15 +5,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import print_function
-
 import contextlib
 import io
 import os
-import tempfile
 import shutil
 import sys
-
+import tempfile
 from functools import partial
 from itertools import chain
 from operator import itemgetter
@@ -22,18 +19,20 @@ from operator import itemgetter
 UNSUPPORTED_FEATURES = set(
     [
         "tail-call-optimization",
-        "Intl.DateTimeFormat-quarter",
-        "Intl.Segmenter",
-        "Intl.Locale-info",
-        "Intl.DurationFormat",
-        "Atomics.waitAsync",
-        "legacy-regexp",
-        "json-modules",
-        "resizable-arraybuffer",
-        "Temporal",
-        "regexp-v-flag",
-        "decorators",
-        "regexp-duplicate-named-groups",
+        "Intl.Segmenter",  # Bug 1423593
+        "Intl.Locale-info",  # Bug 1693576
+        "Intl.DurationFormat",  # Bug 1648139
+        "Atomics.waitAsync",  # Bug 1467846
+        "legacy-regexp",  # Bug 1306461
+        "json-modules",  # Bug 1670176
+        "resizable-arraybuffer",  # Bug 1670026
+        "Temporal",  # Bug 1519167
+        "regexp-v-flag",  # Bug 1713657
+        "decorators",  # Bug 1435869
+        "regexp-duplicate-named-groups",  # Bug 1773135
+        "symbols-as-weakmap-keys",  # Bug 1710433
+        "arraybuffer-transfer",  # Bug 1519163
+        "json-parse-with-source",  # Bug 1658310
     ]
 )
 FEATURE_CHECK_NEEDED = {
@@ -41,12 +40,15 @@ FEATURE_CHECK_NEEDED = {
     "FinalizationRegistry": "!this.hasOwnProperty('FinalizationRegistry')",
     "SharedArrayBuffer": "!this.hasOwnProperty('SharedArrayBuffer')",
     "WeakRef": "!this.hasOwnProperty('WeakRef')",
-    "array-grouping": "!Array.prototype.group",
-    "change-array-by-copy": "!Array.prototype.with",
+    "array-grouping": "!Array.prototype.group",  # Bug 1792650
+    "change-array-by-copy": "!Array.prototype.with",  # Bug 1811054
+    "Array.fromAsync": "!Array.fromAsync",  # Bug 1746209
+    "String.prototype.isWellFormed": "!String.prototype.isWellFormed",
+    "String.prototype.toWellFormed": "!String.prototype.toWellFormed",
 }
 RELEASE_OR_BETA = set(
     [
-        "Intl.NumberFormat-v3",
+        "Intl.NumberFormat-v3",  # Bug 1795756
     ]
 )
 SHELL_OPTIONS = {
@@ -54,6 +56,9 @@ SHELL_OPTIONS = {
     "ShadowRealm": "--enable-shadow-realms",
     "array-grouping": "--enable-array-grouping",
     "change-array-by-copy": "--enable-change-array-by-copy",
+    "Array.fromAsync": "--enable-array-from-async",
+    "String.prototype.isWellFormed": "--enable-well-formed-unicode-strings",
+    "String.prototype.toWellFormed": "--enable-well-formed-unicode-strings",
 }
 
 
@@ -70,17 +75,30 @@ def loadTest262Parser(test262Dir):
     """
     Loads the test262 test record parser.
     """
-    import imp
+    import importlib.machinery
+    import importlib.util
 
-    fileObj = None
-    try:
-        moduleName = "parseTestRecord"
-        packagingDir = os.path.join(test262Dir, "tools", "packaging")
-        (fileObj, pathName, description) = imp.find_module(moduleName, [packagingDir])
-        return imp.load_module(moduleName, fileObj, pathName, description)
-    finally:
-        if fileObj:
-            fileObj.close()
+    packagingDir = os.path.join(test262Dir, "tools", "packaging")
+    moduleName = "parseTestRecord"
+
+    # Create a FileFinder to load Python source files.
+    loader_details = (
+        importlib.machinery.SourceFileLoader,
+        importlib.machinery.SOURCE_SUFFIXES,
+    )
+    finder = importlib.machinery.FileFinder(packagingDir, loader_details)
+
+    # Find the module spec.
+    spec = finder.find_spec(moduleName)
+    if spec is None:
+        raise RuntimeError("Can't find parseTestRecord module")
+
+    # Create and execute the module.
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # Return the executed module
+    return module
 
 
 def tryParseTestFile(test262parser, source, testName):
@@ -295,13 +313,19 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
         "Can't have both async and negative attributes: %s" % testName
     )
 
-    # Only async tests may use the $DONE function.  However, negative parse
-    # tests may "use" the $DONE function (of course they don't actually use it!)
-    # without specifying the "async" attribute.  Otherwise, $DONE must not
-    # appear in the test.
-    assert b"$DONE" not in testSource or isAsync or isNegative, (
-        "Missing async attribute in: %s" % testName
-    )
+    # Only async tests may use the $DONE or asyncTest function. However,
+    # negative parse tests may "use" the $DONE (or asyncTest) function (of
+    # course they don't actually use it!) without specifying the "async"
+    # attribute. Otherwise, neither $DONE nor asyncTest must appear in the test.
+    #
+    # Some "harness" tests redefine $DONE, so skip this check when the test file
+    # is in the "harness" directory.
+    assert (
+        (b"$DONE" not in testSource and b"asyncTest" not in testSource)
+        or isAsync
+        or isNegative
+        or testName.split(os.path.sep)[0] == "harness"
+    ), ("Missing async attribute in: %s" % testName)
 
     # When the "module" attribute is set, the source code is module code.
     isModule = "module" in testRec
@@ -565,7 +589,6 @@ def fetch_local_changes(inDir, outDir, srcDir, strictTests):
     import subprocess
 
     # TODO: fail if it's in the default branch? or require a branch name?
-
     # Checks for unstaged or non committed files. A clean branch provides a clean status.
     status = subprocess.check_output(
         ("git -C %s status --porcelain" % srcDir).split(" ")

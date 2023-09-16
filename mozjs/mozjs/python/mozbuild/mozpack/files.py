@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import bisect
 import codecs
 import errno
@@ -11,42 +9,26 @@ import inspect
 import os
 import platform
 import shutil
-import six
 import stat
 import subprocess
 import uuid
-import mozbuild.makeutil as makeutil
+from collections import OrderedDict
+from io import BytesIO
 from itertools import chain, takewhile
+from tarfile import TarFile, TarInfo
+from tempfile import NamedTemporaryFile, mkstemp
+
+import six
+from jsmin import JavascriptMinify
+
+import mozbuild.makeutil as makeutil
+import mozpack.path as mozpath
 from mozbuild.preprocessor import Preprocessor
 from mozbuild.util import FileAvoidWrite, ensure_unicode, memoize
-from mozpack.executables import (
-    is_executable,
-    may_strip,
-    strip,
-    may_elfhack,
-    elfhack,
-)
-from mozpack.chrome.manifest import (
-    ManifestEntry,
-    ManifestInterfaces,
-)
-from io import BytesIO
-from mozpack.errors import (
-    ErrorMessage,
-    errors,
-)
+from mozpack.chrome.manifest import ManifestEntry, ManifestInterfaces
+from mozpack.errors import ErrorMessage, errors
+from mozpack.executables import elfhack, is_executable, may_elfhack, may_strip, strip
 from mozpack.mozjar import JarReader
-import mozpack.path as mozpath
-from collections import OrderedDict
-from jsmin import JavascriptMinify
-from tempfile import (
-    mkstemp,
-    NamedTemporaryFile,
-)
-from tarfile import (
-    TarFile,
-    TarInfo,
-)
 
 try:
     import hglib
@@ -86,12 +68,9 @@ def _open(path, mode="r"):
 class Dest(object):
     """
     Helper interface for BaseFile.copy. The interface works as follows:
-    - read() and write() can be used to sequentially read/write from the
-      underlying file.
-    - a call to read() after a write() will re-open the underlying file and
-      read from it.
-    - a call to write() after a read() will re-open the underlying file,
-      emptying it, and write to it.
+      - read() and write() can be used to sequentially read/write from the underlying file.
+      - a call to read() after a write() will re-open the underlying file and read from it.
+      - a call to write() after a read() will re-open the underlying file, emptying it, and write to it.
     """
 
     def __init__(self, path):
@@ -1133,8 +1112,8 @@ class ComposedFinder(BaseFinder):
     """
     Composes multiple File Finders in some sort of virtual file system.
 
-    A ComposedFinder is initialized from a dictionary associating paths to
-    *Finder instances.
+    A ComposedFinder is initialized from a dictionary associating paths
+    to `*Finder instances.`
 
     Note this could be optimized to be smarter than getting all the files
     in advance.

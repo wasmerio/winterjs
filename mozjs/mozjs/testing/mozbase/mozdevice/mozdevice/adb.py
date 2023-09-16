@@ -2,11 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, division, print_function
-
 import io
 import os
-import sys
 import pipes
 import posixpath
 import re
@@ -14,17 +11,17 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import traceback
+from distutils import dir_util
 from threading import Thread
 
-from distutils import dir_util
 import six
 from six.moves import range
 
 from . import version_codes
-
 
 _TEST_ROOT = None
 
@@ -2980,7 +2977,7 @@ class ADBDevice(ADBCommand):
         sdcard_remote = None
         if os.path.isfile(local) and self.is_dir(remote):
             # force push to use the correct filename in the remote directory
-            remote = posixpath.join(remote, posixpath.basename(local))
+            remote = posixpath.join(remote, os.path.basename(local))
         elif os.path.isdir(local):
             copy_required = True
             temp_parent = tempfile.mkdtemp()
@@ -3015,7 +3012,7 @@ class ADBDevice(ADBCommand):
                 try:
                     with tempfile.NamedTemporaryFile(delete=True) as tmpf:
                         intermediate = posixpath.join(
-                            "/data/local/tmp", posixpath.basename(tmpf.name)
+                            "/data/local/tmp", os.path.basename(tmpf.name)
                         )
                     self.command_output(["push", local, intermediate], timeout=timeout)
                     self.chmod(intermediate, recursive=True, timeout=timeout)
@@ -3041,7 +3038,7 @@ class ADBDevice(ADBCommand):
             self._logger.info("Falling back to using intermediate /sdcard in push.")
             self.mkdir(posixpath.dirname(remote), parents=True, timeout=timeout)
             with tempfile.NamedTemporaryFile(delete=True) as tmpf:
-                sdcard_remote = posixpath.join("/sdcard", posixpath.basename(tmpf.name))
+                sdcard_remote = posixpath.join("/sdcard", os.path.basename(tmpf.name))
             self.command_output(["push", local, sdcard_remote], timeout=timeout)
             self.cp(sdcard_remote, remote, recursive=True, timeout=timeout)
         except BaseException:
@@ -3117,7 +3114,7 @@ class ADBDevice(ADBCommand):
                 try:
                     with tempfile.NamedTemporaryFile(delete=True) as tmpf:
                         intermediate = posixpath.join(
-                            "/data/local/tmp", posixpath.basename(tmpf.name)
+                            "/data/local/tmp", os.path.basename(tmpf.name)
                         )
                     # When using run-as <app>, we must first use the
                     # shell to create the intermediate and chmod it
@@ -3474,7 +3471,7 @@ class ADBDevice(ADBCommand):
         if self.is_file(source, timeout=timeout):
             if self.is_dir(destination, timeout=timeout):
                 # Copy the source file into the destination directory
-                destination = posixpath.join(destination, posixpath.basename(source))
+                destination = posixpath.join(destination, os.path.basename(source))
             self.shell_output("dd if=%s of=%s" % (source, destination), timeout=timeout)
             self.chmod(destination, recursive=recursive, timeout=timeout)
             self._sync(timeout=timeout)
@@ -3488,7 +3485,7 @@ class ADBDevice(ADBCommand):
 
         if self.is_dir(destination, timeout=timeout):
             # Copy the source directory into the destination directory.
-            destination_dir = posixpath.join(destination, posixpath.basename(source))
+            destination_dir = posixpath.join(destination, os.path.basename(source))
         else:
             # Copy the contents of the source directory into the
             # destination directory.
@@ -3906,13 +3903,16 @@ class ADBDevice(ADBCommand):
         """
         if self.version >= version_codes.M:
             permissions = [
-                "android.permission.WRITE_EXTERNAL_STORAGE",
                 "android.permission.READ_EXTERNAL_STORAGE",
                 "android.permission.ACCESS_COARSE_LOCATION",
                 "android.permission.ACCESS_FINE_LOCATION",
                 "android.permission.CAMERA",
                 "android.permission.RECORD_AUDIO",
             ]
+            if self.version < version_codes.R:
+                # WRITE_EXTERNAL_STORAGE is no longer available
+                # in Android 11+
+                permissions.append("android.permission.WRITE_EXTERNAL_STORAGE")
             self._logger.info("Granting important runtime permissions to %s" % app_name)
             for permission in permissions:
                 try:
@@ -4118,13 +4118,15 @@ class ADBDevice(ADBCommand):
         if grant_runtime_permissions:
             self.grant_runtime_permissions(app_name)
 
-        acmd = ["am"] + [
-            "startservice" if is_service else "start",
-            "-W" if wait else "",
-            "-n",
-            "%s/%s" % (app_name, activity_name),
-        ]
-
+        acmd = ["am"] + ["startservice" if is_service else "start"]
+        if wait:
+            acmd.extend(["-W"])
+        acmd.extend(
+            [
+                "-n",
+                "%s/%s" % (app_name, activity_name),
+            ]
+        )
         if intent:
             acmd.extend(["-a", intent])
 
@@ -4151,7 +4153,9 @@ class ADBDevice(ADBCommand):
         if "Error:" in cmd_output:
             for line in cmd_output.split("\n"):
                 self._logger.info(line)
-            raise ADBError("launch_activity %s/%s failed" % (app_name, activity_name))
+            raise ADBError(
+                "launch_application %s/%s failed" % (app_name, activity_name)
+            )
 
     def launch_fennec(
         self,

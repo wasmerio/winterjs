@@ -2,47 +2,47 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
-from collections import OrderedDict
-
 import os
 import platform
 import re
-import sys
+import shutil
+import stat
 import subprocess
+import sys
 import time
-from typing import Optional
+from collections import OrderedDict
 from pathlib import Path
-from packaging.version import Version
+from typing import Optional
+
+# Use distro package to retrieve linux platform information
+import distro
+from mach.site import MachSiteManager
+from mach.telemetry import initialize_telemetry_setting
 from mach.util import (
-    get_state_dir,
     UserError,
+    get_state_dir,
     to_optional_path,
     to_optional_str,
     win_to_msys_path,
 )
-from mach.telemetry import initialize_telemetry_setting
-from mach.site import MachSiteManager
+from mozbuild.base import MozbuildObject
+from mozfile import which
+from packaging.version import Version
+
+from mozboot.archlinux import ArchlinuxBootstrapper
 from mozboot.base import MODERN_RUST_VERSION
 from mozboot.centosfedora import CentOSFedoraBootstrapper
-from mozboot.opensuse import OpenSUSEBootstrapper
 from mozboot.debian import DebianBootstrapper
 from mozboot.freebsd import FreeBSDBootstrapper
 from mozboot.gentoo import GentooBootstrapper
-from mozboot.osx import OSXBootstrapper, OSXBootstrapperLight
+from mozboot.mozconfig import MozconfigBuilder
+from mozboot.mozillabuild import MozillaBuildBootstrapper
 from mozboot.openbsd import OpenBSDBootstrapper
-from mozboot.archlinux import ArchlinuxBootstrapper
+from mozboot.opensuse import OpenSUSEBootstrapper
+from mozboot.osx import OSXBootstrapper, OSXBootstrapperLight
 from mozboot.solus import SolusBootstrapper
 from mozboot.void import VoidBootstrapper
 from mozboot.windows import WindowsBootstrapper
-from mozboot.mozillabuild import MozillaBuildBootstrapper
-from mozboot.mozconfig import MozconfigBuilder
-from mozfile import which
-from mozbuild.base import MozbuildObject
-
-# Use distro package to retrieve linux platform information
-import distro
 
 APPLICATION_CHOICE = """
 Note on Artifact Mode:
@@ -102,7 +102,7 @@ Mozilla recommends a number of changes to Mercurial to enhance your
 experience with it.
 
 Would you like to run a configuration wizard to ensure Mercurial is
-optimally configured?"""
+optimally configured? (This will also ensure 'version-control-tools' is up-to-date)"""
 
 CONFIGURE_GIT = """
 Mozilla recommends using git-cinnabar to work with mozilla-central (or
@@ -122,6 +122,14 @@ DEBIAN_DISTROS = (
     "devuan",
     "pureos",
     "deepin",
+    "tuxedo",
+)
+
+FEDORA_DISTROS = (
+    "centos",
+    "fedora",
+    "rocky",
+    "oracle",
 )
 
 ADD_GIT_CINNABAR_PATH = """
@@ -162,12 +170,14 @@ class Bootstrapper(object):
         no_interactive=False,
         hg_configure=False,
         no_system_changes=False,
+        exclude=[],
         mach_context=None,
     ):
         self.instance = None
         self.choice = choice
         self.hg_configure = hg_configure
         self.no_system_changes = no_system_changes
+        self.exclude = exclude
         self.mach_context = mach_context
         cls = None
         args = {
@@ -182,7 +192,7 @@ class Bootstrapper(object):
                 full_distribution_name=False
             )
 
-            if dist_id in ("centos", "fedora", "rocky"):
+            if dist_id in FEDORA_DISTROS:
                 cls = CentOSFedoraBootstrapper
                 args["distro"] = dist_id
             elif dist_id in DEBIAN_DISTROS:
@@ -243,19 +253,17 @@ class Bootstrapper(object):
 
         self.instance = cls(**args)
 
-    def maybe_install_private_packages_or_exit(self, application):
+    def maybe_install_private_packages_or_exit(self, application, checkout_type):
         # Install the clang packages needed for building the style system, as
         # well as the version of NodeJS that we currently support.
         # Also install the clang static-analysis package by default
         # The best place to install our packages is in the state directory
         # we have.  We should have created one above in non-interactive mode.
-        self.instance.ensure_node_packages()
-        self.instance.ensure_fix_stacks_packages()
-        self.instance.ensure_minidump_stackwalk_packages()
+        self.instance.auto_bootstrap(application, self.exclude)
+        self.instance.install_toolchain_artifact("fix-stacks")
+        self.instance.install_toolchain_artifact("minidump-stackwalk")
         if not self.instance.artifact_mode:
-            self.instance.ensure_stylo_packages()
-            self.instance.ensure_clang_static_analysis_package()
-            self.instance.ensure_nasm_packages()
+            self.instance.install_toolchain_artifact("clang-tools/clang-tidy")
             self.instance.ensure_sccache_packages()
         # Like 'ensure_browser_packages' or 'ensure_mobile_android_packages'
         getattr(self.instance, "ensure_%s_packages" % application)()
@@ -324,7 +332,6 @@ class Bootstrapper(object):
         state_dir = Path(get_state_dir())
         self.instance.state_dir = state_dir
 
-        hg_installed, hg_modern = self.instance.ensure_mercurial_modern()
         hg = to_optional_path(which("hg"))
 
         # We need to enable the loading of hgrc in case extensions are
@@ -338,7 +345,7 @@ class Bootstrapper(object):
         self._validate_python_environment(checkout_root)
 
         if self.instance.no_system_changes:
-            self.maybe_install_private_packages_or_exit(application)
+            self.maybe_install_private_packages_or_exit(application, checkout_type)
             self._output_mozconfig(application, mozconfig_builder)
             sys.exit(0)
 
@@ -354,6 +361,10 @@ class Bootstrapper(object):
 
         # Possibly configure Mercurial, but not if the current checkout or repo
         # type is Git.
+        hg_installed = bool(hg)
+        if checkout_type == "hg":
+            hg_installed, hg_modern = self.instance.ensure_mercurial_modern()
+
         if hg_installed and checkout_type == "hg":
             if not self.instance.no_interactive:
                 configure_hg = self.instance.prompt_yesno(prompt=CONFIGURE_MERCURIAL)
@@ -380,7 +391,7 @@ class Bootstrapper(object):
                     checkout_root,
                 )
 
-        self.maybe_install_private_packages_or_exit(application)
+        self.maybe_install_private_packages_or_exit(application, checkout_type)
         self.check_code_submission(checkout_root)
         # Wait until after moz-phab setup to check telemetry so that employees
         # will be automatically opted-in.
@@ -484,8 +495,8 @@ class Bootstrapper(object):
             # distutils is singled out here because some distros (namely Ubuntu)
             # include it in a separate package outside of the main Python
             # installation.
-            import distutils.sysconfig
             import distutils.spawn
+            import distutils.sysconfig
 
             assert distutils.sysconfig is not None and distutils.spawn is not None
         except ImportError as e:
@@ -589,6 +600,7 @@ def current_firefox_checkout(env, hg: Optional[Path] = None):
     while path:
         hg_dir = path / ".hg"
         git_dir = path / ".git"
+        moz_configure = path / "moz.configure"
         if hg and hg_dir.exists():
             # Verify the hg repo is a Firefox repo by looking at rev 0.
             try:
@@ -609,11 +621,13 @@ def current_firefox_checkout(env, hg: Optional[Path] = None):
         # Just check for known-good files in the checkout, to prevent attempted
         # foot-shootings.  Determining a canonical git checkout of mozilla-unified
         # is...complicated
-        elif git_dir.exists():
+        elif git_dir.exists() or hg_dir.exists():
             moz_configure = path / "moz.configure"
             if moz_configure.exists():
                 _warn_if_risky_revision(path)
-                return "git", path
+                return ("git" if git_dir.exists() else "hg"), path
+        elif moz_configure.exists():
+            return "SOURCE", path
 
         if not len(path.parents):
             break
@@ -629,45 +643,65 @@ def update_git_tools(git: Optional[Path], root_state_dir: Path):
     """Update git tools, hooks and extensions"""
     # Ensure git-cinnabar is up to date.
     cinnabar_dir = root_state_dir / "git-cinnabar"
+    cinnabar_exe = cinnabar_dir / "git-cinnabar"
 
-    # Ensure the latest revision of git-cinnabar is present.
-    update_git_repo(git, "https://github.com/glandium/git-cinnabar.git", cinnabar_dir)
+    if sys.platform.startswith(("win32", "msys")):
+        cinnabar_exe = cinnabar_exe.with_suffix(".exe")
 
-    git = to_optional_str(git)
+    # Previously, this script would do a full clone of the git-cinnabar
+    # repository. It now only downloads prebuilt binaries, so if we are
+    # updating from an old setup, remove the repository and start over.
+    if (cinnabar_dir / ".git").exists():
+        # git sets pack files read-only, which causes problems removing
+        # them on Windows. To work around that, we use an error handler
+        # on rmtree that retries to remove the file after chmod'ing it.
+        def onerror(func, path, exc):
+            if func == os.unlink:
+                os.chmod(path, stat.S_IRWXU)
+                func(path)
+            else:
+                raise
 
-    # Perform a download of cinnabar.
-    download_args = [sys.executable, str(cinnabar_dir / "download.py")]
+        shutil.rmtree(str(cinnabar_dir), onerror=onerror)
 
-    try:
-        subprocess.check_call(download_args, cwd=str(cinnabar_dir))
-    except subprocess.CalledProcessError as e:
-        print(e)
+    # If we already have an executable, ask it to update itself.
+    exists = cinnabar_exe.exists()
+    if exists:
+        try:
+            subprocess.check_call([str(cinnabar_exe), "self-update"])
+        except subprocess.CalledProcessError as e:
+            print(e)
+
+    # git-cinnabar 0.6.0rc1 self-update had a bug that could leave an empty
+    # file. If that happens, install from scratch.
+    if not exists or cinnabar_exe.stat().st_size == 0:
+        from urllib.request import urlopen
+
+        import certifi
+
+        if not cinnabar_dir.exists():
+            cinnabar_dir.mkdir()
+
+        cinnabar_url = "https://github.com/glandium/git-cinnabar/"
+        download_py = cinnabar_dir / "download.py"
+        with open(download_py, "wb") as fh:
+            shutil.copyfileobj(
+                urlopen(
+                    f"{cinnabar_url}/raw/master/download.py", cafile=certifi.where()
+                ),
+                fh,
+            )
+
+        try:
+            subprocess.check_call(
+                [sys.executable, str(download_py)], cwd=str(cinnabar_dir)
+            )
+        except subprocess.CalledProcessError as e:
+            print(e)
+        finally:
+            download_py.unlink()
+
     return cinnabar_dir
-
-
-def update_git_repo(git: Optional[Path], url, dest: Path):
-    """Perform a clone/pull + update of a Git repository."""
-    git_str = to_optional_str(git)
-
-    pull_args = [git_str]
-
-    if dest.exists():
-        pull_args.extend(["pull"])
-        cwd = dest
-    else:
-        pull_args.extend(["clone", "--no-checkout", url, str(dest)])
-        cwd = Path("/")
-
-    update_args = [git_str, "checkout"]
-
-    print("=" * 80)
-    print(f"Ensuring {url} is up to date at {dest}")
-
-    try:
-        subprocess.check_call(pull_args, cwd=str(cwd))
-        subprocess.check_call(update_args, cwd=str(dest))
-    finally:
-        print("=" * 80)
 
 
 def configure_git(

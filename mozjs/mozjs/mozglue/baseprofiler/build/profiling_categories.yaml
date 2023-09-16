@@ -270,9 +270,32 @@
     - name: MEDIA_RT
       label: Real-time rendering
 
+# We don't name this category ACCESSIBILITY
+# because it's already defined as a macro.
+- name: A11Y
+  label: Accessibility
+  color: brown
+  subcategories:
+    - name: A11Y
+      label: Other
+
 - name: PROFILER
   label: Profiler
   color: lightred
   subcategories:
     - name: PROFILER
+      label: Other
+
+- name: TIMER
+  label: Timer
+  color: grey
+  subcategories:
+    - name: TIMER
+      label: Other
+
+- name: REMOTE_PROTOCOL
+  label: Remote-Protocol
+  color: grey
+  subcategories:
+    - name: REMOTE_PROTOCOL
       label: Other

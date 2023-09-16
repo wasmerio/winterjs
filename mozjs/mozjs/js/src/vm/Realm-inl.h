@@ -12,7 +12,6 @@
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
 #include "vm/GlobalObject.h"
-#include "vm/Iteration.h"
 
 #include "vm/JSContext-inl.h"
 
@@ -29,9 +28,14 @@ js::GlobalObject* JS::Realm::maybeGlobal() const {
 
 inline bool JS::Realm::hasLiveGlobal() const {
   // The global is swept by traceWeakGlobalEdge when we start sweeping a zone
-  // group.
+  // group. This frees the GlobalObjectData, so the realm must live at least as
+  // long as the global.
   MOZ_ASSERT_IF(global_, !js::gc::IsAboutToBeFinalized(global_));
   return bool(global_);
+}
+
+inline bool JS::Realm::hasInitializedGlobal() const {
+  return hasLiveGlobal() && !initializingGlobal_;
 }
 
 inline bool JS::Realm::marked() const {
@@ -102,22 +106,5 @@ js::AutoMaybeLeaveAtomsZone::~AutoMaybeLeaveAtomsZone() {
 
 js::AutoRealmUnchecked::AutoRealmUnchecked(JSContext* cx, JS::Realm* target)
     : AutoRealm(cx, target) {}
-
-MOZ_ALWAYS_INLINE bool js::ObjectRealm::objectMaybeInIteration(JSObject* obj) {
-  MOZ_ASSERT(&ObjectRealm::get(obj) == this);
-
-  // If the list is empty we're not iterating any objects.
-  js::NativeIterator* next = enumerators->next();
-  if (enumerators == next) {
-    return false;
-  }
-
-  // If the list contains a single object, check if it's |obj|.
-  if (next->next() == enumerators) {
-    return next->objectBeingIterated() == obj;
-  }
-
-  return true;
-}
 
 #endif /* vm_Realm_inl_h */

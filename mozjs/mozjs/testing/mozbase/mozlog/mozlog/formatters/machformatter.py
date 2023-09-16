@@ -3,16 +3,16 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-from __future__ import absolute_import
-
-from mozterm import Terminal
 import time
+from functools import reduce
+
+import six
+from mozterm import Terminal
+
+from ..handlers import SummaryHandler
 from . import base
 from .process import strstatus
 from .tbplformatter import TbplFormatter
-from ..handlers import SummaryHandler
-import six
-from functools import reduce
 
 color_dict = {
     "log_test_status_fail": "red",
@@ -30,8 +30,10 @@ color_dict = {
     "bold": "bold",
     "grey": "grey",
     "normal": "normal",
-    "dim": "dim",
+    "bright_black": "bright_black",
 }
+
+DEFAULT = "\x1b(B\x1b[m"
 
 
 def format_seconds(total):
@@ -43,7 +45,24 @@ def format_seconds(total):
 class TerminalColors(object):
     def __init__(self, term, color_dict):
         for key, value in color_dict.items():
-            setattr(self, key, getattr(term, value))
+            attribute = getattr(term, value)
+            # In Blessed, these attributes aren't always callable. We can assume
+            # that if they're not, they're just the raw ANSI Escape Sequences.
+            # This TerminalColors class is basically just a lookup table for
+            # what function to call to format/color an input string a certain way.
+            # So if the attribute above is a callable, we can just proceed, but
+            # if it's not, we need to create our own function that prepends the
+            # raw ANSI Escape Sequences to the input string, so that everything
+            # has the same behavior. We append DEFAULT to reset to no formatting
+            # at the end of our string, to prevent text that comes afterwards
+            # from inheriting the prepended formatting.
+            if not callable(attribute):
+
+                def apply_formatting(text):
+                    return attribute + text + DEFAULT
+
+                attribute = apply_formatting
+            setattr(self, key, attribute)
 
 
 class MachFormatter(base.BaseFormatter):
@@ -183,7 +202,7 @@ class MachFormatter(base.BaseFormatter):
         return rv
 
     def _format_stack(self, stack):
-        return "\n%s\n" % self.color_formatter.dim(stack.strip("\n"))
+        return "\n%s\n" % self.color_formatter.bright_black(stack.strip("\n"))
 
     def _format_suite_summary(self, suite, summary):
         count = summary["counts"]

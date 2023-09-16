@@ -95,8 +95,7 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
   // Try to look up the shape in the NewProxyCache.
   Rooted<Shape*> shape(cx);
   if (!realm->newProxyCache.lookup(clasp, proto, shape.address())) {
-    shape = SharedShape::getInitialShape(cx, clasp, realm, proto,
-                                         /* nfixed = */ 0);
+    shape = ProxyShape::getShape(cx, clasp, realm, proto, ObjectFlags());
     if (!shape) {
       return nullptr;
     }
@@ -109,18 +108,17 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
 
   // Ensure that the wrapper has the same lifetime assumptions as the
   // wrappee. Prefer to allocate in the nursery, when possible.
-  gc::InitialHeap heap;
+  gc::Heap heap;
   if ((priv.isGCThing() && priv.toGCThing()->isTenured()) ||
       !handler->canNurseryAllocate()) {
-    heap = gc::TenuredHeap;
+    heap = gc::Heap::Tenured;
   } else {
-    heap = gc::DefaultHeap;
+    heap = gc::Heap::Default;
   }
 
   debugCheckNewObject(shape, allocKind, heap);
 
-  ProxyObject* proxy =
-      cx->newCell<ProxyObject>(allocKind, /* nDynamicSlots = */ 0, heap, clasp);
+  ProxyObject* proxy = cx->newCell<ProxyObject>(allocKind, heap, clasp);
   if (!proxy) {
     return nullptr;
   }
@@ -128,7 +126,7 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
   proxy->initShape(shape);
 
   MOZ_ASSERT(clasp->shouldDelayMetadataBuilder());
-  realm->setObjectPendingMetadata(cx, proxy);
+  realm->setObjectPendingMetadata(proxy);
 
   gc::gcprobes::CreateObject(proxy);
 
@@ -153,8 +151,9 @@ void ProxyObject::setSameCompartmentPrivate(const Value& priv) {
 }
 
 inline void ProxyObject::setPrivate(const Value& priv) {
-  MOZ_ASSERT_IF(!zone()->isGCPreparing() && isMarkedBlack() && priv.isGCThing(),
-                !JS::GCThingIsMarkedGray(priv.toGCCellPtr()));
+#ifdef DEBUG
+  JS::AssertValueIsNotGray(priv);
+#endif
   *slotOfPrivate() = priv;
 }
 

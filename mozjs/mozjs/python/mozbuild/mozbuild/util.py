@@ -5,8 +5,6 @@
 # This file contains miscellaneous utility functions that don't belong anywhere
 # in particular.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import argparse
 import collections
 import collections.abc
@@ -19,15 +17,16 @@ import hashlib
 import io
 import itertools
 import os
-import pprint
 import re
 import stat
 import sys
 import time
 from collections import OrderedDict
 from io import BytesIO, StringIO
+from pathlib import Path
 
 import six
+from packaging.version import Version
 
 MOZBUILD_METRICS_PATH = os.path.abspath(
     os.path.join(__file__, "..", "..", "metrics.yaml")
@@ -430,7 +429,7 @@ class List(list):
             raise ValueError("List can only be created from other list instances.")
 
         self._kwargs = kwargs
-        return super(List, self).__init__(iterable)
+        super(List, self).__init__(iterable)
 
     def extend(self, l):
         if not isinstance(l, list):
@@ -707,6 +706,9 @@ def StrictOrderingOnAppendListWithFlagsFactory(flags):
     the flag names, and values the type used for the value of that flag.
 
     Example:
+
+    .. code-block:: python
+
         FooList = StrictOrderingOnAppendListWithFlagsFactory({
             'foo': bool, 'bar': unicode
         })
@@ -1340,76 +1342,6 @@ def _escape_char(c):
     return six.text_type(c.encode("unicode_escape"))
 
 
-if six.PY2:  # Delete when we get rid of Python 2.
-    # Mapping table between raw characters below \x80 and their escaped
-    # counterpart, when they differ
-    _INDENTED_REPR_TABLE = {
-        c: e
-        for c, e in map(lambda x: (x, _escape_char(x)), map(unichr, range(128)))
-        if c != e
-    }
-    # Regexp matching all characters to escape.
-    _INDENTED_REPR_RE = re.compile(
-        "([" + "".join(_INDENTED_REPR_TABLE.values()) + "]+)"
-    )
-
-
-def write_indented_repr(f, o, indent=4):
-    """Write an indented representation (similar to repr()) of the object to the
-    given file `f`.
-
-    One notable difference with repr is that the returned representation
-    assumes `from __future__ import unicode_literals`.
-    """
-    if six.PY3:
-        pprint.pprint(o, stream=f, indent=indent)
-        return
-    # Delete everything below when we get rid of Python 2.
-    one_indent = " " * indent
-
-    def recurse_indented_repr(o, level):
-        if isinstance(o, dict):
-            yield "{\n"
-            for k, v in sorted(o.items()):
-                yield one_indent * (level + 1)
-                for d in recurse_indented_repr(k, level + 1):
-                    yield d
-                yield ": "
-                for d in recurse_indented_repr(v, level + 1):
-                    yield d
-                yield ",\n"
-            yield one_indent * level
-            yield "}"
-        elif isinstance(o, bytes):
-            yield "b"
-            yield repr(o)
-        elif isinstance(o, six.text_type):
-            yield "'"
-            # We want a readable string (non escaped unicode), but some
-            # special characters need escaping (e.g. \n, \t, etc.)
-            for i, s in enumerate(_INDENTED_REPR_RE.split(o)):
-                if i % 2:
-                    for c in s:
-                        yield _INDENTED_REPR_TABLE[c]
-                else:
-                    yield s
-            yield "'"
-        elif hasattr(o, "__iter__"):
-            yield "[\n"
-            for i in o:
-                yield one_indent * (level + 1)
-                for d in recurse_indented_repr(i, level + 1):
-                    yield d
-                yield ",\n"
-            yield one_indent * level
-            yield "]"
-        else:
-            yield repr(o)
-
-    result = "".join(recurse_indented_repr(o, 0)) + "\n"
-    f.write(result)
-
-
 def ensure_bytes(value, encoding="utf-8"):
     if isinstance(value, six.text_type):
         return value.encode(encoding)
@@ -1458,3 +1390,18 @@ def hexdump(buf):
         line += "|\n"
         lines.append(line)
     return lines
+
+
+def mozilla_build_version():
+    mozilla_build = os.environ.get("MOZILLABUILD")
+
+    version_file = Path(mozilla_build) / "VERSION"
+
+    assert version_file.exists(), (
+        f'The MozillaBuild VERSION file was not found at "{version_file}".\n'
+        "Please check if MozillaBuild is installed correctly and that the"
+        "`MOZILLABUILD` environment variable is to the correct path."
+    )
+
+    with version_file.open() as file:
+        return Version(file.readline().rstrip("\n"))

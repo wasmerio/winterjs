@@ -6,32 +6,22 @@
 # drop-in replacement for autoconf 2.13's config.status, with features
 # borrowed from autoconf > 2.5, and additional features.
 
-from __future__ import absolute_import, print_function
-
 import logging
 import os
 import sys
 import time
-
 from argparse import ArgumentParser
+from itertools import chain
 
 from mach.logging import LoggingManager
+
+from mozbuild.backend import backends, get_backend_class
 from mozbuild.backend.configenvironment import ConfigEnvironment
 from mozbuild.base import MachCommandConditions
 from mozbuild.frontend.emitter import TreeMetadataEmitter
 from mozbuild.frontend.reader import BuildReader
 from mozbuild.mozinfo import write_mozinfo
-from itertools import chain
-
-from mozbuild.backend import (
-    backends,
-    get_backend_class,
-)
-from mozbuild.util import (
-    FileAvoidWrite,
-    process_time,
-)
-
+from mozbuild.util import FileAvoidWrite, process_time
 
 log_manager = LoggingManager()
 
@@ -138,7 +128,7 @@ def config_status(
         write_mozinfo(f, env, os.environ)
 
     cpu_start = process_time()
-    time_start = time.time()
+    time_start = time.monotonic()
 
     # Make appropriate backend instances, defaulting to RecursiveMakeBackend,
     # or what is in BUILD_BACKENDS.
@@ -174,7 +164,7 @@ def config_status(
             print(summary, file=sys.stderr)
 
     cpu_time = process_time() - cpu_start
-    wall_time = time.time() - time_start
+    wall_time = time.monotonic() - time_start
     efficiency = cpu_time / wall_time if wall_time else 100
     untracked = wall_time - execution_time
 

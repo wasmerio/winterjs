@@ -15,8 +15,8 @@ using namespace js;
 
 void ShapeZone::fixupPropMapShapeTableAfterMovingGC() {
   for (PropMapShapeSet::Enum e(propMapShapes); !e.empty(); e.popFront()) {
-    Shape* shape = MaybeForwarded(e.front().unbarrieredGet());
-    SharedPropMap* map = MaybeForwarded(shape->propMap())->asShared();
+    SharedShape* shape = MaybeForwarded(e.front().unbarrieredGet());
+    SharedPropMap* map = shape->propMapMaybeForwarded();
     BaseShape* base = MaybeForwarded(shape->base());
 
     PropMapShapeSet::Lookup lookup(base, shape->numFixedSlots(), map,
@@ -52,7 +52,7 @@ void ShapeZone::checkTablesAfterMovingGC() {
   }
 
   for (auto r = initialShapes.all(); !r.empty(); r.popFront()) {
-    Shape* shape = r.front().unbarrieredGet();
+    SharedShape* shape = r.front().unbarrieredGet();
     CheckGCThingAfterMovingGC(shape);
 
     using Lookup = InitialShapeHasher::Lookup;
@@ -63,13 +63,35 @@ void ShapeZone::checkTablesAfterMovingGC() {
   }
 
   for (auto r = propMapShapes.all(); !r.empty(); r.popFront()) {
-    Shape* shape = r.front().unbarrieredGet();
+    SharedShape* shape = r.front().unbarrieredGet();
     CheckGCThingAfterMovingGC(shape);
 
     using Lookup = PropMapShapeHasher::Lookup;
-    Lookup lookup(shape->base(), shape->numFixedSlots(), shape->sharedPropMap(),
+    Lookup lookup(shape->base(), shape->numFixedSlots(), shape->propMap(),
                   shape->propMapLength(), shape->objectFlags());
     PropMapShapeSet::Ptr ptr = propMapShapes.lookup(lookup);
+    MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &r.front());
+  }
+
+  for (auto r = proxyShapes.all(); !r.empty(); r.popFront()) {
+    ProxyShape* shape = r.front().unbarrieredGet();
+    CheckGCThingAfterMovingGC(shape);
+
+    using Lookup = ProxyShapeHasher::Lookup;
+    Lookup lookup(shape->getObjectClass(), shape->realm(), shape->proto(),
+                  shape->objectFlags());
+    ProxyShapeSet::Ptr ptr = proxyShapes.lookup(lookup);
+    MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &r.front());
+  }
+
+  for (auto r = wasmGCShapes.all(); !r.empty(); r.popFront()) {
+    WasmGCShape* shape = r.front().unbarrieredGet();
+    CheckGCThingAfterMovingGC(shape);
+
+    using Lookup = WasmGCShapeHasher::Lookup;
+    Lookup lookup(shape->getObjectClass(), shape->realm(), shape->proto(),
+                  shape->recGroup(), shape->objectFlags());
+    WasmGCShapeSet::Ptr ptr = wasmGCShapes.lookup(lookup);
     MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &r.front());
   }
 }
@@ -79,7 +101,9 @@ ShapeZone::ShapeZone(Zone* zone)
     : baseShapes(zone),
       initialPropMaps(zone),
       initialShapes(zone),
-      propMapShapes(zone) {}
+      propMapShapes(zone),
+      proxyShapes(zone),
+      wasmGCShapes(zone) {}
 
 void ShapeZone::purgeShapeCaches(JS::GCContext* gcx) {
   for (Shape* shape : shapesWithCache) {
@@ -95,5 +119,7 @@ void ShapeZone::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
   *initialPropMapTable += initialPropMaps.sizeOfExcludingThis(mallocSizeOf);
   *shapeTables += initialShapes.sizeOfExcludingThis(mallocSizeOf);
   *shapeTables += propMapShapes.sizeOfExcludingThis(mallocSizeOf);
+  *shapeTables += proxyShapes.sizeOfExcludingThis(mallocSizeOf);
+  *shapeTables += wasmGCShapes.sizeOfExcludingThis(mallocSizeOf);
   *shapeTables += shapesWithCache.sizeOfExcludingThis(mallocSizeOf);
 }

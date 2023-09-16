@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this,
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import errno
 import json
 import os
@@ -11,9 +9,10 @@ import stat
 import subprocess
 import sys
 import time
-import requests
-from typing import Optional, Union
 from pathlib import Path
+from typing import Optional, Union
+
+import requests
 from tqdm import tqdm
 
 # We need the NDK version in multiple different places, and it's inconvenient
@@ -21,11 +20,11 @@ from tqdm import tqdm
 # variable.
 from mozboot.bootstrap import MOZCONFIG_SUGGESTION_TEMPLATE
 
-NDK_VERSION = "r21d"
-CMDLINE_TOOLS_VERSION_STRING = "7.0"
-CMDLINE_TOOLS_VERSION = "8512546"
+NDK_VERSION = "r23c"
+CMDLINE_TOOLS_VERSION_STRING = "9.0"
+CMDLINE_TOOLS_VERSION = "9477386"
 
-BUNDLETOOL_VERSION = "1.11.0"
+BUNDLETOOL_VERSION = "1.14.1"
 
 # We expect the emulator AVD definitions to be platform agnostic
 LINUX_X86_64_ANDROID_AVD = "linux64-android-avd-x86_64-repack"
@@ -43,8 +42,8 @@ AVD_MANIFEST_ARM = Path(__file__).resolve().parent / "android-avds/arm.json"
 AVD_MANIFEST_ARM64 = Path(__file__).resolve().parent / "android-avds/arm64.json"
 
 JAVA_VERSION_MAJOR = "17"
-JAVA_VERSION_MINOR = "0.4.1"
-JAVA_VERSION_PATCH = "1"
+JAVA_VERSION_MINOR = "0.7"
+JAVA_VERSION_PATCH = "7"
 
 ANDROID_NDK_EXISTS = """
 Looks like you have the correct version of the Android NDK installed at:
@@ -74,7 +73,7 @@ output as packages are downloaded and installed.
 
 MOBILE_ANDROID_MOZCONFIG_TEMPLATE = """
 # Build GeckoView/Firefox for Android:
-ac_add_options --enable-application=mobile/android
+ac_add_options --enable-project=mobile/android
 
 # Targeting the following architecture.
 # For regular phones, no --target is needed.
@@ -90,8 +89,7 @@ ac_add_options --enable-application=mobile/android
 
 MOBILE_ANDROID_ARTIFACT_MODE_MOZCONFIG_TEMPLATE = """
 # Build GeckoView/Firefox for Android Artifact Mode:
-ac_add_options --enable-application=mobile/android
-ac_add_options --target=arm-linux-androideabi
+ac_add_options --enable-project=mobile/android
 ac_add_options --enable-artifact-builds
 
 {extra_lines}
@@ -102,19 +100,6 @@ mk_add_options MOZ_OBJDIR=./objdir-frontend
 
 class GetNdkVersionError(Exception):
     pass
-
-
-def install_bundletool(url, path: Path):
-    """
-    Fetch bundletool to the desired directory.
-    """
-    try:
-        subprocess.check_call(
-            ["wget", "--continue", url, "--output-document", "bundletool.jar"],
-            cwd=str(path),
-        )
-    finally:
-        pass
 
 
 def install_mobile_android_sdk_or_ndk(url, path: Path):
@@ -141,30 +126,7 @@ def install_mobile_android_sdk_or_ndk(url, path: Path):
 
     file_name = url.split("/")[-1]
     download_file_path = download_path / file_name
-
-    with requests.Session() as session:
-        request = session.head(url)
-        remote_file_size = int(request.headers["content-length"])
-
-        if download_file_path.is_file():
-            local_file_size = download_file_path.stat().st_size
-
-            if local_file_size == remote_file_size:
-                print(f"{download_file_path} already downloaded. Skipping download...")
-            else:
-                print(
-                    f"Partial download detected. Resuming download of {download_file_path}..."
-                )
-                download(
-                    download_file_path,
-                    session,
-                    url,
-                    remote_file_size,
-                    local_file_size,
-                )
-        else:
-            print(f"Downloading {download_file_path}...")
-            download(download_file_path, session, url, remote_file_size)
+    download(url, download_file_path)
 
     if file_name.endswith(".tar.gz") or file_name.endswith(".tgz"):
         cmd = ["tar", "zxf", str(download_file_path)]
@@ -194,6 +156,36 @@ def install_mobile_android_sdk_or_ndk(url, path: Path):
 
 
 def download(
+    url,
+    download_file_path: Path,
+):
+    with requests.Session() as session:
+        request = session.head(url, allow_redirects=True)
+        request.raise_for_status()
+        remote_file_size = int(request.headers["content-length"])
+
+        if download_file_path.is_file():
+            local_file_size = download_file_path.stat().st_size
+
+            if local_file_size == remote_file_size:
+                print(
+                    f"{download_file_path.name} already downloaded. Skipping download..."
+                )
+            else:
+                print(f"Partial download detected. Resuming download of {url}...")
+                download_internal(
+                    download_file_path,
+                    session,
+                    url,
+                    remote_file_size,
+                    local_file_size,
+                )
+        else:
+            print(f"Downloading {url}...")
+            download_internal(download_file_path, session, url, remote_file_size)
+
+
+def download_internal(
     download_file_path: Path,
     session,
     url,
@@ -463,7 +455,7 @@ def ensure_android_sdk_and_ndk(
         (cmdline_tools_path / "cmdline-tools").rename(
             cmdline_tools_path / CMDLINE_TOOLS_VERSION_STRING
         )
-        install_bundletool(bundletool_url, mozbuild_path)
+        download(bundletool_url, mozbuild_path / "bundletool.jar")
 
 
 def get_packages_to_install(packages_file_content, avd_manifest):
@@ -684,19 +676,14 @@ def generate_mozconfig(os_name, artifact_mode=False):
 
 def android_ndk_url(os_name, ver=NDK_VERSION):
     # Produce a URL like
-    # 'https://dl.google.com/android/repository/android-ndk-$VER-linux-x86_64.zip
+    # 'https://dl.google.com/android/repository/android-ndk-$VER-linux.zip
     base_url = "https://dl.google.com/android/repository/android-ndk"
 
     if os_name == "macosx":
         # |mach bootstrap| uses 'macosx', but Google uses 'darwin'.
         os_name = "darwin"
 
-    if sys.maxsize > 2 ** 32:
-        arch = "x86_64"
-    else:
-        arch = "x86"
-
-    return "%s-%s-%s-%s.zip" % (base_url, ver, os_name, arch)
+    return "%s-%s-%s.zip" % (base_url, ver, os_name)
 
 
 def main(argv):
@@ -837,7 +824,7 @@ def ensure_java(os_name, os_arch):
 
     if not java_path.exists():
         # e.g. https://github.com/adoptium/temurin17-binaries/releases/
-        #      download/jdk-17.0.4.1%2B1/OpenJDK17U-jdk_x64_linux_hotspot_17.0.4.1_1.tar.gz
+        #      download/jdk-17.0.7%2B7/OpenJDK17U-jre_x64_linux_hotspot_17.0.7_7.tar.gz
         java_url = (
             "https://github.com/adoptium/temurin{major}-binaries/releases/"
             "download/jdk-{major}.{minor}%2B{patch}/"
@@ -855,7 +842,7 @@ def ensure_java(os_name, os_arch):
 
 
 def java_bin_path(os_name, toolchain_path: Path):
-    # Like jdk-17.0.4.1+1
+    # Like jdk-17.0.7+7
     jdk_folder = "jdk-{major}.{minor}+{patch}".format(
         major=JAVA_VERSION_MAJOR, minor=JAVA_VERSION_MINOR, patch=JAVA_VERSION_PATCH
     )

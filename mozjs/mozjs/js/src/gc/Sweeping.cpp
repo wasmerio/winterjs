@@ -485,26 +485,32 @@ void GCRuntime::waitBackgroundFreeEnd() { freeTask.join(); }
 template <class ZoneIterT>
 IncrementalProgress GCRuntime::markWeakReferences(
     SliceBudget& incrementalBudget) {
-  MOZ_ASSERT(!marker.isWeakMarking());
+  MOZ_ASSERT(!marker().isWeakMarking());
 
-  gcstats::AutoPhase ap1(stats(), gcstats::PhaseKind::SWEEP_MARK_WEAK);
+  gcstats::AutoPhase ap1(stats(), gcstats::PhaseKind::MARK_WEAK);
 
   auto unlimited = SliceBudget::unlimited();
   SliceBudget& budget =
-      marker.incrementalWeakMapMarkingEnabled ? incrementalBudget : unlimited;
+      marker().incrementalWeakMapMarkingEnabled ? incrementalBudget : unlimited;
 
   // Ensure we don't return to the mutator while we're still in weak marking
   // mode.
   auto leaveOnExit =
-      mozilla::MakeScopeExit([&] { marker.leaveWeakMarkingMode(); });
+      mozilla::MakeScopeExit([&] { marker().leaveWeakMarkingMode(); });
 
-  if (marker.enterWeakMarkingMode()) {
+  if (marker().enterWeakMarkingMode()) {
+    // If there was an 'enter-weak-marking-mode' token in the queue, then it
+    // and everything after it will still be in the queue so we can process
+    // them now.
+    while (processTestMarkQueue() == QueueYielded) {
+    };
+
     // Do not rely on the information about not-yet-marked weak keys that have
     // been collected by barriers. Clear out the gcEphemeronEdges entries and
     // rebuild the full table. Note that this a cross-zone operation; delegate
     // zone entries will be populated by map zone traversals, so everything
     // needs to be cleared first, then populated.
-    if (!marker.incrementalWeakMapMarkingEnabled) {
+    if (!marker().incrementalWeakMapMarkingEnabled) {
       for (ZoneIterT zone(this); !zone.done(); zone.next()) {
         AutoEnterOOMUnsafeRegion oomUnsafe;
         if (!zone->gcEphemeronEdges().clear()) {
@@ -514,7 +520,7 @@ IncrementalProgress GCRuntime::markWeakReferences(
     }
 
     for (ZoneIterT zone(this); !zone.done(); zone.next()) {
-      if (zone->enterWeakMarkingMode(&marker, budget) == NotFinished) {
+      if (zone->enterWeakMarkingMode(&marker(), budget) == NotFinished) {
         return NotFinished;
       }
     }
@@ -522,22 +528,23 @@ IncrementalProgress GCRuntime::markWeakReferences(
 
   bool markedAny = true;
   while (markedAny) {
-    if (!marker.markUntilBudgetExhausted(budget)) {
-      MOZ_ASSERT(marker.incrementalWeakMapMarkingEnabled);
+    if (!marker().markUntilBudgetExhausted(budget)) {
+      MOZ_ASSERT(marker().incrementalWeakMapMarkingEnabled);
       return NotFinished;
     }
 
     markedAny = false;
 
-    if (!marker.isWeakMarking()) {
+    if (!marker().isWeakMarking()) {
       for (ZoneIterT zone(this); !zone.done(); zone.next()) {
-        markedAny |= WeakMapBase::markZoneIteratively(zone, &marker);
+        markedAny |= WeakMapBase::markZoneIteratively(zone, &marker());
       }
     }
 
-    markedAny |= jit::JitRuntime::MarkJitcodeGlobalTableIteratively(&marker);
+    markedAny |= jit::JitRuntime::MarkJitcodeGlobalTableIteratively(&marker());
   }
-  MOZ_ASSERT(marker.isDrained());
+
+  assertNoMarkingWork();
 
   return Finished;
 }
@@ -550,18 +557,23 @@ IncrementalProgress GCRuntime::markWeakReferencesInCurrentGroup(
 template <class ZoneIterT>
 IncrementalProgress GCRuntime::markGrayRoots(SliceBudget& budget,
                                              gcstats::PhaseKind phase) {
-  MOZ_ASSERT(marker.markColor() == MarkColor::Gray);
+  MOZ_ASSERT(marker().markColor() == MarkColor::Gray);
 
   gcstats::AutoPhase ap(stats(), phase);
 
   AutoUpdateLiveCompartments updateLive(this);
+  marker().setRootMarkingMode(true);
+  auto guard =
+      mozilla::MakeScopeExit([this]() { marker().setRootMarkingMode(false); });
 
-  if (traceEmbeddingGrayRoots(&marker, budget) == NotFinished) {
+  IncrementalProgress result =
+      traceEmbeddingGrayRoots(marker().tracer(), budget);
+  if (result == NotFinished) {
     return NotFinished;
   }
 
   Compartment::traceIncomingCrossCompartmentEdgesForZoneGC(
-      &marker, Compartment::GrayEdges);
+      marker().tracer(), Compartment::GrayEdges);
 
   return Finished;
 }
@@ -664,7 +676,7 @@ bool Zone::findSweepGroupEdges(Zone* atomsZone) {
   return WeakMapBase::findSweepGroupEdgesForZone(this);
 }
 
-static bool AddEdgesForMarkQueue(GCMarker& marker) {
+bool GCRuntime::addEdgesForMarkQueue() {
 #ifdef DEBUG
   // For testing only.
   //
@@ -675,8 +687,8 @@ static bool AddEdgesForMarkQueue(GCMarker& marker) {
   // follow the sweep group ordering. These objects will wait until their sweep
   // group comes up, or will be skipped if their sweep group is already past.
   JS::Zone* prevZone = nullptr;
-  for (size_t i = 0; i < marker.markQueue.length(); i++) {
-    Value val = marker.markQueue[i].get();
+  for (size_t i = 0; i < testMarkQueue.length(); i++) {
+    Value val = testMarkQueue[i].get();
     if (!val.isObject()) {
       continue;
     }
@@ -703,7 +715,7 @@ bool GCRuntime::findSweepGroupEdges() {
     }
   }
 
-  if (!AddEdgesForMarkQueue(marker)) {
+  if (!addEdgesForMarkQueue()) {
     return false;
   }
 
@@ -871,11 +883,22 @@ static JSObject* NextIncomingCrossCompartmentPointer(JSObject* prev,
   return next;
 }
 
-void js::gc::DelayCrossCompartmentGrayMarking(JSObject* src) {
+void js::gc::DelayCrossCompartmentGrayMarking(GCMarker* maybeMarker,
+                                              JSObject* src) {
+  MOZ_ASSERT_IF(!maybeMarker, !JS::RuntimeHeapIsBusy());
   MOZ_ASSERT(IsGrayListObject(src));
   MOZ_ASSERT(src->isMarkedGray());
 
   AutoTouchingGrayThings tgt;
+
+  mozilla::Maybe<AutoLockGC> lock;
+  if (maybeMarker && maybeMarker->isParallelMarking()) {
+    // Synchronize access to JSCompartment::gcIncomingGrayPointers.
+    //
+    // TODO: Instead of building this list we could scan all incoming CCWs and
+    // mark through gray ones when marking gray roots for a sweep group.
+    lock.emplace(maybeMarker->runtime());
+  }
 
   /* Called from MarkCrossCompartmentXXX functions. */
   unsigned slot = ProxyObject::grayLinkReservedSlot(src);
@@ -908,7 +931,7 @@ void js::gc::DelayCrossCompartmentGrayMarking(JSObject* src) {
 }
 
 void GCRuntime::markIncomingGrayCrossCompartmentPointers() {
-  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP_MARK_INCOMING_GRAY);
+  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_INCOMING_GRAY);
 
   for (SweepGroupCompartmentsIter c(rt); !c.done(); c.next()) {
     MOZ_ASSERT(c->zone()->isGCMarkingBlackAndGray());
@@ -923,7 +946,7 @@ void GCRuntime::markIncomingGrayCrossCompartmentPointers() {
                     dst->asTenured().isMarkedBlack());
 
       if (src->asTenured().isMarkedGray()) {
-        TraceManuallyBarrieredEdge(&marker, &dst,
+        TraceManuallyBarrieredEdge(marker().tracer(), &dst,
                                    "cross-compartment gray pointer");
       }
     }
@@ -1039,10 +1062,10 @@ void js::NotifyGCPostSwap(JSObject* a, JSObject* b, unsigned removedFlags) {
    * either of them were in our gray pointer list, we re-add them again.
    */
   if (removedFlags & JS_GC_SWAP_OBJECT_A_REMOVED) {
-    DelayCrossCompartmentGrayMarking(b);
+    DelayCrossCompartmentGrayMarking(nullptr, b);
   }
   if (removedFlags & JS_GC_SWAP_OBJECT_B_REMOVED) {
-    DelayCrossCompartmentGrayMarking(a);
+    DelayCrossCompartmentGrayMarking(nullptr, a);
   }
 }
 
@@ -1067,12 +1090,16 @@ static inline void MaybeCheckWeakMapMarking(GCRuntime* gc) {
 
 IncrementalProgress GCRuntime::beginMarkingSweepGroup(JS::GCContext* gcx,
                                                       SliceBudget& budget) {
+#ifdef DEBUG
   MOZ_ASSERT(!markOnBackgroundThreadDuringSweeping);
-  MOZ_ASSERT(marker.isDrained());
-  MOZ_ASSERT(marker.markColor() == MarkColor::Black);
+  assertNoMarkingWork();
+  for (auto& marker : markers) {
+    MOZ_ASSERT(marker->markColor() == MarkColor::Black);
+  }
   MOZ_ASSERT(cellsToAssertNotGray.ref().empty());
+#endif
 
-  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP_MARK);
+  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK);
 
   // Change state of current group to MarkBlackAndGray to restrict gray marking
   // to this group. Note that there may be pointers to the atoms zone, and these
@@ -1082,7 +1109,7 @@ IncrementalProgress GCRuntime::beginMarkingSweepGroup(JS::GCContext* gcx,
     zone->changeGCState(zone->initialMarkingState(), Zone::MarkBlackAndGray);
   }
 
-  AutoSetMarkColor setColorGray(marker, MarkColor::Gray);
+  AutoSetMarkColor setColorGray(marker(), MarkColor::Gray);
 
   // Mark incoming gray pointers from previously swept compartments.
   markIncomingGrayCrossCompartmentPointers();
@@ -1092,19 +1119,19 @@ IncrementalProgress GCRuntime::beginMarkingSweepGroup(JS::GCContext* gcx,
 
 IncrementalProgress GCRuntime::markGrayRootsInCurrentGroup(
     JS::GCContext* gcx, SliceBudget& budget) {
-  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP_MARK);
+  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK);
 
-  AutoSetMarkColor setColorGray(marker, MarkColor::Gray);
+  AutoSetMarkColor setColorGray(marker(), MarkColor::Gray);
 
-  return markGrayRoots<SweepGroupZonesIter>(
-      budget, gcstats::PhaseKind::SWEEP_MARK_GRAY);
+  return markGrayRoots<SweepGroupZonesIter>(budget,
+                                            gcstats::PhaseKind::MARK_GRAY);
 }
 
 IncrementalProgress GCRuntime::markGray(JS::GCContext* gcx,
                                         SliceBudget& budget) {
-  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP_MARK);
+  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK);
 
-  if (markUntilBudgetExhausted(budget) == NotFinished) {
+  if (markUntilBudgetExhausted(budget, AllowParallelMarking) == NotFinished) {
     return NotFinished;
   }
 
@@ -1113,26 +1140,29 @@ IncrementalProgress GCRuntime::markGray(JS::GCContext* gcx,
 
 IncrementalProgress GCRuntime::endMarkingSweepGroup(JS::GCContext* gcx,
                                                     SliceBudget& budget) {
+#ifdef DEBUG
   MOZ_ASSERT(!markOnBackgroundThreadDuringSweeping);
-  MOZ_ASSERT(marker.isDrained());
-
-  MOZ_ASSERT(marker.markColor() == MarkColor::Black);
+  assertNoMarkingWork();
+  for (auto& marker : markers) {
+    MOZ_ASSERT(marker->markColor() == MarkColor::Black);
+  }
   MOZ_ASSERT(!HasIncomingCrossCompartmentPointers(rt));
+#endif
 
-  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP_MARK);
+  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK);
 
   if (markWeakReferencesInCurrentGroup(budget) == NotFinished) {
     return NotFinished;
   }
 
-  AutoSetMarkColor setColorGray(marker, MarkColor::Gray);
+  AutoSetMarkColor setColorGray(marker(), MarkColor::Gray);
 
   // Mark transitively inside the current compartment group.
   if (markWeakReferencesInCurrentGroup(budget) == NotFinished) {
     return NotFinished;
   }
 
-  MOZ_ASSERT(marker.isDrained());
+  MOZ_ASSERT(marker().isDrained());
 
   // We must not yield after this point before we start sweeping the group.
   safeToYield = false;
@@ -1209,8 +1239,11 @@ void GCRuntime::sweepMisc() {
   for (SweepGroupRealmsIter r(this); !r.done(); r.next()) {
     AutoSetThreadIsSweeping threadIsSweeping(r->zone());
     r->traceWeakSavedStacks(&trc);
-    r->traceWeakObjectRealm(&trc);
     r->traceWeakRegExps(&trc);
+  }
+  for (SweepGroupCompartmentsIter c(this); !c.done(); c.next()) {
+    AutoSetThreadIsSweeping threadIsSweeping(c->zone());
+    c->traceWeakNativeIterators(&trc);
   }
 }
 
@@ -1469,10 +1502,6 @@ IncrementalProgress GCRuntime::beginSweepingSweepGroup(JS::GCContext* gcx,
     }
   }
 
-#ifdef JS_GC_ZEAL
-  validateIncrementalMarking();
-#endif
-
 #ifdef DEBUG
   for (auto cell : cellsToAssertNotGray.ref()) {
     JS::AssertCellIsNotGray(cell);
@@ -1487,6 +1516,10 @@ IncrementalProgress GCRuntime::beginSweepingSweepGroup(JS::GCContext* gcx,
     AutoPhase ap(stats(), PhaseKind::UPDATE_ATOMS_BITMAP);
     updateAtomsBitmap();
   }
+
+#ifdef JS_GC_ZEAL
+  validateIncrementalMarking();
+#endif
 
   AutoSetThreadIsSweeping threadIsSweeping;
 
@@ -1594,7 +1627,7 @@ IncrementalProgress GCRuntime::endSweepingSweepGroup(JS::GCContext* gcx,
     return NotFinished;
   }
 
-  MOZ_ASSERT(marker.isDrained());
+  assertNoMarkingWork();
 
   // Disable background marking during sweeping until we start sweeping the next
   // zone group.
@@ -1644,20 +1677,18 @@ IncrementalProgress GCRuntime::markDuringSweeping(JS::GCContext* gcx,
                                                   SliceBudget& budget) {
   MOZ_ASSERT(markTask.isIdle());
 
-  if (marker.isDrained()) {
-    return Finished;
-  }
-
   if (markOnBackgroundThreadDuringSweeping) {
-    AutoLockHelperThreadState lock;
-    MOZ_ASSERT(markTask.isIdle(lock));
-    markTask.setBudget(budget);
-    markTask.startOrRunIfIdle(lock);
+    if (!marker().isDrained() || hasDelayedMarking()) {
+      AutoLockHelperThreadState lock;
+      MOZ_ASSERT(markTask.isIdle(lock));
+      markTask.setBudget(budget);
+      markTask.startOrRunIfIdle(lock);
+    }
     return Finished;  // This means don't yield to the mutator here.
   }
 
-  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::SWEEP_MARK);
-  return markUntilBudgetExhausted(budget);
+  gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK);
+  return markUntilBudgetExhausted(budget, AllowParallelMarking);
 }
 
 void GCRuntime::beginSweepPhase(JS::GCReason reason, AutoGCSession& session) {
@@ -1717,15 +1748,15 @@ bool GCRuntime::foregroundFinalize(JS::GCContext* gcx, Zone* zone,
 }
 
 BackgroundMarkTask::BackgroundMarkTask(GCRuntime* gc)
-    : GCParallelTask(gc, gcstats::PhaseKind::SWEEP_MARK),
+    : GCParallelTask(gc, gcstats::PhaseKind::MARK, GCUse::Marking),
       budget(SliceBudget::unlimited()) {}
 
 void js::gc::BackgroundMarkTask::run(AutoLockHelperThreadState& lock) {
   AutoUnlockHelperThreadState unlock(lock);
 
   // Time reporting is handled separately for parallel tasks.
-  gc->sweepMarkResult =
-      gc->markUntilBudgetExhausted(this->budget, GCMarker::DontReportMarkTime);
+  gc->sweepMarkResult = gc->markUntilBudgetExhausted(
+      this->budget, GCRuntime::SingleThreadedMarking, DontReportMarkTime);
 }
 
 IncrementalProgress GCRuntime::joinBackgroundMarkTask() {
@@ -2256,8 +2287,13 @@ IncrementalProgress GCRuntime::performSweepActions(SliceBudget& budget) {
   // starting sweeping a sweep group but in that case the stack must be empty
   // already.
 
+#ifdef DEBUG
   MOZ_ASSERT(initialState <= State::Sweep);
-  MOZ_ASSERT_IF(initialState != State::Sweep, marker.isDrained());
+  if (initialState != State::Sweep) {
+    assertNoMarkingWork();
+  }
+#endif
+
   if (initialState == State::Sweep &&
       markDuringSweeping(gcx, budget) == NotFinished) {
     return NotFinished;

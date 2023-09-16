@@ -67,6 +67,9 @@ class RegExp final : public AllStatic {
   // Whether the irregexp engine generates interpreter bytecode.
   static bool CanGenerateBytecode();
 
+  // Verify that the given flags combination is valid.
+  V8_EXPORT_PRIVATE static bool VerifyFlags(RegExpFlags flags);
+
   // Verify the given pattern, i.e. check that parsing succeeds. If
   // verification fails, `regexp_error_out` is set.
   template <class CharT>
@@ -152,6 +155,7 @@ class RegExp final : public AllStatic {
   V8_WARN_UNUSED_RESULT
   static MaybeHandle<Object> ThrowRegExpException(Isolate* isolate,
                                                   Handle<JSRegExp> re,
+                                                  RegExpFlags flags,
                                                   Handle<String> pattern,
                                                   RegExpError error);
   static void ThrowRegExpException(Isolate* isolate, Handle<JSRegExp> re,

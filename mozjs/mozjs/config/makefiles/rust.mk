@@ -41,9 +41,7 @@ endif
 # of cargo when running via `mach`.
 ifdef MACH_STDOUT_ISATTY
 ifeq (,$(findstring --color,$(cargo_build_flags)))
-ifeq (WINNT,$(HOST_OS_ARCH))
-# Bug 1417003: color codes are non-trivial on Windows.  For now,
-# prefer black and white to broken color codes.
+ifdef NO_ANSI
 cargo_build_flags += --color=never
 else
 cargo_build_flags += --color=always
@@ -94,7 +92,7 @@ ifndef rustflags_sancov
 # Never enable when coverage is enabled to work around https://github.com/rust-lang/rust/issues/90045.
 ifndef MOZ_CODE_COVERAGE
 ifeq (,$(findstring gkrust_gtest,$(RUST_LIBRARY_FILE)))
-cargo_rustc_flags += -Clto
+cargo_rustc_flags += -Clto$(if $(filter full,$(MOZ_LTO_RUST_CROSS)),=fat)
 endif
 # We need -Cembed-bitcode=yes for all crates when using -Clto.
 RUSTFLAGS += -Cembed-bitcode=yes
@@ -164,7 +162,7 @@ rust_host_cc_env_name := $(subst -,_,$(RUST_HOST_TARGET))
 # moment.
 export CC_$(rust_host_cc_env_name)=$(filter-out $(HOST_CC_BASE_FLAGS),$(HOST_CC))
 export CXX_$(rust_host_cc_env_name)=$(filter-out $(HOST_CXX_BASE_FLAGS),$(HOST_CXX))
-# We don't have a HOST_AR. If rust needs one, assume it's going to pick an appropriate one.
+export AR_$(rust_host_cc_env_name)=$(HOST_AR)
 
 rust_cc_env_name := $(subst -,_,$(RUST_TARGET))
 
@@ -251,13 +249,13 @@ endif
 ifndef RUSTC_BOOTSTRAP
 RUSTC_BOOTSTRAP := mozglue_static,qcms
 ifdef MOZ_RUST_SIMD
-RUSTC_BOOTSTRAP := $(RUSTC_BOOTSTRAP),encoding_rs,packed_simd_2
+RUSTC_BOOTSTRAP := $(RUSTC_BOOTSTRAP),encoding_rs,packed_simd
 endif
 export RUSTC_BOOTSTRAP
 endif
 
-target_rust_ltoable := force-cargo-library-build
-target_rust_nonltoable := force-cargo-test-run force-cargo-library-check $(foreach b,build check,force-cargo-program-$(b))
+target_rust_ltoable := force-cargo-library-build $(ADD_RUST_LTOABLE)
+target_rust_nonltoable := force-cargo-test-run force-cargo-program-build
 
 ifdef MOZ_PGO_RUST
 ifdef MOZ_PROFILE_GENERATE
@@ -282,13 +280,16 @@ rust_pgo_flags := -C profile-use=$(PGO_PROFILE_PATH)
 endif
 endif
 
-$(target_rust_ltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) $(RUSTFLAGS) $(if $(MOZ_LTO_RUST_CROSS),-Clinker-plugin-lto) $(rust_pgo_flags)
+$(target_rust_ltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) $(RUSTFLAGS) $(rust_pgo_flags) \
+								$(if $(MOZ_LTO_RUST_CROSS),\
+								    -Clinker-plugin-lto \
+									,)
 $(target_rust_nonltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) $(RUSTFLAGS)
 
 TARGET_RECIPES := $(target_rust_ltoable) $(target_rust_nonltoable)
 
 HOST_RECIPES := \
-  $(foreach a,library program,$(foreach b,build check,force-cargo-host-$(a)-$(b)))
+  $(foreach a,library program,$(foreach b,build check udeps clippy,force-cargo-host-$(a)-$(b)))
 
 $(HOST_RECIPES): RUSTFLAGS:=$(rustflags_override)
 
@@ -302,9 +303,19 @@ endif
 # We use the + prefix to pass down the jobserver fds to cargo, but we
 # don't use the prefix when make -n is used, so that cargo doesn't run
 # in that case)
-define RUN_CARGO
-$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)$(CARGO) $(1) $(cargo_build_flags)
+define RUN_CARGO_INNER
+$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)$(CARGO) $(1) $(cargo_build_flags) $(CARGO_EXTRA_FLAGS) $(cargo_extra_cli_flags)
 endef
+
+ifdef CARGO_CONTINUE_ON_ERROR
+define RUN_CARGO
+-$(RUN_CARGO_INNER)
+endef
+else
+define RUN_CARGO
+$(RUN_CARGO_INNER)
+endef
+endif
 
 # This function is intended to be called by:
 #
@@ -317,13 +328,10 @@ define CARGO_BUILD
 $(call RUN_CARGO,rustc)
 endef
 
-define CARGO_CHECK
-$(call RUN_CARGO,check)
-endef
-
 cargo_host_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_HOST_TARGET))_LINKER
 cargo_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_TARGET))_LINKER
 
+export MOZ_CLANG_NEWER_THAN_RUSTC_LLVM
 export MOZ_CARGO_WRAP_LDFLAGS
 export MOZ_CARGO_WRAP_LD
 export MOZ_CARGO_WRAP_LD_CXX
@@ -432,7 +440,10 @@ force-cargo-library-build:
 	$(REPORT_BUILD)
 	$(call CARGO_BUILD) --lib $(cargo_target_flag) $(rust_features_flag) -- $(cargo_rustc_flags)
 
-$(RUST_LIBRARY_FILE): force-cargo-library-build
+RUST_LIBRARY_DEP_FILE := $(basename $(RUST_LIBRARY_FILE)).d
+RUST_LIBRARY_DEPS := $(wordlist 2, 10000000, $(if $(wildcard $(RUST_LIBRARY_DEP_FILE)),$(shell cat $(RUST_LIBRARY_DEP_FILE))))
+$(RUST_LIBRARY_FILE): $(CARGO_FILE) $(if $(RUST_LIBRARY_DEPS),$(RUST_LIBRARY_DEPS), force-cargo-library-build)
+	$(if $(RUST_LIBRARY_DEPS),+$(MAKE) force-cargo-library-build,:)
 # When we are building in --enable-release mode; we add an additional check to confirm
 # that we are not importing any networking-related functions in rust code. This reduces
 # the chance of proxy bypasses originating from rust code.
@@ -450,11 +461,27 @@ endif
 endif
 endif
 
-force-cargo-library-check:
-	$(call CARGO_CHECK) --lib $(cargo_target_flag) $(rust_features_flag)
+define make_default_rule
+$(1):
+
+endef
+$(foreach dep, $(filter %.h,$(RUST_LIBRARY_DEPS)),$(eval $(call make_default_rule,$(dep))))
+
+
+SUGGEST_INSTALL_ON_FAILURE = (ret=$$?; if [ $$ret = 101 ]; then echo If $1 is not installed, install it using: cargo install $1; fi; exit $$ret)
+
+ifndef CARGO_NO_AUTO_ARG
+force-cargo-library-%:
+	$(call RUN_CARGO,$*) --lib $(cargo_target_flag) $(rust_features_flag) || $(call SUGGEST_INSTALL_ON_FAILURE,cargo-$*)
 else
-force-cargo-library-check:
+force-cargo-library-%:
+	$(call RUN_CARGO,$*) || $(call SUGGEST_INSTALL_ON_FAILURE,cargo-$*)
+endif
+
+else
+force-cargo-library-%:
 	@true
+
 endif # RUST_LIBRARY_FILE
 
 ifdef RUST_TESTS
@@ -485,10 +512,16 @@ force-cargo-host-library-build:
 
 $(HOST_RUST_LIBRARY_FILE): force-cargo-host-library-build ;
 
-force-cargo-host-library-check:
-	$(call CARGO_CHECK) --lib $(cargo_host_flag) $(host_rust_features_flag)
+ifndef CARGO_NO_AUTO_ARG
+force-cargo-host-library-%:
+	$(call RUN_CARGO,$*) --lib $(cargo_host_flag) $(host_rust_features_flag)
 else
-force-cargo-host-library-check:
+force-cargo-host-library-%:
+	$(call RUN_CARGO,$*) --lib $(filter-out --release $(cargo_host_flag)) $(host_rust_features_flag)
+endif
+
+else
+force-cargo-host-library-%:
 	@true
 endif # HOST_RUST_LIBRARY_FILE
 
@@ -498,12 +531,39 @@ force-cargo-program-build: $(call resfile,module)
 	$(REPORT_BUILD)
 	$(call CARGO_BUILD) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag) -- $(addprefix -C link-arg=$(CURDIR)/,$(call resfile,module)) $(CARGO_RUSTCFLAGS)
 
-$(RUST_PROGRAMS): force-cargo-program-build ;
+# RUST_PROGRAM_DEPENDENCIES(RUST_PROGRAM)
+# Generates a rule suitable to rebuild RUST_PROGRAM only if its dependencies are
+# obsolete.
+# It relies on the fact that upon build, cargo generates a dependency file named
+# `$(RUST_PROGRAM).d'. Unfortunately the lhs of the rule has an absolute path,
+# so we extract it under the name $(RUST_PROGRAM)_deps below.
+#
+# If the dependencies are empty, the file was not created so we force a rebuild.
+# Otherwise we add it to the dependency list.
+#
+# The actual rule is a bit tricky. The `+' prefix allow for recursive parallel
+# make, and it's skipped (`:') if we already triggered a rebuild as part of the
+# dependency chain.
+#
+define RUST_PROGRAM_DEPENDENCIES
+$(1)_deps := $(wordlist 2, 10000000, $(if $(wildcard $(1).d),$(shell cat $(1).d)))
+$(1): $(CARGO_FILE) $(call resfile,module) $(if $$($(1)_deps),$$($(1)_deps),force-cargo-program-build)
+	$(if $$($(1)_deps),+$(MAKE) force-cargo-program-build,:)
+$(foreach dep,$(filter %.h,$$($(1)_deps)),$(eval $(call make_default_rule,$(dep))))
+endef
 
-force-cargo-program-check:
-	$(call CARGO_CHECK) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
+$(foreach RUST_PROGRAM,$(RUST_PROGRAMS), $(eval $(call RUST_PROGRAM_DEPENDENCIES,$(RUST_PROGRAM))))
+
+ifndef CARGO_NO_AUTO_ARG
+force-cargo-program-%:
+	$(call RUN_CARGO,$*) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
 else
-force-cargo-program-check:
+force-cargo-program-%:
+	$(call RUN_CARGO,$*)
+endif
+
+else
+force-cargo-program-%:
 	@true
 endif # RUST_PROGRAMS
 ifdef HOST_RUST_PROGRAMS
@@ -514,10 +574,17 @@ force-cargo-host-program-build:
 
 $(HOST_RUST_PROGRAMS): force-cargo-host-program-build ;
 
-force-cargo-host-program-check:
+ifndef CARGO_NO_AUTO_ARG
+force-cargo-host-program-%:
 	$(REPORT_BUILD)
-	$(call CARGO_CHECK) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
+	$(call RUN_CARGO,$*) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
 else
-force-cargo-host-program-check:
+force-cargo-host-program-%:
+	$(call RUN_CARGO,$*) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(filter-out --release $(cargo_target_flag))
+endif
+
+else
+force-cargo-host-program-%:
 	@true
+
 endif # HOST_RUST_PROGRAMS

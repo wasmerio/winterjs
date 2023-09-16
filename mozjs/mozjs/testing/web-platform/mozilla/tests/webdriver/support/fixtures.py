@@ -1,12 +1,13 @@
+import json
 import os
 import socket
+import subprocess
 import time
 from contextlib import suppress
 from urllib.parse import urlparse
 
 import pytest
 import webdriver
-from mozprocess import ProcessHandler
 from mozprofile import Profile
 from mozrunner import FirefoxRunner
 
@@ -46,8 +47,10 @@ def browser(full_configuration):
             # to create a new instance for the provided preferences.
             current_browser.quit()
 
+        binary = full_configuration["browser"]["binary"]
         firefox_options = full_configuration["capabilities"]["moz:firefoxOptions"]
         current_browser = Browser(
+            binary,
             firefox_options,
             use_bidi=use_bidi,
             use_cdp=use_cdp,
@@ -102,6 +105,7 @@ def geckodriver(configuration):
 class Browser:
     def __init__(
         self,
+        binary,
         firefox_options,
         use_bidi=False,
         use_cdp=False,
@@ -116,6 +120,7 @@ class Browser:
         self.extra_prefs = extra_prefs
 
         self.debugger_address = None
+        self.remote_agent_host = None
         self.remote_agent_port = None
 
         # Prepare temporary profile
@@ -131,14 +136,11 @@ class Browser:
             with suppress(FileNotFoundError):
                 os.remove(self.cdp_port_file)
         if use_bidi:
-            self.bidi_port_file = os.path.join(
-                self.profile.profile, "WebDriverBiDiActivePort"
+            self.webdriver_bidi_file = os.path.join(
+                self.profile.profile, "WebDriverBiDiServer.json"
             )
             with suppress(FileNotFoundError):
-                os.remove(self.bidi_port_file)
-
-        # Prepare Firefox runner
-        binary = firefox_options["binary"]
+                os.remove(self.webdriver_bidi_file)
 
         cmdargs = ["-no-remote"]
         if self.use_bidi or self.use_cdp:
@@ -158,12 +160,14 @@ class Browser:
         self.runner.start()
 
         if self.use_bidi:
-            # Wait until the WebDriverBiDiActivePort file is ready
-            while not os.path.exists(self.bidi_port_file):
+            # Wait until the WebDriverBiDiServer.json file is ready
+            while not os.path.exists(self.webdriver_bidi_file):
                 time.sleep(0.1)
 
-            # Read the port from the WebDriverBiDiActivePort file
-            self.remote_agent_port = int(open(self.bidi_port_file).read())
+            # Read the connection details from file
+            data = json.loads(open(self.webdriver_bidi_file).read())
+            self.remote_agent_host = data["ws_host"]
+            self.remote_agent_port = int(data["ws_port"])
 
         if self.use_cdp:
             # Wait until the DevToolsActivePort file is ready
@@ -218,25 +222,22 @@ class Geckodriver:
             + self.extra_args
         )
 
-        def processOutputLine(line):
-            print(line)
-
-        print(f"Running command: {self.command}")
-        self.proc = ProcessHandler(
-            self.command, processOutputLine=processOutputLine, universal_newlines=True
-        )
-        self.proc.run()
+        print(f"Running command: {' '.join(self.command)}")
+        self.proc = subprocess.Popen(self.command)
 
         # Wait for the port to become ready
         end_time = time.time() + 10
         while time.time() < end_time:
-            if self.proc.poll() is not None:
-                raise Exception(f"geckodriver terminated with code {self.proc.poll()}")
+            returncode = self.proc.poll()
+            if returncode is not None:
+                raise ChildProcessError(
+                    f"geckodriver terminated with code {returncode}"
+                )
             with socket.socket() as sock:
                 if sock.connect_ex((self.hostname, self.port)) == 0:
                     break
         else:
-            raise Exception(
+            raise ConnectionRefusedError(
                 f"Failed to connect to geckodriver on {self.hostname}:{self.port}"
             )
 

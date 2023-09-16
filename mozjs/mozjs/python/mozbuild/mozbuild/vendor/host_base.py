@@ -2,16 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import os
-import tempfile
 import subprocess
+import tempfile
+import urllib
 
 
 class BaseHost:
     def __init__(self, manifest):
         self.manifest = manifest
+        self.repo_url = urllib.parse.urlparse(self.manifest["vendoring"]["url"])
 
     def upstream_tag(self, revision):
         """Temporarily clone the repo to get the latest tag and timestamp"""
@@ -33,21 +33,34 @@ class BaseHost:
                 check=True,
             )
             os.chdir("/".join([temp_repo_clone, self.manifest["origin"]["name"]]))
-            latest_tag = subprocess.run(
-                ["git", "--no-pager", "tag", "--sort=creatordate"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                check=True,
-            ).stdout.splitlines()[-1]
-            latest_tag_timestamp = subprocess.run(
+            if revision == "HEAD":
+                tag = subprocess.run(
+                    ["git", "--no-pager", "tag", "--sort=creatordate"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    check=True,
+                ).stdout.splitlines()[-1]
+            else:
+                try:
+                    tag = subprocess.run(
+                        ["git", "--no-pager", "tag", "-l", revision],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        universal_newlines=True,
+                        check=True,
+                    ).stdout.splitlines()[-1]
+                except IndexError:  # 0 lines of output, the tag does not exist
+                    raise Exception(f"Requested tag {revision} not found in source.")
+
+            tag_timestamp = subprocess.run(
                 [
                     "git",
                     "log",
                     "-1",
                     "--date=iso8601-strict",
                     "--format=%ad",
-                    latest_tag,
+                    tag,
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -55,7 +68,10 @@ class BaseHost:
                 check=True,
             ).stdout.splitlines()[-1]
             os.chdir(starting_directory)
-            return (latest_tag, latest_tag_timestamp)
+            return tag, tag_timestamp
 
     def upstream_snapshot(self, revision):
-        raise Exception("Should not be called")
+        raise Exception("Unimplemented for this subclass...")
+
+    def upstream_path_to_file(self, revision, filepath):
+        raise Exception("Unimplemented for this subclass...")

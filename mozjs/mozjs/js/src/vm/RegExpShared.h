@@ -31,6 +31,7 @@
 namespace js {
 
 class ArrayObject;
+class PlainObject;
 class RegExpRealm;
 class RegExpShared;
 class RegExpStatics;
@@ -84,7 +85,7 @@ class RegExpShared
   friend class RegExpZone;
 
   struct RegExpCompilation {
-    WeakHeapPtr<jit::JitCode*> jitCode;
+    HeapPtr<jit::JitCode*> jitCode;
     ByteCode* byteCode = nullptr;
 
     bool compiled(CodeKind kind = CodeKind::Any) const {

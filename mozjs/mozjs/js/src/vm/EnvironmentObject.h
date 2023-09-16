@@ -30,8 +30,8 @@ class ModuleObject;
  * Return a shape representing the static scope containing the variable
  * accessed by the ALIASEDVAR op at 'pc'.
  */
-extern Shape* EnvironmentCoordinateToEnvironmentShape(JSScript* script,
-                                                      jsbytecode* pc);
+extern SharedShape* EnvironmentCoordinateToEnvironmentShape(JSScript* script,
+                                                            jsbytecode* pc);
 
 // Return the name being accessed by the given ALIASEDVAR op. This function is
 // relatively slow so it should not be used on hot paths.
@@ -463,7 +463,7 @@ class CallObject : public EnvironmentObject {
   static constexpr uint32_t CALLEE_SLOT = 1;
 
   static CallObject* create(JSContext* cx, HandleScript script,
-                            HandleObject enclosing, gc::InitialHeap heap);
+                            HandleObject enclosing, gc::Heap heap);
 
  public:
   static const JSClass class_;
@@ -477,7 +477,7 @@ class CallObject : public EnvironmentObject {
    * Construct a bare-bones call object given a shape.
    * The call object must be further initialized to be usable.
    */
-  static CallObject* createWithShape(JSContext* cx, Handle<Shape*> shape);
+  static CallObject* createWithShape(JSContext* cx, Handle<SharedShape*> shape);
 
   static CallObject* createTemplateObject(JSContext* cx, HandleScript script,
                                           HandleObject enclosing);
@@ -520,13 +520,12 @@ class VarEnvironmentObject : public EnvironmentObject {
   static constexpr uint32_t SCOPE_SLOT = 1;
 
   static VarEnvironmentObject* createInternal(JSContext* cx,
-                                              Handle<Shape*> shape,
+                                              Handle<SharedShape*> shape,
                                               HandleObject enclosing,
-                                              gc::InitialHeap heap);
+                                              gc::Heap heap);
 
   static VarEnvironmentObject* create(JSContext* cx, Handle<Scope*> scope,
-                                      HandleObject enclosing,
-                                      gc::InitialHeap heap);
+                                      HandleObject enclosing, gc::Heap heap);
 
   void initScope(Scope* scope) {
     initReservedSlot(SCOPE_SLOT, PrivateGCThingValue(scope));
@@ -677,9 +676,10 @@ class LexicalEnvironmentObject : public EnvironmentObject {
   static constexpr uint32_t RESERVED_SLOTS = 2;
 
  protected:
-  static LexicalEnvironmentObject* create(JSContext* cx, Handle<Shape*> shape,
+  static LexicalEnvironmentObject* create(JSContext* cx,
+                                          Handle<SharedShape*> shape,
                                           HandleObject enclosing,
-                                          gc::InitialHeap heap);
+                                          gc::Heap heap);
 
  public:
   // Is this the global lexical scope?
@@ -720,7 +720,7 @@ class BlockLexicalEnvironmentObject : public ScopedLexicalEnvironmentObject {
   static BlockLexicalEnvironmentObject* create(JSContext* cx,
                                                Handle<LexicalScope*> scope,
                                                HandleObject enclosing,
-                                               gc::InitialHeap heap);
+                                               gc::Heap heap);
 
  public:
   static constexpr ObjectFlags OBJECT_FLAGS = {ObjectFlag::NotExtensible};
@@ -755,8 +755,7 @@ class BlockLexicalEnvironmentObject : public ScopedLexicalEnvironmentObject {
 
 class NamedLambdaObject : public BlockLexicalEnvironmentObject {
   static NamedLambdaObject* create(JSContext* cx, HandleFunction callee,
-                                   HandleObject enclosing,
-                                   gc::InitialHeap heap);
+                                   HandleObject enclosing, gc::Heap heap);
 
  public:
   static NamedLambdaObject* createTemplateObject(JSContext* cx,
@@ -769,13 +768,17 @@ class NamedLambdaObject : public BlockLexicalEnvironmentObject {
 
   // For JITs.
   static size_t lambdaSlot();
+
+  static size_t offsetOfLambdaSlot() {
+    return getFixedSlotOffset(lambdaSlot());
+  }
 };
 
 class ClassBodyLexicalEnvironmentObject
     : public ScopedLexicalEnvironmentObject {
   static ClassBodyLexicalEnvironmentObject* create(
       JSContext* cx, Handle<ClassBodyScope*> scope, HandleObject enclosing,
-      gc::InitialHeap heap);
+      gc::Heap heap);
 
  public:
   static ClassBodyLexicalEnvironmentObject* createForFrame(
@@ -1230,7 +1233,7 @@ class DebugEnvironments {
    * environments.
    */
   typedef GCHashMap<WeakHeapPtr<JSObject*>, LiveEnvironmentVal,
-                    MovableCellHasher<WeakHeapPtr<JSObject*>>, ZoneAllocPolicy>
+                    StableCellHasher<WeakHeapPtr<JSObject*>>, ZoneAllocPolicy>
       LiveEnvironmentMap;
   LiveEnvironmentMap liveEnvs;
 

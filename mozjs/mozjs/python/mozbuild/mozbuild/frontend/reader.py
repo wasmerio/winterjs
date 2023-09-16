@@ -16,8 +16,6 @@ The BuildReader contains basic logic for traversing a tree of mozbuild files.
 It does this by examining specific variables populated during execution.
 """
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import ast
 import inspect
 import logging
@@ -27,54 +25,46 @@ import textwrap
 import time
 import traceback
 import types
-
-from collections import (
-    defaultdict,
-    OrderedDict,
-)
+from collections import OrderedDict, defaultdict
+from concurrent.futures.process import ProcessPoolExecutor
 from io import StringIO
 from itertools import chain
 from multiprocessing import cpu_count
+
+import mozpack.path as mozpath
 import six
+from mozpack.files import FileFinder
 from six import string_types
 
+from mozbuild.backend.configenvironment import ConfigEnvironment
+from mozbuild.base import ExecutionSummary
 from mozbuild.util import (
     EmptyValue,
     HierarchicalStringList,
-    memoize,
     ReadOnlyDefaultDict,
-)
-
-from mozbuild.backend.configenvironment import ConfigEnvironment
-
-from mozpack.files import FileFinder
-import mozpack.path as mozpath
-
-from .sandbox import (
-    default_finder,
-    SandboxError,
-    SandboxExecutionError,
-    SandboxLoadError,
-    Sandbox,
+    memoize,
 )
 
 from .context import (
+    DEPRECATION_HINTS,
+    FUNCTIONS,
+    SPECIAL_VARIABLES,
+    SUBCONTEXTS,
+    VARIABLES,
     Context,
     ContextDerivedValue,
     Files,
-    FUNCTIONS,
-    VARIABLES,
-    DEPRECATION_HINTS,
     SourcePath,
-    SPECIAL_VARIABLES,
-    SUBCONTEXTS,
     SubContext,
     TemplateContext,
 )
-
-from mozbuild.base import ExecutionSummary
-from concurrent.futures.process import ProcessPoolExecutor
-
+from .sandbox import (
+    Sandbox,
+    SandboxError,
+    SandboxExecutionError,
+    SandboxLoadError,
+    default_finder,
+)
 
 if six.PY2:
     type_type = types.TypeType
@@ -1076,7 +1066,7 @@ class BuildReader(object):
         This starts with a single mozbuild file, executes it, and descends into
         other referenced files per our traversal logic.
 
-        The traversal logic is to iterate over the *DIRS variables, treating
+        The traversal logic is to iterate over the ``*DIRS`` variables, treating
         each element as a relative directory path. For each encountered
         directory, we will open the moz.build file located in that
         directory in a new Sandbox and process it.
@@ -1148,7 +1138,7 @@ class BuildReader(object):
 
         self._read_files.add(path)
 
-        time_start = time.time()
+        time_start = time.monotonic()
 
         topobjdir = config.topobjdir
 
@@ -1166,7 +1156,7 @@ class BuildReader(object):
         context = Context(VARIABLES, config, self.finder)
         sandbox = MozbuildSandbox(context, metadata=metadata, finder=self.finder)
         sandbox.exec_file(path)
-        self._execution_time += time.time() - time_start
+        self._execution_time += time.monotonic() - time_start
         self._file_count += len(context.all_paths)
 
         # Yield main context before doing any processing. This gives immediate

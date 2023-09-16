@@ -1,15 +1,13 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-from __future__ import absolute_import
-
 import json
+import pathlib
 import tempfile
 import time
-import pathlib
 
-from mozperftest.test.browsertime import add_options
 from mozperftest.system.android import _ROOT_URL
+from mozperftest.test.browsertime import add_options
 from mozperftest.utils import (
     download_file,
     get_multi_tasks_url,
@@ -35,8 +33,8 @@ COMMON_OPTIONS = [
     ("firefox.android.intentArgument", URL),
 ]
 
-NIGHTLY_SIM_ROUTE = "mobile.v2.fenix.nightly-simulation"
-ROUTE_SUFFIX = "artifacts/public/build/{architecture}/target.apk"
+NIGHTLY_SIM_ROUTE = "mobile.v3.firefox-android.apks.fenix-nightly-simulation"
+ROUTE_SUFFIX = "artifacts/public/build/fenix/{architecture}/target.apk"
 
 build_generator = None
 

@@ -245,6 +245,10 @@ void MacroAssembler::sub64(Imm64 imm, Register64 dest) {
   ma_subu(dest.high, dest.high, imm.hi());
 }
 
+void MacroAssembler::mulHighUnsigned32(Imm32 imm, Register src, Register dest) {
+  MOZ_CRASH("NYI");
+}
+
 void MacroAssembler::mulPtr(Register rhs, Register srcDest) {
   as_mul(srcDest, srcDest, rhs);
 }
@@ -976,6 +980,11 @@ void MacroAssembler::branchTruncateFloat32MaybeModUint32(FloatRegister src,
   moveFromFloat32(ScratchFloat32Reg, dest);
   ma_ext(ScratchRegister, ScratchRegister, Assembler::CauseV, 1);
   ma_b(ScratchRegister, Imm32(0), fail, Assembler::NotEqual);
+}
+
+void MacroAssembler::branchTruncateDoubleToInt32(FloatRegister src,
+                                                 Register dest, Label* fail) {
+  convertDoubleToInt32(src, dest, fail, false);
 }
 
 //}}} check_macroassembler_style

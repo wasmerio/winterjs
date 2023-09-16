@@ -9,10 +9,8 @@
 #   not, an error message is printed, quoting ERROR_LOCATION, which should
 #   probably be the filename and line number of the erroneous call to
 #   check_source_count.py.
-from __future__ import absolute_import
-from __future__ import print_function
-import sys
 import re
+import sys
 
 search_string = sys.argv[1]
 expected_count = int(sys.argv[2])

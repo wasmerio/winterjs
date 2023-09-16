@@ -46,10 +46,13 @@ class MozlintParser(ArgumentParser):
         [
             ["-W", "--warnings"],
             {
+                "const": True,
+                "nargs": "?",
+                "choices": ["soft"],
                 "dest": "show_warnings",
-                "default": False,
-                "action": "store_true",
-                "help": "Display and fail on warnings in addition to errors.",
+                "help": "Display and fail on warnings in addition to errors. "
+                "--warnings=soft can be used to report warnings but only fail "
+                "on errors.",
             },
         ],
         [
@@ -363,7 +366,11 @@ def run(
                 return 1
             paths = lint.linters[0]["local_exclude"]
 
-        if not paths and Path.cwd() == Path(lint.root) and not (outgoing or workdir):
+        if (
+            not paths
+            and Path.cwd() == Path(lint.root)
+            and not (outgoing or workdir or rev)
+        ):
             print(
                 "warning: linting the entire repo takes a long time, using --outgoing and "
                 "--workdir instead. If you want to lint the entire repo, run `./mach lint .`"
@@ -406,6 +413,10 @@ def run(
         formatter = formatters.get(formatter_name)
 
         out = formatter(result)
+        # We do this only for `json` that is mostly used in automation
+        if not out and formatter_name == "json":
+            out = "{}"
+
         if out:
             fh = open(path, "w") if path else sys.stdout
 

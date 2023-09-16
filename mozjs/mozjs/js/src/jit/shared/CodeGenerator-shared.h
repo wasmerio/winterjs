@@ -31,11 +31,6 @@ class IonIC;
 
 class OutOfLineTruncateSlow;
 
-struct ReciprocalMulConstants {
-  int64_t multiplier;
-  int32_t shiftAmount;
-};
-
 class CodeGeneratorShared : public LElementVisitor {
   js::Vector<OutOfLineCode*, 0, SystemAllocPolicy> outOfLineCode_;
 
@@ -81,20 +76,16 @@ class CodeGeneratorShared : public LElementVisitor {
 
  protected:
   js::Vector<NativeToBytecode, 0, SystemAllocPolicy> nativeToBytecodeList_;
-  uint8_t* nativeToBytecodeMap_;
+  UniquePtr<uint8_t> nativeToBytecodeMap_;
   uint32_t nativeToBytecodeMapSize_;
   uint32_t nativeToBytecodeTableOffset_;
-  uint32_t nativeToBytecodeNumRegions_;
-
-  JSScript** nativeToBytecodeScriptList_;
-  uint32_t nativeToBytecodeScriptListLength_;
 
   bool isProfilerInstrumentationEnabled() {
     return gen->isProfilerInstrumentationEnabled();
   }
 
-  gc::InitialHeap initialStringHeap() const { return gen->initialStringHeap(); }
-  gc::InitialHeap initialBigIntHeap() const { return gen->initialBigIntHeap(); }
+  gc::Heap initialStringHeap() const { return gen->initialStringHeap(); }
+  gc::Heap initialBigIntHeap() const { return gen->initialBigIntHeap(); }
 
  protected:
   // The offset of the first instruction of the OSR entry block from the
@@ -211,9 +202,13 @@ class CodeGeneratorShared : public LElementVisitor {
   bool encodeSafepoints();
 
   // Fixup offsets of native-to-bytecode map.
-  bool createNativeToBytecodeScriptList(JSContext* cx);
-  bool generateCompactNativeToBytecodeMap(JSContext* cx, JitCode* code);
-  void verifyCompactNativeToBytecodeMap(JitCode* code);
+  bool createNativeToBytecodeScriptList(JSContext* cx,
+                                        IonEntry::ScriptList& scripts);
+  bool generateCompactNativeToBytecodeMap(JSContext* cx, JitCode* code,
+                                          IonEntry::ScriptList& scripts);
+  void verifyCompactNativeToBytecodeMap(JitCode* code,
+                                        const IonEntry::ScriptList& scripts,
+                                        uint32_t numRegions);
 
   // Mark the safepoint on |ins| as corresponding to the current assembler
   // location. The location should be just after a call.
@@ -362,8 +357,6 @@ class CodeGeneratorShared : public LElementVisitor {
 
  protected:
   void addIC(LInstruction* lir, size_t cacheIndex);
-
-  ReciprocalMulConstants computeDivisionConstants(uint32_t d, int maxLog);
 
  protected:
   bool generatePrologue();

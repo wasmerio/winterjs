@@ -9,8 +9,6 @@
 # New code should try to use the standard subprocess module, and only use
 # mozprocess if absolutely necessary.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import codecs
 import errno
 import io
@@ -19,16 +17,16 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime
 
 import six
-import time
 
 if six.PY2:
-    from Queue import Queue, Empty  # Python 2
+    from Queue import Empty, Queue  # Python 2
 else:
-    from queue import Queue, Empty  # Python 3
+    from queue import Empty, Queue  # Python 3
 
 __all__ = [
     "ProcessHandlerMixin",
@@ -48,15 +46,16 @@ isWin = os.name == "nt"
 isPosix = os.name == "posix"  # includes MacOS X
 
 if isWin:
-    from ctypes import sizeof, addressof, c_ulong, byref, WinError, c_longlong
+    from ctypes import WinError, addressof, byref, c_longlong, c_ulong, sizeof
+
     from . import winprocess
     from .qijo import (
-        JobObjectAssociateCompletionPortInformation,
+        IO_COUNTERS,
         JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
-        JobObjectExtendedLimitInformation,
         JOBOBJECT_BASIC_LIMIT_INFORMATION,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        IO_COUNTERS,
+        JobObjectAssociateCompletionPortInformation,
+        JobObjectExtendedLimitInformation,
     )
 
 
@@ -292,94 +291,25 @@ class ProcessHandlerMixin(object):
         if isWin:
             # Redefine the execute child so that we can track process groups
             def _execute_child(self, *args_tuple):
-                # workaround for bug 1670130
-                if sys.hexversion >= 0x03090000:  # after 3.9.0
-                    (
-                        args,
-                        executable,
-                        preexec_fn,
-                        close_fds,
-                        pass_fds,
-                        cwd,
-                        env,
-                        startupinfo,
-                        creationflags,
-                        shell,
-                        p2cread,
-                        p2cwrite,
-                        c2pread,
-                        c2pwrite,
-                        errread,
-                        errwrite,
-                        restore_signals,
-                        gid,
-                        gids,
-                        uid,
-                        umask,
-                        start_new_session,
-                    ) = args_tuple
-                elif six.PY3:
-                    (
-                        args,
-                        executable,
-                        preexec_fn,
-                        close_fds,
-                        pass_fds,
-                        cwd,
-                        env,
-                        startupinfo,
-                        creationflags,
-                        shell,
-                        p2cread,
-                        p2cwrite,
-                        c2pread,
-                        c2pwrite,
-                        errread,
-                        errwrite,
-                        restore_signals,
-                        start_new_session,
-                    ) = args_tuple
-                # workaround for bug 950894
-                elif sys.hexversion < 0x02070600:  # prior to 2.7.6
-                    (
-                        args,
-                        executable,
-                        preexec_fn,
-                        close_fds,
-                        cwd,
-                        env,
-                        universal_newlines,
-                        startupinfo,
-                        creationflags,
-                        shell,
-                        p2cread,
-                        p2cwrite,
-                        c2pread,
-                        c2pwrite,
-                        errread,
-                        errwrite,
-                    ) = args_tuple
-                    to_close = set()
-                else:  # 2.7.6 and later
-                    (
-                        args,
-                        executable,
-                        preexec_fn,
-                        close_fds,
-                        cwd,
-                        env,
-                        universal_newlines,
-                        startupinfo,
-                        creationflags,
-                        shell,
-                        to_close,
-                        p2cread,
-                        p2cwrite,
-                        c2pread,
-                        c2pwrite,
-                        errread,
-                        errwrite,
-                    ) = args_tuple
+                (
+                    args,
+                    executable,
+                    preexec_fn,
+                    close_fds,
+                    pass_fds,
+                    cwd,
+                    env,
+                    startupinfo,
+                    creationflags,
+                    shell,
+                    p2cread,
+                    p2cwrite,
+                    c2pread,
+                    c2pwrite,
+                    errread,
+                    errwrite,
+                    *_,
+                ) = args_tuple
                 if not isinstance(args, six.string_types):
                     args = subprocess.list2cmdline(args)
 

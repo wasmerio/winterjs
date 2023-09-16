@@ -134,25 +134,58 @@ ModuleGenerator::~ModuleGenerator() {
   }
 }
 
-bool ModuleGenerator::allocateGlobalBytes(uint32_t bytes, uint32_t align,
-                                          uint32_t* globalDataOffset) {
-  CheckedInt<uint32_t> newGlobalDataLength(metadata_->globalDataLength);
+// This is the highest offset into Instance::globalArea that will not overflow
+// a signed 32-bit integer.
+static const uint32_t MaxInstanceDataOffset =
+    INT32_MAX - Instance::offsetOfData();
 
-  newGlobalDataLength +=
-      ComputeByteAlignment(newGlobalDataLength.value(), align);
-  if (!newGlobalDataLength.isValid()) {
+bool ModuleGenerator::allocateInstanceDataBytes(uint32_t bytes, uint32_t align,
+                                                uint32_t* instanceDataOffset) {
+  CheckedInt<uint32_t> newInstanceDataLength(metadata_->instanceDataLength);
+
+  // Adjust the current global data length so that it's aligned to `align`
+  newInstanceDataLength +=
+      ComputeByteAlignment(newInstanceDataLength.value(), align);
+  if (!newInstanceDataLength.isValid()) {
     return false;
   }
 
-  *globalDataOffset = newGlobalDataLength.value();
-  newGlobalDataLength += bytes;
+  // The allocated data is given by the aligned length
+  *instanceDataOffset = newInstanceDataLength.value();
 
-  if (!newGlobalDataLength.isValid()) {
+  // Advance the length for `bytes` being allocated
+  newInstanceDataLength += bytes;
+  if (!newInstanceDataLength.isValid()) {
     return false;
   }
 
-  metadata_->globalDataLength = newGlobalDataLength.value();
+  // Check that the highest offset into this allocated space would not overflow
+  // a signed 32-bit integer.
+  if (newInstanceDataLength.value() > MaxInstanceDataOffset + 1) {
+    return false;
+  }
+
+  metadata_->instanceDataLength = newInstanceDataLength.value();
   return true;
+}
+
+bool ModuleGenerator::allocateInstanceDataBytesN(uint32_t bytes, uint32_t align,
+                                                 uint32_t count,
+                                                 uint32_t* instanceDataOffset) {
+  // The size of each allocation should be a multiple of alignment so that a
+  // contiguous array of allocations will be aligned
+  MOZ_ASSERT(bytes % align == 0);
+
+  // Compute the total bytes being allocated
+  CheckedInt<uint32_t> totalBytes = bytes;
+  totalBytes *= count;
+  if (!totalBytes.isValid()) {
+    return false;
+  }
+
+  // Allocate the bytes
+  return allocateInstanceDataBytes(totalBytes.value(), align,
+                                   instanceDataOffset);
 }
 
 bool ModuleGenerator::init(Metadata* maybeAsmJSMetadata) {
@@ -215,7 +248,7 @@ bool ModuleGenerator::init(Metadata* maybeAsmJSMetadata) {
       moduleEnv_->codeSection ? moduleEnv_->codeSection->size : 0;
 
   size_t estimatedCodeSize =
-      1.2 * EstimateCompiledCodeSize(tier(), codeSectionSize);
+      size_t(1.2 * EstimateCompiledCodeSize(tier(), codeSectionSize));
   (void)masm_.reserve(std::min(estimatedCodeSize, MaxCodeBytesPerProcess));
 
   (void)metadataTier_->codeRanges.reserve(2 * moduleEnv_->numFuncDefs());
@@ -228,97 +261,69 @@ bool ModuleGenerator::init(Metadata* maybeAsmJSMetadata) {
   (void)metadataTier_->trapSites[Trap::OutOfBounds].reserve(
       codeSectionSize / ByteCodesPerOOBTrap);
 
-  // Allocate space in Instance for declarations that need it.
+  // Allocate space in instance for declarations that need it
+  MOZ_ASSERT(metadata_->instanceDataLength == 0);
 
-  MOZ_ASSERT(metadata_->globalDataLength == 0);
-
-  for (size_t i = 0; i < moduleEnv_->funcImportGlobalDataOffsets.length();
-       i++) {
-    uint32_t globalDataOffset;
-    if (!allocateGlobalBytes(sizeof(FuncImportInstanceData), sizeof(void*),
-                             &globalDataOffset)) {
-      return false;
-    }
-
-    moduleEnv_->funcImportGlobalDataOffsets[i] = globalDataOffset;
-
-    if (!metadataTier_->funcImports.emplaceBack(
-            FuncImport(moduleEnv_->funcs[i].typeIndex, globalDataOffset))) {
-      return false;
-    }
+  // Allocate space for type definitions
+  if (!allocateInstanceDataBytesN(
+          sizeof(TypeDefInstanceData), alignof(TypeDefInstanceData),
+          moduleEnv_->types->length(), &moduleEnv_->typeDefsOffsetStart)) {
+    return false;
   }
+  metadata_->typeDefsOffsetStart = moduleEnv_->typeDefsOffsetStart;
 
-  for (TableDesc& table : moduleEnv_->tables) {
-    if (!allocateGlobalBytes(sizeof(TableInstanceData), sizeof(void*),
-                             &table.globalDataOffset)) {
-      return false;
-    }
-  }
-
-  for (TagDesc& tag : moduleEnv_->tags) {
-    if (!allocateGlobalBytes(sizeof(WasmTagObject*), sizeof(void*),
-                             &tag.globalDataOffset)) {
-      return false;
-    }
-  }
-
-  // Copy type definitions to metadata
-  if (!metadata_->types.resize(moduleEnv_->types->length())) {
+  // Allocate space for every function import
+  if (!allocateInstanceDataBytesN(
+          sizeof(FuncImportInstanceData), alignof(FuncImportInstanceData),
+          moduleEnv_->numFuncImports, &moduleEnv_->funcImportsOffsetStart)) {
     return false;
   }
 
-  for (uint32_t i = 0; i < moduleEnv_->types->length(); i++) {
-    const TypeDef& typeDef = (*moduleEnv_->types)[i];
-    if (!metadata_->types[i].clone(typeDef)) {
-      return false;
-    }
-  }
-
-  // Generate type id's for all types. This will be either an immediate that
-  // can be generated, or a slot in global data to load.
-  if (!metadata_->typeIds.resize(moduleEnv_->types->length())) {
+  // Allocate space for every table
+  if (!allocateInstanceDataBytesN(
+          sizeof(TableInstanceData), alignof(TableInstanceData),
+          moduleEnv_->tables.length(), &moduleEnv_->tablesOffsetStart)) {
     return false;
   }
+  metadata_->tablesOffsetStart = moduleEnv_->tablesOffsetStart;
 
-  // asm.js requires no signature checks to be emitted as every table only
-  // stores the same type of func, and so we leave each type id as 'none'.
-  if (!isAsmJS()) {
-    for (uint32_t i = 0; i < moduleEnv_->types->length(); i++) {
-      const TypeDef& typeDef = (*moduleEnv_->types)[i];
-
-      TypeIdDesc typeId;
-      if (TypeIdDesc::isGlobal(typeDef)) {
-        uint32_t globalDataOffset;
-        if (!allocateGlobalBytes(sizeof(void*), sizeof(void*),
-                                 &globalDataOffset)) {
-          return false;
-        }
-
-        typeId = TypeIdDesc::global(typeDef, globalDataOffset);
-      } else {
-        typeId = TypeIdDesc::immediate(typeDef);
-      }
-
-      moduleEnv_->typeIds[i] = typeId;
-      metadata_->typeIds[i] = typeId;
-    }
+  // Allocate space for every tag
+  if (!allocateInstanceDataBytesN(
+          sizeof(TagInstanceData), alignof(TagInstanceData),
+          moduleEnv_->tags.length(), &moduleEnv_->tagsOffsetStart)) {
+    return false;
   }
+  metadata_->tagsOffsetStart = moduleEnv_->tagsOffsetStart;
 
+  // Allocate space for every global that requires it
   for (GlobalDesc& global : moduleEnv_->globals) {
     if (global.isConstant()) {
       continue;
     }
 
-    uint32_t width =
-        global.isIndirect() ? sizeof(void*) : SizeOf(global.type());
+    uint32_t width = global.isIndirect() ? sizeof(void*) : global.type().size();
 
-    uint32_t globalDataOffset;
-    if (!allocateGlobalBytes(width, width, &globalDataOffset)) {
+    uint32_t instanceDataOffset;
+    if (!allocateInstanceDataBytes(width, width, &instanceDataOffset)) {
       return false;
     }
 
-    global.setOffset(globalDataOffset);
+    global.setOffset(instanceDataOffset);
   }
+
+  // Initialize function import metadata
+  if (!metadataTier_->funcImports.resize(moduleEnv_->numFuncImports)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < moduleEnv_->numFuncImports; i++) {
+    metadataTier_->funcImports[i] =
+        FuncImport(moduleEnv_->funcs[i].typeIndex,
+                   moduleEnv_->offsetOfFuncImportInstanceData(i));
+  }
+
+  // Share type definitions with metadata
+  metadata_->types = moduleEnv_->types;
 
   // Accumulate all exported functions:
   // - explicitly marked as such;
@@ -678,12 +683,8 @@ bool ModuleGenerator::linkCompiledCode(CompiledCode& code) {
     return tn->hasTryBody();
   };
   auto tryNoteOp = [=](uint32_t, TryNote* tn) { tn->offsetBy(offsetInModule); };
-  if (!AppendForEach(&metadataTier_->tryNotes, code.tryNotes, tryNoteFilter,
-                     tryNoteOp)) {
-    return false;
-  }
-
-  return true;
+  return AppendForEach(&metadataTier_->tryNotes, code.tryNotes, tryNoteFilter,
+                       tryNoteOp);
 }
 
 static bool ExecuteCompileTask(CompileTask* task, UniqueChars* error) {
@@ -692,14 +693,9 @@ static bool ExecuteCompileTask(CompileTask* task, UniqueChars* error) {
 
   switch (task->compilerEnv.tier()) {
     case Tier::Optimized:
-      switch (task->compilerEnv.optimizedBackend()) {
-        case OptimizedBackend::Ion:
-          if (!IonCompileFunctions(task->moduleEnv, task->compilerEnv,
-                                   task->lifo, task->inputs, &task->output,
-                                   error)) {
-            return false;
-          }
-          break;
+      if (!IonCompileFunctions(task->moduleEnv, task->compilerEnv, task->lifo,
+                               task->inputs, &task->output, error)) {
+        return false;
       }
       break;
     case Tier::Baseline:
@@ -841,13 +837,7 @@ bool ModuleGenerator::compileFuncDef(uint32_t funcIndex,
       threshold = JitOptions.wasmBatchBaselineThreshold;
       break;
     case Tier::Optimized:
-      switch (compilerEnv_->optimizedBackend()) {
-        case OptimizedBackend::Ion:
-          threshold = JitOptions.wasmBatchIonThreshold;
-          break;
-        default:
-          MOZ_CRASH("Invalid optimizedBackend value");
-      }
+      threshold = JitOptions.wasmBatchIonThreshold;
       break;
     default:
       MOZ_CRASH("Invalid tier value");

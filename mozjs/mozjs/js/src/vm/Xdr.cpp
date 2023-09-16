@@ -18,37 +18,21 @@
 #include <type_traits>  // std::is_same_v
 #include <utility>      // std::move
 
+#include "frontend/FrontendContext.h"  // FrontendContext
 #include "js/Transcoding.h"  // JS::TranscodeResult, JS::TranscodeBuffer, JS::TranscodeRange
-#include "js/UniquePtr.h"     // UniquePtr
-#include "js/Utility.h"       // JS::FreePolicy, js_delete
-#include "vm/ErrorContext.h"  // ErrorContext
-#include "vm/JSContext.h"     // JSContext, ReportAllocationOverflow
-#include "vm/StringType.h"    // JSString
+#include "js/UniquePtr.h"   // UniquePtr
+#include "js/Utility.h"     // JS::FreePolicy, js_delete
+#include "vm/JSContext.h"   // JSContext, ReportAllocationOverflow
+#include "vm/StringType.h"  // JSString
 
 using namespace js;
 
 using mozilla::Utf8Unit;
 
 #ifdef DEBUG
-bool XDRCoderBase::validateResultCode(JSContext* cx, ErrorContext* ec,
+bool XDRCoderBase::validateResultCode(FrontendContext* fc,
                                       JS::TranscodeResult code) const {
-  // NOTE: This function is called to verify that we do not have a pending
-  // exception on the JSContext at the same time as a TranscodeResult failure.
-  if (cx->isHelperThreadContext()) {
-    return true;
-  }
-
-  // NOTE: Errors during XDR encode/decode are supposed to be reported to
-  //       ErrorContext, instead of JSContext.
-  //       This branch is for covering remaining consumer of JSContext for
-  //       error reporting (e.g. memory allocation).
-  // TODO: Remove this once JSContext is removed from frontend and all errors
-  //       are reported to ErrorContext.
-  if (cx->isExceptionPending()) {
-    return bool(code == JS::TranscodeResult::Throw);
-  }
-
-  return ec->hadErrors() == bool(code == JS::TranscodeResult::Throw);
+  return fc->hadErrors() == bool(code == JS::TranscodeResult::Throw);
 }
 #endif
 
@@ -143,7 +127,7 @@ static XDRResult XDRCodeCharsZ(XDRState<mode>* xdr,
     // Set a reasonable limit on string length.
     size_t lengthSizeT = std::char_traits<CharT>::length(chars);
     if (lengthSizeT > JSString::MAX_LENGTH) {
-      ReportAllocationOverflow(xdr->cx());
+      ReportAllocationOverflow(xdr->fc());
       return xdr->fail(JS::TranscodeResult::Throw);
     }
     length = static_cast<uint32_t>(lengthSizeT);
@@ -151,7 +135,8 @@ static XDRResult XDRCodeCharsZ(XDRState<mode>* xdr,
   MOZ_TRY(xdr->codeUint32(&length));
 
   if (mode == XDR_DECODE) {
-    owned = xdr->cx()->template make_pod_array<CharT>(length + 1);
+    owned =
+        xdr->fc()->getAllocator()->template make_pod_array<CharT>(length + 1);
     if (!owned) {
       return xdr->fail(JS::TranscodeResult::Throw);
     }

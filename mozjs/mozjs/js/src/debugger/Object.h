@@ -152,6 +152,8 @@ class DebuggerObject : public NativeObject {
                                          Handle<DebuggerObject*> object,
                                          HandleValue value,
                                          MutableHandleValue result);
+  [[nodiscard]] static bool isNativeGetterWithJitInfo(
+      JSContext* cx, Handle<DebuggerObject*> object, MutableHandleValue result);
   [[nodiscard]] static bool unsafeDereference(JSContext* cx,
                                               Handle<DebuggerObject*> object,
                                               MutableHandleObject result);
@@ -164,6 +166,7 @@ class DebuggerObject : public NativeObject {
   bool isFunction() const;
   bool isDebuggeeFunction() const;
   bool isBoundFunction() const;
+  bool isDebuggeeBoundFunction() const;
   bool isArrowFunction() const;
   bool isAsyncFunction() const;
   bool isGeneratorFunction() const;
@@ -178,7 +181,6 @@ class DebuggerObject : public NativeObject {
   double promiseLifetime() const;
   double promiseTimeToResolution() const;
 
-  bool isInstance() const;
   Debugger* owner() const;
 
   JSObject* maybeReferent() const {

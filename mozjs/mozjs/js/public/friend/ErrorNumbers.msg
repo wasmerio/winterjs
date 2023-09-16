@@ -197,6 +197,7 @@ MSG_DEF(JSMSG_ALLOC_OVERFLOW,          0, JSEXN_INTERNALERR, "allocation size ov
 MSG_DEF(JSMSG_BAD_BYTECODE,            1, JSEXN_INTERNALERR, "unimplemented JavaScript bytecode {0}")
 MSG_DEF(JSMSG_BUFFER_TOO_SMALL,        0, JSEXN_INTERNALERR, "buffer too small")
 MSG_DEF(JSMSG_BYTECODE_TOO_BIG,        2, JSEXN_INTERNALERR, "bytecode {0} too large (limit {1})")
+MSG_DEF(JSMSG_DECODE_FAILURE,          0, JSEXN_INTERNALERR, "failed to decode cache")
 MSG_DEF(JSMSG_NEED_DIET,               1, JSEXN_INTERNALERR, "{0} too large")
 MSG_DEF(JSMSG_OUT_OF_MEMORY,           0, JSEXN_INTERNALERR, "out of memory")
 MSG_DEF(JSMSG_OVER_RECURSED,           0, JSEXN_INTERNALERR, "too much recursion")
@@ -382,6 +383,7 @@ MSG_DEF(JSMSG_ILLEGAL_PRIVATE_FIELD,   0, JSEXN_SYNTAXERR, "private fields aren'
 MSG_DEF(JSMSG_ILLEGAL_PRIVATE_NAME,    0, JSEXN_SYNTAXERR, "private names aren't valid in this context")
 MSG_DEF(JSMSG_INVALID_PRIVATE_NAME_PRECEDENCE,    0, JSEXN_SYNTAXERR, "invalid use of private name due to operator precedence")
 MSG_DEF(JSMSG_INVALID_PRIVATE_NAME_IN_UNARY_EXPR,    0, JSEXN_SYNTAXERR, "invalid use of private name in unary expression without object reference")
+MSG_DEF(JSMSG_ILLEGAL_PRIVATE_EXOTIC,  0, JSEXN_TYPEERR, "private fields or private methods aren't allowed on this exotic object")
 MSG_DEF(JSMSG_PRIVATE_FIELD_DOUBLE,    0, JSEXN_TYPEERR, "Initializing an object twice is an error with private fields")
 MSG_DEF(JSMSG_PRIVATE_BRAND_DOUBLE,    0, JSEXN_TYPEERR, "Initializing an object twice is an error with private methods")
 MSG_DEF(JSMSG_CURLY_AFTER_ASSERT,      0, JSEXN_SYNTAXERR, "missing '{' after assert")
@@ -398,6 +400,12 @@ MSG_DEF(JSMSG_NOT_ENOUGH_CODE_UNITS,   5, JSEXN_SYNTAXERR, "{0} byte in UTF-8 mu
 MSG_DEF(JSMSG_BAD_TRAILING_UTF8_UNIT,  1, JSEXN_SYNTAXERR, "bad trailing UTF-8 byte {0} doesn't match the pattern 0b10xxxxxx")
 MSG_DEF(JSMSG_FORBIDDEN_UTF8_CODE_POINT,2,JSEXN_SYNTAXERR, "{0} isn't a valid code point because {1}")
 MSG_DEF(JSMSG_BAD_CODE_UNITS,          1, JSEXN_NOTE, "the code units comprising this invalid code point were: {0}")
+
+// System encoding errors
+MSG_DEF(JSMSG_CANT_CONVERT_TO_NARROW,  0, JSEXN_NOTE, "can't convert to narrow string")
+MSG_DEF(JSMSG_CANT_CONVERT_TO_WIDE,    0, JSEXN_NOTE, "can't convert to wide string")
+MSG_DEF(JSMSG_CANT_CONVERT_WIDE_TO_UTF8, 0, JSEXN_NOTE, "can't convert wide string to UTF-8")
+MSG_DEF(JSMSG_CANT_CONVERT_UTF8_TO_WIDE, 0, JSEXN_NOTE, "can't convert UTF-8 to wide string")
 
 // SmooshMonkey
 MSG_DEF(JSMSG_SMOOSH_COMPILE_ERROR,    1, JSEXN_SYNTAXERR, "{0}")
@@ -444,7 +452,7 @@ MSG_DEF(JSMSG_WASM_ARRAY_IMP_LIMIT,    0, JSEXN_WASMRUNTIMEERROR, "too many arra
 MSG_DEF(JSMSG_WASM_BAD_RANGE,          2, JSEXN_RANGEERR,    "bad {0} {1}")
 MSG_DEF(JSMSG_WASM_BAD_GROW,           1, JSEXN_RANGEERR,    "failed to grow {0}")
 MSG_DEF(JSMSG_WASM_TABLE_OUT_OF_BOUNDS, 0, JSEXN_WASMRUNTIMEERROR,   "table index out of bounds")
-MSG_DEF(JSMSG_WASM_BAD_UINT32,         2, JSEXN_TYPEERR,     "bad {0} {1}")
+MSG_DEF(JSMSG_WASM_BAD_ENFORCE_RANGE,  2, JSEXN_TYPEERR,     "bad {0} {1}")
 MSG_DEF(JSMSG_WASM_BAD_BUF_ARG,        0, JSEXN_TYPEERR,     "first argument must be an ArrayBuffer or typed array object")
 MSG_DEF(JSMSG_WASM_BAD_MOD_ARG,        0, JSEXN_TYPEERR,     "first argument must be a WebAssembly.Module")
 MSG_DEF(JSMSG_WASM_BAD_BUF_MOD_ARG,    0, JSEXN_TYPEERR,     "first argument must be a WebAssembly.Module, ArrayBuffer or typed array object")
@@ -453,7 +461,14 @@ MSG_DEF(JSMSG_WASM_BAD_IMPORT_ARG,     0, JSEXN_TYPEERR,     "second argument mu
 MSG_DEF(JSMSG_WASM_BAD_IMPORT_FIELD,   1, JSEXN_TYPEERR,     "import object field '{0}' is not an Object")
 MSG_DEF(JSMSG_WASM_BAD_REF_NONNULLABLE_VALUE,  0, JSEXN_TYPEERR,     "cannot pass null to non-nullable WebAssembly reference")
 MSG_DEF(JSMSG_WASM_BAD_FUNCREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass WebAssembly exported functions to funcref")
-MSG_DEF(JSMSG_WASM_BAD_EQREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass a TypedObject to an eqref")
+MSG_DEF(JSMSG_WASM_BAD_ANYREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass a WebAssembly GC object to an anyref")
+MSG_DEF(JSMSG_WASM_BAD_NULL_EXTERNREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass null to nullexternref")
+MSG_DEF(JSMSG_WASM_BAD_NULL_FUNCREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass null to nullfuncref")
+MSG_DEF(JSMSG_WASM_BAD_NULL_ANYREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass null to nullref")
+MSG_DEF(JSMSG_WASM_BAD_EQREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass a WebAssembly GC object to an eqref")
+MSG_DEF(JSMSG_WASM_BAD_STRUCTREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass a WebAssembly struct object to a structref")
+MSG_DEF(JSMSG_WASM_BAD_ARRAYREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass a WebAssembly array object to an arrayref")
+MSG_DEF(JSMSG_WASM_BAD_TYPEREF_VALUE,  0, JSEXN_TYPEERR,     "bad type")
 MSG_DEF(JSMSG_WASM_BAD_VAL_TYPE,       0, JSEXN_TYPEERR,     "cannot pass v128 to or from JS")
 MSG_DEF(JSMSG_WASM_BAD_STRING_VAL_TYPE,    0, JSEXN_TYPEERR,     "bad value type")
 MSG_DEF(JSMSG_WASM_BAD_STRING_IDX_TYPE,    0, JSEXN_TYPEERR,     "bad index type")
@@ -686,15 +701,17 @@ MSG_DEF(JSMSG_CANT_DELETE_SUPER, 0, JSEXN_REFERENCEERR, "invalid delete involvin
 MSG_DEF(JSMSG_REINIT_THIS,       0, JSEXN_REFERENCEERR, "super() called twice in derived class constructor")
 
 // Modules
-MSG_DEF(JSMSG_MISSING_INDIRECT_EXPORT,   0, JSEXN_SYNTAXERR, "indirect export not found")
-MSG_DEF(JSMSG_AMBIGUOUS_INDIRECT_EXPORT, 0, JSEXN_SYNTAXERR, "ambiguous indirect export")
-MSG_DEF(JSMSG_MISSING_IMPORT,            0, JSEXN_SYNTAXERR, "import not found")
-MSG_DEF(JSMSG_AMBIGUOUS_IMPORT,          0, JSEXN_SYNTAXERR, "ambiguous import")
-MSG_DEF(JSMSG_MISSING_EXPORT,            1, JSEXN_SYNTAXERR, "local binding for export '{0}' not found")
-MSG_DEF(JSMSG_BAD_MODULE_STATUS,         1, JSEXN_INTERNALERR, "module record has unexpected status: {0}")
-MSG_DEF(JSMSG_DYNAMIC_IMPORT_FAILED,     0, JSEXN_TYPEERR, "error loading dynamically imported module")
+MSG_DEF(JSMSG_MISSING_INDIRECT_EXPORT,      0, JSEXN_SYNTAXERR, "indirect export not found")
+MSG_DEF(JSMSG_AMBIGUOUS_INDIRECT_EXPORT,    0, JSEXN_SYNTAXERR, "ambiguous indirect export")
+MSG_DEF(JSMSG_MISSING_IMPORT,               0, JSEXN_SYNTAXERR, "import not found")
+MSG_DEF(JSMSG_AMBIGUOUS_IMPORT,             0, JSEXN_SYNTAXERR, "ambiguous import")
+MSG_DEF(JSMSG_MISSING_EXPORT,               1, JSEXN_SYNTAXERR, "local binding for export '{0}' not found")
+MSG_DEF(JSMSG_BAD_MODULE_STATUS,            1, JSEXN_INTERNALERR, "module record has unexpected status: {0}")
+MSG_DEF(JSMSG_DYNAMIC_IMPORT_FAILED,        1, JSEXN_TYPEERR, "error loading dynamically imported module: {0}")
+MSG_DEF(JSMSG_DYNAMIC_IMPORT_NOT_SUPPORTED, 0, JSEXN_TYPEERR, "Dynamic import not supported in this context")
 
 // Import maps
+MSG_DEF(JSMSG_IMPORT_MAPS_PARSE_FAILED, 1, JSEXN_SYNTAXERR, "Failed to parse import map: Invalid JSON format. {0}")
 MSG_DEF(JSMSG_IMPORT_MAPS_NOT_A_MAP, 0, JSEXN_TYPEERR, "the top-level value needs to be a JSON object")
 MSG_DEF(JSMSG_IMPORT_MAPS_IMPORTS_NOT_A_MAP, 0, JSEXN_TYPEERR, "the imports top-level key needs to be a JSON object")
 MSG_DEF(JSMSG_IMPORT_MAPS_SCOPES_NOT_A_MAP, 0, JSEXN_TYPEERR, "the scopes top-level key needs to be a JSON object")
@@ -797,5 +814,8 @@ MSG_DEF(JSMSG_SHADOW_REALM_WRAPPED_EXECUTION_FAILURE_DETAIL,    1, JSEXN_TYPEERR
 MSG_DEF(JSMSG_SHADOW_REALM_EXPORT_NOT_STRING,    0, JSEXN_TYPEERR, "exportName must be a string")
 MSG_DEF(JSMSG_SHADOW_REALM_IMPORTVALUE_FAILED,    0, JSEXN_TYPEERR, "import value failed")
 MSG_DEF(JSMSG_SHADOW_REALM_VALUE_NOT_EXPORTED,    0, JSEXN_TYPEERR, "value not exported")
+
+// Decorators
+MSG_DEF(JSMSG_DECORATOR_INVALID_RETURN_TYPE, 0, JSEXN_TYPEERR, "Invalid value returned from decorator: decorators can only return undefined or a callable")
 
 //clang-format on

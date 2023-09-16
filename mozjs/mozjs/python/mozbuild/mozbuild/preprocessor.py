@@ -22,18 +22,17 @@ value :
   | \w+  # string identifier or value;
 """
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import errno
 import io
-from optparse import OptionParser
 import os
 import re
-import six
 import sys
+from optparse import OptionParser
+
+import six
+from mozpack.path import normsep
 
 from mozbuild.makeutil import Makefile
-from mozpack.path import normsep
 
 # hack around win32 mangling our line endings
 # http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/65443
@@ -311,7 +310,7 @@ class Preprocessor:
         self.context.update({"FILE": "", "LINE": 0, "DIRECTORY": os.path.abspath(".")})
         try:
             # Can import globally because of bootstrapping issues.
-            from buildconfig import topsrcdir, topobjdir
+            from buildconfig import topobjdir, topsrcdir
         except ImportError:
             # Allow this script to still work independently of a configured objdir.
             topsrcdir = topobjdir = None
@@ -385,10 +384,14 @@ class Preprocessor:
         """
         self.marker = aMarker
         if aMarker:
-            self.instruction = re.compile(
-                "\s*{0}(?P<cmd>[a-z]+)(?:\s+(?P<args>.*?))?\s*$".format(aMarker)
-            )
+            instruction_prefix = "\s*{0}"
+            instruction_cmd = "(?P<cmd>[a-z]+)(?:\s+(?P<args>.*?))?\s*$"
+            instruction_fmt = instruction_prefix + instruction_cmd
+            ambiguous_fmt = instruction_prefix + "\s+" + instruction_cmd
+
+            self.instruction = re.compile(instruction_fmt.format(aMarker))
             self.comment = re.compile(aMarker, re.U)
+            self.ambiguous_comment = re.compile(ambiguous_fmt.format(aMarker))
         else:
 
             class NoMatch(object):
@@ -531,8 +534,10 @@ class Preprocessor:
 
         if args:
             for f in args:
-                with io.open(f, "r", encoding="utf-8") as input:
-                    self.processFile(input=input, output=out)
+                if not isinstance(f, io.TextIOBase):
+                    f = io.open(f, "r", encoding="utf-8")
+                with f as input_:
+                    self.processFile(input=input_, output=out)
             if depfile:
                 mk = Makefile()
                 mk.create_rule([six.ensure_text(options.output)]).add_dependencies(
@@ -654,8 +659,16 @@ class Preprocessor:
                 cmd(args)
             if cmd != "literal":
                 self.actionLevel = 2
-        elif self.disableLevel == 0 and not self.comment.match(aLine):
-            self.write(aLine)
+        elif self.disableLevel == 0:
+            if self.comment.match(aLine):
+                # make sure the comment is not ambiguous with a command
+                m = self.ambiguous_comment.match(aLine)
+                if m:
+                    cmd = m.group("cmd")
+                    if cmd in self.cmds:
+                        raise Preprocessor.Error(self, "AMBIGUOUS_COMMENT", aLine)
+            else:
+                self.write(aLine)
 
     # Instruction handlers
     # These are named do_'instruction name' and take one argument

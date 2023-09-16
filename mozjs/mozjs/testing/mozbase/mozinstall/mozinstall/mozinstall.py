@@ -2,9 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
-
-from optparse import OptionParser
 import os
 import plistlib
 import shutil
@@ -14,13 +11,12 @@ import tarfile
 import tempfile
 import time
 import zipfile
-
-import requests
-
-from six import PY3, reraise
+from optparse import OptionParser
 
 import mozfile
 import mozinfo
+import requests
+from six import PY3, reraise
 
 try:
     import pefile
@@ -136,6 +132,8 @@ def install(src, dest):
             install_dir = _install_dmg(src, dest)
         elif src.lower().endswith(".exe"):
             install_dir = _install_exe(src, dest)
+        elif src.lower().endswith(".msix"):
+            install_dir = _install_msix(src)
         elif zipfile.is_zipfile(src) or tarfile.is_tarfile(src):
             install_dir = mozfile.extract(src, dest)[0]
 
@@ -216,6 +214,16 @@ def uninstall(install_folder):
     :param install_folder: Path of the installation folder
 
     """
+    # Uninstallation for MSIX applications is totally different than
+    # any other installs...
+    if "WindowsApps" in install_folder:
+        # At the time of writing, the package installation directory is always
+        # the package full name, so this assumption is valid (for now....).
+        packageFullName = install_folder.split("WindowsApps\\")[1].split("\\")[0]
+        cmd = f"powershell.exe Remove-AppxPackage -Package {packageFullName}"
+        subprocess.check_call(cmd)
+        return
+
     install_folder = os.path.realpath(install_folder)
     assert os.path.isdir(install_folder), (
         'installation folder "%s" exists.' % install_folder
@@ -349,6 +357,47 @@ def _install_exe(src, dest):
     subprocess.check_call(cmd)
 
     return dest
+
+
+def _get_msix_install_location(pkg):
+    with zipfile.ZipFile(pkg) as zf:
+        # First, we pull the app identity out of the AppxManifest...
+        with zf.open("AppxManifest.xml") as am:
+            for line in am.readlines():
+                line = line.decode("utf-8")
+                if "<Identity" in line:
+                    for part in line.split(" "):
+                        if part.startswith("Name"):
+                            pkgname = part.split("=")[-1].strip('"\r\n')
+
+                            # ...then we can use it to find the install location
+                            # with this cmdlet
+                            cmd = (
+                                f'powershell.exe "Get-AppxPackage" "-Name" "{pkgname}"'
+                            )
+                            for line in (
+                                subprocess.check_output(cmd)
+                                .decode("utf-8")
+                                .splitlines()
+                            ):
+                                if line.startswith("InstallLocation"):
+                                    return "C:{}".format(line.split(":")[-1].strip())
+
+    raise Exception(f"Couldn't find install location of {pkg}")
+
+
+def _install_msix(src):
+    """Install the MSIX package and return the installation path.
+
+    Arguments:
+    src -- MSIX package to install
+
+    """
+    # possibly gets around UAC in vista (still need to run as administrator)
+    cmd = f'powershell.exe "Add-AppxPackage" "-Path" "{src}"'
+    subprocess.check_call(cmd)
+
+    return _get_msix_install_location(src)
 
 
 def install_cli(argv=sys.argv[1:]):

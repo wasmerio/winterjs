@@ -168,6 +168,14 @@ normalize_path = normalize_path()
 @imports(_from="os", _import="environ")
 @imports(_from="mozfile", _import="which")
 def find_program(file, paths=None, allow_spaces=False):
+    def which_normalize(file, path, exts):
+        path = which(file, path=path, exts=exts)
+        if not path:
+            return None
+        if not allow_spaces:
+            return normalize_path(path)
+        return normsep(path)
+
     # The following snippet comes from `which` itself, with a slight
     # modification to use lowercase extensions, because it's confusing rustup
     # (on top of making results not really appealing to the eye).
@@ -183,10 +191,9 @@ def find_program(file, paths=None, allow_spaces=False):
         exts = None
 
     if is_absolute_or_relative(file):
-        path = which(os.path.basename(file), path=os.path.dirname(file), exts=exts)
-        if not allow_spaces:
-            return normalize_path(path) if path else None
-        return normsep(path)
+        return which_normalize(
+            os.path.basename(file), path=os.path.dirname(file), exts=exts
+        )
 
     if paths:
         if not isinstance(paths, (list, tuple)):
@@ -196,17 +203,48 @@ def find_program(file, paths=None, allow_spaces=False):
             )
         paths = pathsep.join(paths)
 
-    path = which(file, path=paths, exts=exts)
-    if not allow_spaces:
-        return normalize_path(path) if path else None
-    return normsep(path)
+    return which_normalize(file, path=paths, exts=exts)
 
 
 @imports("os")
 @imports(_from="mozbuild.configure.util", _import="LineIO")
 @imports(_from="tempfile", _import="mkstemp")
-def try_invoke_compiler(compiler, language, source, flags=None, onerror=None):
+@imports(_import="subprocess")
+def try_invoke_compiler(
+    configure_cache, compiler, language, source, flags=None, onerror=None, wrapper=[]
+):
+    compiler_path = compiler[0]
+    compiler = wrapper + compiler
+    use_cache = True
+
+    if compiler_path not in configure_cache.version_checked_compilers:
+        try:
+            version_info = subprocess.check_output(
+                [compiler_path, "--version"],
+                encoding="UTF-8",
+            ).strip()
+        except subprocess.CalledProcessError:
+            # There's no sane way to use the cache without the version details, so
+            # we need to avoid both reads from and writes to the cache.
+            use_cache = False
+            pass
+
+        if use_cache:
+            if version_info != configure_cache.setdefault(compiler_path, {}).get(
+                "version"
+            ):
+                configure_cache[compiler_path].clear()
+
+            configure_cache[compiler_path]["version"] = version_info
+            configure_cache.version_checked_compilers.add(compiler_path)
+
     flags = flags or []
+
+    if use_cache:
+        key = " ".join(compiler) + language + source + (" ".join(flags) or "")
+
+        if key in configure_cache[compiler_path]:
+            return configure_cache[compiler_path][key]
 
     if not isinstance(flags, (list, tuple)):
         die("Flags provided to try_compile must be a list of strings, " "not %r", flags)
@@ -228,7 +266,10 @@ def try_invoke_compiler(compiler, language, source, flags=None, onerror=None):
         os.close(fd)
         cmd = compiler + [path] + list(flags)
         kwargs = {"onerror": onerror}
-        return check_cmd_output(*cmd, **kwargs)
+        val = check_cmd_output(*cmd, **kwargs)
+        if use_cache:
+            configure_cache[compiler_path][key] = val
+        return val
     finally:
         os.remove(path)
 

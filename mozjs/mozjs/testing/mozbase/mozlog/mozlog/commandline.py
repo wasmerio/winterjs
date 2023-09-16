@@ -2,18 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
 import argparse
 import optparse
 import os
 import sys
 from collections import defaultdict
 
-from . import handlers
-from . import formatters
-from .structuredlog import StructuredLogger, set_default_logger
 import six
+
+from . import formatters, handlers
+from .structuredlog import StructuredLogger, set_default_logger
 
 log_formatters = {
     "raw": (
@@ -24,7 +22,10 @@ log_formatters = {
         formatters.UnittestFormatter,
         "Unittest style output " "(provided by mozlog)",
     ),
-    "xunit": (formatters.XUnitFormatter, "xUnit compatible XML " "(povided by mozlog)"),
+    "xunit": (
+        formatters.XUnitFormatter,
+        "xUnit compatible XML " "(provided by mozlog)",
+    ),
     "html": (formatters.HTMLFormatter, "HTML report " "(provided by mozlog)"),
     "mach": (formatters.MachFormatter, "Human-readable output " "(provided by mozlog)"),
     "tbpl": (formatters.TbplFormatter, "TBPL style log format " "(provided by mozlog)"),

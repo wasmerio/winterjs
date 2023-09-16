@@ -48,7 +48,7 @@ using Tier2Listener = RefPtr<JS::OptimizedEncodingListener>;
 // and complete lack of barriers.
 
 struct ImportValues {
-  JSFunctionVector funcs;
+  JSObjectVector funcs;
   WasmTableObjectVector tables;
   WasmMemoryObject* memory;
   WasmTagObjectVector tagObjs;
@@ -113,7 +113,7 @@ class Module : public JS::WasmModule {
   size_t gcMallocBytesExcludingCode_;
 
   bool instantiateFunctions(JSContext* cx,
-                            const JSFunctionVector& funcImports) const;
+                            const JSObjectVector& funcImports) const;
   bool instantiateMemory(JSContext* cx,
                          MutableHandle<WasmMemoryObject*> memory) const;
   bool instantiateTags(JSContext* cx, WasmTagObjectVector& tagObjs) const;
@@ -131,8 +131,7 @@ class Module : public JS::WasmModule {
   bool instantiateGlobals(JSContext* cx, const ValVector& globalImportValues,
                           WasmGlobalObjectVector& globalObjs) const;
   bool initSegments(JSContext* cx, Handle<WasmInstanceObject*> instance,
-                    Handle<WasmMemoryObject*> memory,
-                    const ValVector& globalImportValues) const;
+                    Handle<WasmMemoryObject*> memory) const;
 
   class Tier2GeneratorTaskImpl;
 

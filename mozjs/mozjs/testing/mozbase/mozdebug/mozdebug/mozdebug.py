@@ -4,15 +4,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
-
 import json
 import os
-import mozinfo
 import sys
 from collections import namedtuple
 from distutils.spawn import find_executable
 from subprocess import check_output
+
+import mozinfo
 
 __all__ = [
     "get_debugger_info",
@@ -133,15 +132,15 @@ def get_debugger_info(debugger, debuggerArgs=None, debuggerInteractive=False):
     """
     Get the information about the requested debugger.
 
-    Returns a dictionary containing the |path| of the debugger executable,
-    if it will run in |interactive| mode, its arguments and whether it needs
-    to escape arguments it passes to the debugged program (|requiresEscapedArgs|).
-    If the debugger cannot be found in the system, returns |None|.
+    Returns a dictionary containing the ``path`` of the debugger executable,
+    if it will run in ``interactive`` mode, its arguments and whether it needs
+    to escape arguments it passes to the debugged program (``requiresEscapedArgs``).
+    If the debugger cannot be found in the system, returns ``None``.
 
     :param debugger: The name of the debugger.
     :param debuggerArgs: If specified, it's the arguments to pass to the debugger,
-    as a string. Any debugger-specific separator arguments are appended after these
-    arguments.
+       as a string. Any debugger-specific separator arguments are appended after
+       these arguments.
     :param debuggerInteractive: If specified, forces the debugger to be interactive.
     """
 
@@ -218,8 +217,8 @@ def get_default_debugger_name(search=DebuggerSearch.OnlyFirst):
     Get the debugger name for the default debugger on current platform.
 
     :param search: If specified, stops looking for the debugger if the
-     default one is not found (|DebuggerSearch.OnlyFirst|) or keeps
-     looking for other compatible debuggers (|DebuggerSearch.KeepLooking|).
+     default one is not found (``DebuggerSearch.OnlyFirst``) or keeps
+     looking for other compatible debuggers (``DebuggerSearch.KeepLooking``).
     """
 
     mozinfo.find_and_update_from_json()

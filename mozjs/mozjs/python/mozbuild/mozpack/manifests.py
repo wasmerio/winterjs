@@ -2,11 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
-from contextlib import contextmanager
 import json
+from contextlib import contextmanager
+
 import six
+
+import mozpack.path as mozpath
 
 from .files import (
     AbsoluteSymlinkFile,
@@ -17,7 +18,6 @@ from .files import (
     HardlinkFile,
     PreprocessedFile,
 )
-import mozpack.path as mozpath
 
 
 # This probably belongs in a more generic module. Where?

@@ -26,24 +26,24 @@
 #include "js/GCVector.h"          // JS::RootedVector
 #include "js/HeapAPI.h"           // JS::GCCellPtr, js::gc::IsInsideNursery
 #include "js/Id.h"                // JS::PropertyKey
-#include "js/RootingAPI.h"        // JS::Handle, JS::Rooted
-#include "js/TracingAPI.h"        // JS::CallbackTracer, JS_GetTraceThingInfo
-#include "js/UbiNode.h"           // JS::ubi::Node
-#include "js/Value.h"             // JS::Value
-#include "js/Wrapper.h"           // js::UncheckedUnwrapWithoutExpose
-#include "vm/BigIntType.h"        // JS::BigInt::dump
-#include "vm/FrameIter.h"         // js::AllFramesIter, js::FrameIter
-#include "vm/Interpreter.h"       // GetFunctionThis
-#include "vm/JSContext.h"         // JSContext
-#include "vm/JSFunction.h"        // JSFunction
-#include "vm/JSObject.h"          // JSObject
-#include "vm/JSScript.h"          // JSScript
-#include "vm/Printer.h"     // js::GenericPrinter, js::QuoteString, js::Sprinter
-#include "vm/Realm.h"       // JS::Realm
-#include "vm/Runtime.h"     // JSRuntime
-#include "vm/Scope.h"       // js::PositionalFormalParameterIter
-#include "vm/Stack.h"       // js::DONT_CHECK_ALIASING
-#include "vm/StringType.h"  // JSAtom, JSString, js::ToString
+#include "js/Printer.h"     // js::GenericPrinter, js::QuoteString, js::Sprinter
+#include "js/RootingAPI.h"  // JS::Handle, JS::Rooted
+#include "js/TracingAPI.h"  // JS::CallbackTracer, JS_GetTraceThingInfo
+#include "js/UbiNode.h"     // JS::ubi::Node
+#include "js/Value.h"       // JS::Value
+#include "js/Wrapper.h"     // js::UncheckedUnwrapWithoutExpose
+#include "vm/BigIntType.h"  // JS::BigInt::dump
+#include "vm/FrameIter.h"   // js::AllFramesIter, js::FrameIter
+#include "vm/Interpreter.h"  // GetFunctionThis
+#include "vm/JSContext.h"    // JSContext
+#include "vm/JSFunction.h"   // JSFunction
+#include "vm/JSObject.h"     // JSObject
+#include "vm/JSScript.h"     // JSScript
+#include "vm/Realm.h"        // JS::Realm
+#include "vm/Runtime.h"      // JSRuntime
+#include "vm/Scope.h"        // js::PositionalFormalParameterIter
+#include "vm/Stack.h"        // js::DONT_CHECK_ALIASING
+#include "vm/StringType.h"   // JSAtom, JSString, js::ToString
 
 #include "vm/JSObject-inl.h"  // js::IsCallable
 #include "vm/Realm-inl.h"     // js::AutoRealm
@@ -272,8 +272,7 @@ static bool FormatFrame(JSContext* cx, const FrameIter& iter, Sprinter& sp,
 
   Rooted<Value> thisVal(cx);
   if (iter.hasUsableAbstractFramePtr() && iter.isFunctionFrame() && fun &&
-      !fun->isArrow() && !fun->isDerivedClassConstructor() &&
-      !(fun->isBoundFunction() && iter.isConstructing())) {
+      !fun->isArrow() && !fun->isDerivedClassConstructor()) {
     if (!GetFunctionThis(cx, iter.abstractFramePtr(), &thisVal)) {
       return false;
     }
@@ -636,4 +635,23 @@ void js::DumpHeap(JSContext* cx, FILE* fp,
                          DumpHeapVisitArena, DumpHeapVisitCell);
 
   fflush(dtrc.output);
+}
+
+void DumpFmtV(FILE* fp, const char* fmt, va_list args) {
+  js::Fprinter out(fp);
+  out.vprintf(fmt, args);
+}
+
+void js::DumpFmt(FILE* fp, const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  DumpFmtV(fp, fmt, args);
+  va_end(args);
+}
+
+void js::DumpFmt(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  DumpFmtV(stderr, fmt, args);
+  va_end(args);
 }

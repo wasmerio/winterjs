@@ -8,13 +8,11 @@
 # an unified `compile_commands.json` but we generate a per file basis `command` in
 # `objdir/clangd/compile_commands.json`
 
-from __future__ import absolute_import, print_function
-
 import os
 
-from mozbuild.compilation.database import CompileDBBackend
-
 import mozpack.path as mozpath
+
+from mozbuild.compilation.database import CompileDBBackend
 
 
 def find_vscode_cmd():
@@ -104,7 +102,7 @@ class ClangdBackend(CompileDBBackend):
         if compiler_args is None:
             return None
 
-        if compiler_args[0][-6:] == "ccache":
+        if len(compiler_args) and compiler_args[0].endswith("ccache"):
             compiler_args.pop(0)
         return compiler_args
 
@@ -125,7 +123,4 @@ class ClangdBackend(CompileDBBackend):
         return mozpath.join(clangd_cc_path, "compile_commands.json")
 
     def _process_unified_sources(self, obj):
-        for f in list(sorted(obj.files)):
-            self._build_db_line(
-                obj.objdir, obj.relsrcdir, obj.config, f, obj.canonical_suffix
-            )
+        self._process_unified_sources_without_mapping(obj)

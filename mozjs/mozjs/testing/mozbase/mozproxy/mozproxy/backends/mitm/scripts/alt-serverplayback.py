@@ -13,19 +13,16 @@
 # see Bug 1739418: https://bugzilla.mozilla.org/show_bug.cgi?id=1739418
 
 import hashlib
-import typing
 import urllib
+from collections.abc import Hashable, Sequence
+from typing import Any, Optional
 
 import mitmproxy.types
-from mitmproxy import command, hooks
-from mitmproxy import ctx, http
-from mitmproxy import exceptions
-from mitmproxy import flow
-from mitmproxy import io
+from mitmproxy import command, ctx, exceptions, flow, hooks, http, io
 
 
 class AltServerPlayback:
-    flowmap: typing.Dict[typing.Hashable, typing.List[http.HTTPFlow]]
+    flowmap: dict[Hashable, list[http.HTTPFlow]]
     configured: bool
 
     def __init__(self):
@@ -59,13 +56,13 @@ class AltServerPlayback:
         )
         loader.add_option(
             "alt_server_replay_use_headers",
-            typing.Sequence[str],
+            Sequence[str],
             [],
             "Request headers to be considered during replay.",
         )
         loader.add_option(
             "alt_server_replay",
-            typing.Sequence[str],
+            Sequence[str],
             [],
             "Replay server responses from a saved file.",
         )
@@ -77,7 +74,7 @@ class AltServerPlayback:
         )
         loader.add_option(
             "alt_server_replay_ignore_params",
-            typing.Sequence[str],
+            Sequence[str],
             [],
             """
             Request's parameters to be ignored while searching for a saved flow
@@ -86,7 +83,7 @@ class AltServerPlayback:
         )
         loader.add_option(
             "alt_server_replay_ignore_payload_params",
-            typing.Sequence[str],
+            Sequence[str],
             [],
             """
             Request's payload parameters (application/x-www-form-urlencoded or
@@ -122,7 +119,7 @@ class AltServerPlayback:
         )
 
     @command.command("replay.server")
-    def load_flows(self, flows: typing.Sequence[flow.Flow]) -> None:
+    def load_flows(self, flows: Sequence[flow.Flow]) -> None:
         """
         Replay server responses from flows.
         """
@@ -155,7 +152,7 @@ class AltServerPlayback:
     def count(self) -> int:
         return sum([len(i) for i in self.flowmap.values()])
 
-    def _hash(self, flow: http.HTTPFlow) -> typing.Hashable:
+    def _hash(self, flow: http.HTTPFlow) -> Hashable:
         """
         Calculates a loose hash of the flow request.
         """
@@ -163,7 +160,7 @@ class AltServerPlayback:
         _, _, path, _, query, _ = urllib.parse.urlparse(r.url)
         queriesArray = urllib.parse.parse_qsl(query, keep_blank_values=True)
 
-        key: typing.List[typing.Any] = [str(r.scheme), str(r.method), str(path)]
+        key: list[Any] = [str(r.scheme), str(r.method), str(path)]
         if not ctx.options.alt_server_replay_ignore_content:
             if ctx.options.alt_server_replay_ignore_payload_params and r.multipart_form:
                 key.extend(
@@ -206,7 +203,7 @@ class AltServerPlayback:
             key.append(headers)
         return hashlib.sha256(repr(key).encode("utf8", "surrogateescape")).digest()
 
-    def next_flow(self, flow: http.HTTPFlow) -> typing.Optional[http.HTTPFlow]:
+    def next_flow(self, flow: http.HTTPFlow) -> Optional[http.HTTPFlow]:
         """
         Returns the next flow object, or None if no matching flow was
         found.

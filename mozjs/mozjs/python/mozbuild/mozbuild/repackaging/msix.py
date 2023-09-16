@@ -10,30 +10,31 @@ r"""Repackage ZIP archives (or directories) into MSIX App Packages.
   this is an issue with plating.
 """
 
-from __future__ import absolute_import, print_function
-
-from collections import defaultdict
+import functools
 import itertools
 import logging
 import os
+import re
 import shutil
-import sys
 import subprocess
+import sys
 import time
 import urllib
+from collections import defaultdict
+from pathlib import Path
 
-from six.moves import shlex_quote
-
+import mozpack.path as mozpath
 from mach.util import get_state_dir
-from mozbuild.util import ensureParentDir
 from mozfile import which
 from mozpack.copier import FileCopier
 from mozpack.files import FileFinder, JarFinder
 from mozpack.manifests import InstallManifest
 from mozpack.mozjar import JarReader
 from mozpack.packager.unpack import UnpackFinder
+from six.moves import shlex_quote
+
 from mozbuild.repackaging.application_ini import get_application_ini_values
-import mozpack.path as mozpath
+from mozbuild.util import ensureParentDir
 
 
 def log_copy_result(log, elapsed, destdir, result):
@@ -57,6 +58,19 @@ def log_copy_result(log, elapsed, destdir, result):
 _MSIX_ARCH = {"x86": "x86", "x86_64": "x64", "aarch64": "arm64"}
 
 
+@functools.lru_cache(maxsize=None)
+def sdk_tool_search_path():
+    from mozbuild.configure import ConfigureSandbox
+
+    sandbox = ConfigureSandbox({}, argv=["configure"])
+    sandbox.include_file(
+        str(Path(__file__).parent.parent.parent.parent.parent / "moz.configure")
+    )
+    return sandbox._value_for(sandbox["sdk_bin_path"]) + [
+        "c:/Windows/System32/WindowsPowershell/v1.0"
+    ]
+
+
 def find_sdk_tool(binary, log=None):
     if binary.lower().endswith(".exe"):
         binary = binary[:-4]
@@ -71,9 +85,7 @@ def find_sdk_tool(binary, log=None):
         )
         return mozpath.normsep(maybe)
 
-    maybe = which(
-        binary, extra_search_dirs=["c:/Windows/System32/WindowsPowershell/v1.0"]
-    )
+    maybe = which(binary, extra_search_dirs=sdk_tool_search_path())
     if maybe:
         log(
             logging.DEBUG,
@@ -82,34 +94,6 @@ def find_sdk_tool(binary, log=None):
             "Found {binary} on path: {path}",
         )
         return mozpath.normsep(maybe)
-
-    sdk = os.environ.get("WINDOWSSDKDIR") or "C:/Program Files (x86)/Windows Kits/10"
-    log(
-        logging.DEBUG,
-        "msix",
-        {"binary": binary, "sdk": sdk},
-        "Looking for {binary} in Windows SDK: {sdk}",
-    )
-
-    if sdk:
-        # Like `bin/VERSION/ARCH/tool.exe`.
-        finder = FileFinder(sdk)
-
-        # TODO: handle running on ARM.
-        is_64bits = sys.maxsize > 2 ** 32
-        arch = "x64" if is_64bits else "x86"
-
-        for p, f in finder.find(
-            "bin/**/{arch}/{binary}.exe".format(arch=arch, binary=binary)
-        ):
-            maybe = mozpath.normsep(mozpath.join(sdk, p))
-            log(
-                logging.DEBUG,
-                "msix",
-                {"binary": binary, "path": maybe},
-                "Found {binary} in Windows SDK: {path}",
-            )
-            return maybe
 
     return None
 
@@ -185,17 +169,19 @@ def get_embedded_version(version, buildid):
     return version
 
 
-def get_appconstants_jsm_values(finder, *args):
+def get_appconstants_sys_mjs_values(finder, *args):
     r"""Extract values, such as the display version like `MOZ_APP_VERSION_DISPLAY:
     "...";`, from the omnijar.  This allows to determine the beta number, like
     `X.YbW`, where the regular beta version is only `X.Y`.  Takes a list of
     names and returns an iterator of the unique such value found for each name.
     Raises an exception if a name is not found or if multiple values are found.
     """
-
     lines = defaultdict(list)
-    for _, f in finder.find("**/modules/AppConstants.jsm"):
-        for line in f.open().read().decode("utf-8").splitlines():
+    for _, f in finder.find("**/modules/AppConstants.sys.mjs"):
+        # MOZ_OFFICIAL_BRANDING is split across two lines, so remove line breaks
+        # immediately following ":"s so those values can be read.
+        data = f.open().read().decode("utf-8").replace(":\n", ":")
+        for line in data.splitlines():
             for arg in args:
                 if arg in line:
                     lines[arg].append(line)
@@ -205,6 +191,70 @@ def get_appconstants_jsm_values(finder, *args):
         _, _, value = value.partition(":")
         value = value.strip().strip('",;')
         yield value
+
+
+def get_branding(use_official, topsrcdir, build_app, finder, log=None):
+    """Figure out which branding directory to use."""
+    conf_vars = mozpath.join(topsrcdir, build_app, "confvars.sh")
+
+    def conf_vars_value(key):
+        lines = open(conf_vars).readlines()
+        for line in lines:
+            line = line.strip()
+            if line and line[0] == "#":
+                continue
+            if key not in line:
+                continue
+            _, _, value = line.partition("=")
+            if not value:
+                continue
+            log(
+                logging.INFO,
+                "msix",
+                {"key": key, "conf_vars": conf_vars, "value": value},
+                "Read '{key}' from {conf_vars}: {value}",
+            )
+            return value
+        log(
+            logging.ERROR,
+            "msix",
+            {"key": key, "conf_vars": conf_vars},
+            "Unable to find '{key}' in {conf_vars}!",
+        )
+
+    # Branding defaults
+    branding_reason = "No branding set"
+    branding = conf_vars_value("MOZ_BRANDING_DIRECTORY")
+
+    if use_official:
+        # Read MOZ_OFFICIAL_BRANDING_DIRECTORY from confvars.sh
+        branding_reason = "'MOZ_OFFICIAL_BRANDING' set"
+        branding = conf_vars_value("MOZ_OFFICIAL_BRANDING_DIRECTORY")
+    else:
+        # Check if --with-branding was used when building
+        log(
+            logging.INFO,
+            "msix",
+            {},
+            "Checking buildconfig.html for --with-branding build flag.",
+        )
+        for _, f in finder.find("**/chrome/toolkit/content/global/buildconfig.html"):
+            data = f.open().read().decode("utf-8")
+            match = re.search(r"--with-branding=([a-z/]+)", data)
+            if match:
+                branding_reason = "'--with-branding' set"
+                branding = match.group(1)
+
+    log(
+        logging.INFO,
+        "msix",
+        {
+            "branding_reason": branding_reason,
+            "branding": branding,
+        },
+        "{branding_reason}; Using branding from '{branding}'.",
+    )
+    return mozpath.join(topsrcdir, branding)
 
 
 def unpack_msix(input_msix, output, log=None, verbose=False):
@@ -275,15 +325,13 @@ def unpack_msix(input_msix, output, log=None, verbose=False):
 
 def repackage_msix(
     dir_or_package,
+    topsrcdir,
     channel=None,
-    branding=None,
-    template=None,
     distribution_dirs=[],
-    locale_allowlist=set(),
     version=None,
     vendor=None,
     displayname=None,
-    app_name="firefox",
+    app_name=None,
     identity=None,
     publisher=None,
     publisher_display_name="Mozilla Corporation",
@@ -296,13 +344,14 @@ def repackage_msix(
 ):
     if not channel:
         raise Exception("channel is required")
-    if channel not in ["official", "beta", "aurora", "nightly", "unofficial"]:
+    if channel not in (
+        "official",
+        "beta",
+        "aurora",
+        "nightly",
+        "unofficial",
+    ):
         raise Exception("channel is unrecognized: {}".format(channel))
-
-    if not branding:
-        raise Exception("branding dir is required")
-    if not os.path.isdir(branding):
-        raise Exception("branding dir {} does not exist".format(branding))
 
     # TODO: maybe we can fish this from the package directly?  Maybe from a DLL,
     # maybe from application.ini?
@@ -365,14 +414,32 @@ def repackage_msix(
     second = next(values)
     vendor = vendor or second
 
-    # For `AppConstants.jsm` and `brand.properties`, which are in the omnijar in packaged builds.
-    # The nested langpack XPI files can't be read by `mozjar.py`.
+    # For `AppConstants.sys.mjs` and `brand.properties`, which are in the omnijar in packaged
+    # builds. The nested langpack XPI files can't be read by `mozjar.py`.
     unpack_finder = UnpackFinder(finder, unpack_xpi=False)
 
+    values = get_appconstants_sys_mjs_values(
+        unpack_finder,
+        "MOZ_OFFICIAL_BRANDING",
+        "MOZ_BUILD_APP",
+        "MOZ_APP_NAME",
+        "MOZ_APP_VERSION_DISPLAY",
+        "MOZ_BUILDID",
+    )
+    try:
+        use_official_branding = {"true": True, "false": False}[next(values)]
+    except KeyError as err:
+        raise Exception(
+            f"Unexpected value '{err.args[0]}' found for 'MOZ_OFFICIAL_BRANDING'."
+        ) from None
+
+    build_app = next(values)
+
+    _temp = next(values)
+    if not app_name:
+        app_name = _temp
+
     if not version:
-        values = get_appconstants_jsm_values(
-            unpack_finder, "MOZ_APP_VERSION_DISPLAY", "MOZ_BUILDID"
-        )
         display_version = next(values)
         buildid = next(values)
         version = get_embedded_version(display_version, buildid)
@@ -384,8 +451,8 @@ def repackage_msix(
                 "display_version": display_version,
                 "buildid": buildid,
             },
-            "AppConstants.jsm display version is '{display_version}' and build ID is '{buildid}':"
-            + " embedded version will be '{version}'",
+            "AppConstants.sys.mjs display version is '{display_version}' and build ID is"
+            + " '{buildid}': embedded version will be '{version}'",
         )
 
     # TODO: Bug 1721922: localize this description via Fluent.
@@ -404,33 +471,20 @@ def repackage_msix(
         # Release (official) and Beta share branding.  Differentiate Beta a little bit.
         brandFullName += " Beta"
 
-    # We don't have a build at repackage-time to give us these values, and the
-    # source of truth is a branding-specific `configure.sh` shell script that we
-    # can't easily evaluate completely here.  Instead, we choose a value from
-    # `configure.sh` depending on the channel.
-    brandingUuids = {}
-    lines = open(mozpath.join(branding, "configure.sh")).readlines()
-    # For official (release) and unofficial channels, we want the second UUID in
-    # configure.sh. For official, this is because the first set of UUIDs are for
-    # beta, but we want release. For unofficial, the first set of UUIDs are for
-    # debug builds; we assume non-debug here.
-    if channel in ("official", "unofficial"):
-        # To get the last UUID, we reverse the lines.
-        lines.reverse()
-    for key in (
-        "MOZ_IGECKOBACKCHANNEL_IID",
-        "MOZ_IHANDLERCONTROL_IID",
-        "MOZ_ASYNCIHANDLERCONTROL_IID",
-    ):
-        for line in lines:
-            if key not in line:
-                continue
-            _, _, uuid = line.partition("=")
-            uuid = uuid.strip()
-            if uuid.startswith(('"', "'")):
-                uuid = uuid[1:-1]
-            brandingUuids[key] = uuid
-            break
+    branding = get_branding(
+        use_official_branding, topsrcdir, build_app, unpack_finder, log
+    )
+    if not os.path.isdir(branding):
+        raise Exception("branding dir {} does not exist".format(branding))
+
+    template = os.path.join(topsrcdir, build_app, "installer", "windows", "msix")
+
+    # Discard everything after a '#' comment character.
+    locale_allowlist = set(
+        locale.partition("#")[0].strip().lower()
+        for locale in open(os.path.join(template, "msix-all-locales")).readlines()
+        if locale.partition("#")[0].strip()
+    )
 
     # The convention is $MOZBUILD_STATE_PATH/cache/$FEATURE.
     output_dir = mozpath.normsep(
@@ -476,7 +530,7 @@ def repackage_msix(
     for p, f in finder:
         if not os.path.isdir(dir_or_package):
             # In archived builds, `p` is like "firefox/firefox.exe"; we want just "firefox.exe".
-            pp = os.path.relpath(p, "firefox")
+            pp = os.path.relpath(p, app_name)
         else:
             # In local builds and unpacked MSIX directories, `p` is like "firefox.exe" already.
             pp = p
@@ -526,7 +580,7 @@ def repackage_msix(
                     mozpath.join(
                         base,
                         f"locale-{locale}",
-                        f"langpack-{locale}@firefox.mozilla.org.xpi",
+                        f"langpack-{locale}@{app_name}.mozilla.org.xpi",
                     )
                 )
 
@@ -634,7 +688,6 @@ def repackage_msix(
         # Keep synchronized with `toolkit\mozapps\notificationserver\NotificationComServer.cpp`.
         "MOZ_INOTIFICATIONACTIVATION_CLSID": "916f9b5d-b5b2-4d36-b047-03c7a52f81c8",
     }
-    defines.update(brandingUuids)
 
     m.add_preprocess(
         mozpath.join(template, "AppxManifest.xml.in"),
@@ -648,12 +701,12 @@ def repackage_msix(
     output_dir = mozpath.abspath(output_dir)
     ensureParentDir(output_dir)
 
-    start = time.time()
+    start = time.monotonic()
     result = copier.copy(
         output_dir, remove_empty_directories=True, skip_if_older=not force
     )
     if log:
-        log_copy_result(log, time.time() - start, output_dir, result)
+        log_copy_result(log, time.monotonic() - start, output_dir, result)
 
     if verbose:
         # Dump AppxManifest.xml contents for ease of debugging.

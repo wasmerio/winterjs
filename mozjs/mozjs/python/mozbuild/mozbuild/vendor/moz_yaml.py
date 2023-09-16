@@ -7,8 +7,6 @@
 # Requires `pyyaml` and `voluptuous`
 # (both are in-tree under third_party/python)
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import errno
 import os
 import re
@@ -19,14 +17,14 @@ from voluptuous import (
     All,
     Boolean,
     FqdnUrl,
+    In,
+    Invalid,
     Length,
     Match,
     Msg,
     Required,
     Schema,
     Unique,
-    In,
-    Invalid,
 )
 from yaml.error import MarkedYAMLError
 
@@ -58,7 +56,7 @@ VALID_LICENSES = [
     "Unicode",  # http://www.unicode.org/copyright.html
 ]
 
-VALID_SOURCE_HOSTS = ["gitlab", "googlesource", "github", "angle"]
+VALID_SOURCE_HOSTS = ["gitlab", "googlesource", "github", "angle", "codeberg"]
 
 """
 ---
@@ -104,45 +102,9 @@ origin:
   # optional
   license-file: COPYING
 
-# Configuration for automatic updating system.
-# optional
-updatebot:
-
-  # TODO: allow multiple users to be specified
-  # Phabricator username for a maintainer of the library, used for assigning
-  # reviewers
-  maintainer-phab: tjr
-
-  # Bugzilla email address for a maintainer of the library, used for needinfos
-  maintainer-bz: tom@mozilla.com
-
-  # Optional: A query string for ./mach try fuzzy. If it and fuzzy-paths are omitted then
-  # ./mach try auto will be used
-  fuzzy-query: media
-
-  # Optional: An array of test paths for ./mach try fuzzy. If it and fuzzy-query are omitted then
-  # ./mach try auto will be used
-  fuzzy-paths: ['media']
-
-  # The tasks that Updatebot can run. Only one of each task is currently permitted
-  # optional
-  tasks:
-    - type: commit-alert
-      branch: upstream-branch-name
-      cc: ["bugzilla@email.address", "another@example.com"]
-      needinfo: ["bugzilla@email.address", "another@example.com"]
-      enabled: True
-      filter: security
-      frequency: every
-      platform: windows
-      blocking: 1234
-    - type: vendoring
-      branch: master
-      enabled: False
-
-      # frequency can be 'every', 'release', 'N weeks', 'N commits'
-      # or 'N weeks, M commits' requiring satisfying both constraints.
-      frequency: 2 weeks
+  # If there are any mozilla-specific notes you want to put
+  # about a library, they can be put here.
+  notes: Notes about the library
 
 # Configuration for the automated vendoring system.
 # optional
@@ -159,10 +121,12 @@ vendoring:
   source-hosting: gitlab
 
   # Type of Vendoring
-  # This is either 'rust' or 'regular'
+  # This is either 'regular', 'individual-files', or 'rust'
+  # If omitted, will default to 'regular'
   flavor: rust
 
   # Type of git reference (commit, tag) to track updates from.
+  # You cannot use tag tracking with the individual-files flavor
   # If omitted, will default to tracking commits.
   tracking: commit
 
@@ -179,7 +143,6 @@ vendoring:
     - include
     - exclude
     - move-contents
-    - update-actions
     - hg-add
     - spurious-check
     - update-moz-yaml
@@ -309,6 +272,51 @@ vendoring:
     - action: run-script
       script: '{cwd}/generate_sources.sh'
       cwd: '{yaml_dir}'
+
+
+# Configuration for automatic updating system.
+# optional
+updatebot:
+
+  # TODO: allow multiple users to be specified
+  # Phabricator username for a maintainer of the library, used for assigning
+  # reviewers. For a review group, preface with #, such as "#build""
+  maintainer-phab: tjr
+
+  # Bugzilla email address for a maintainer of the library, used for needinfos
+  maintainer-bz: tom@mozilla.com
+
+  # Optional: A preset for ./mach try to use. If present, fuzzy-query and fuzzy-paths will
+  # be ignored. If it, fuzzy-query, and fuzzy-path are omitted, ./mach try auto will be used
+  try-preset: media
+
+  # Optional: A query string for ./mach try fuzzy. If try-preset, it and fuzzy-paths are omitted
+  # then ./mach try auto will be used
+  fuzzy-query: media
+
+  # Optional: An array of test paths for ./mach try fuzzy. If try-preset, it and fuzzy-query are
+  # omitted then ./mach try auto will be used
+  fuzzy-paths: ['media']
+
+  # The tasks that Updatebot can run. Only one of each task is currently permitted
+  # optional
+  tasks:
+    - type: commit-alert
+      branch: upstream-branch-name
+      cc: ["bugzilla@email.address", "another@example.com"]
+      needinfo: ["bugzilla@email.address", "another@example.com"]
+      enabled: True
+      filter: security
+      frequency: every
+      platform: windows
+      blocking: 1234
+    - type: vendoring
+      branch: master
+      enabled: False
+
+      # frequency can be 'every', 'release', 'N weeks', 'N commits'
+      # or 'N weeks, M commits' requiring satisfying both constraints.
+      frequency: 2 weeks
 """
 
 RE_SECTION = re.compile(r"^(\S[^:]*):").search
@@ -373,6 +381,7 @@ def _schema_1():
             "origin": {
                 Required("name"): All(str, Length(min=1)),
                 Required("description"): All(str, Length(min=1)),
+                "notes": All(str, Length(min=1)),
                 Required("url"): FqdnUrl(),
                 Required("license"): Msg(License(), msg="Unsupported License"),
                 "license-file": All(str, Length(min=1)),
@@ -387,6 +396,7 @@ def _schema_1():
             "updatebot": {
                 Required("maintainer-phab"): All(str, Length(min=1)),
                 Required("maintainer-bz"): All(str, Length(min=1)),
+                "try-preset": All(str, Length(min=1)),
                 "fuzzy-query": All(str, Length(min=1)),
                 "fuzzy-paths": All([str], Length(min=1)),
                 "tasks": All(
@@ -423,8 +433,8 @@ def _schema_1():
                     Length(min=1),
                     In(VALID_SOURCE_HOSTS, msg="Unsupported Source Hosting"),
                 ),
-                "tracking": All(str, Length(min=1)),
-                "flavor": Match(r"^(regular|rust)$"),
+                "tracking": Match(r"^(commit|tag)$"),
+                "flavor": Match(r"^(regular|rust|individual-files)$"),
                 "skip-vendoring-steps": Unique([str]),
                 "vendor-directory": All(str, Length(min=1)),
                 "patches": Unique([str]),
@@ -432,6 +442,15 @@ def _schema_1():
                 "exclude": Unique([str]),
                 "include": Unique([str]),
                 "generated": Unique([str]),
+                "individual-files": [
+                    {
+                        Required("upstream"): All(str, Length(min=1)),
+                        Required("destination"): All(str, Length(min=1)),
+                    }
+                ],
+                "individual-files-default-upstream": All(str, Length(min=1)),
+                "individual-files-default-destination": All(str, Length(min=1)),
+                "individual-files-list": Unique([str]),
                 "update-actions": All(
                     UpdateActions(),
                     [
@@ -510,26 +529,111 @@ def _schema_1_additional(filename, manifest, require_license_file=True):
             'If "vendoring" is present, "revision" must be present in "origin"'
         )
 
-    # Only commit and tag are allowed for tracking
-    if "vendoring" in manifest:
-        if "tracking" not in manifest["vendoring"]:
-            manifest["vendoring"]["tracking"] = "commit"
+    # The Rust and Individual Flavor type precludes a lot of options
+    # individual-files could, in theory, use several of these, but until we have a use case let's
+    # disallow them so we're not worrying about whether they work. When we need them we can make
+    # sure they do.
+    if (
+        "vendoring" in manifest
+        and manifest["vendoring"].get("flavor", "regular") != "regular"
+    ):
+        for i in [
+            "skip-vendoring-steps",
+            "keep",
+            "exclude",
+            "include",
+            "generated",
+        ]:
+            if i in manifest["vendoring"]:
+                raise ValueError("A non-regular flavor of update cannot use '%s'" % i)
+
+        if manifest["vendoring"].get("flavor", "regular") == "rust":
+            for i in [
+                "update-actions",
+            ]:
+                if i in manifest["vendoring"]:
+                    raise ValueError("A rust flavor of update cannot use '%s'" % i)
+
+    # Ensure that only individual-files flavor uses those options
+    if (
+        "vendoring" in manifest
+        and manifest["vendoring"].get("flavor", "regular") != "individual-files"
+    ):
         if (
-            manifest["vendoring"]["tracking"] != "commit"
-            and manifest["vendoring"]["tracking"] != "tag"
+            "individual-files" in manifest["vendoring"]
+            or "individual-files-list" in manifest["vendoring"]
         ):
             raise ValueError(
-                "Only commit or tag is supported for git references to track, %s was given."
-                % manifest["vendoring"]["tracking"]
+                "Only individual-files flavor of update can use 'individual-files'"
             )
 
-    # If there are Updatebot tasks, then certain fields must be present and
-    # defaults need to be set.
-    if "updatebot" in manifest and "tasks" in manifest["updatebot"]:
-        if "vendoring" not in manifest or "url" not in manifest["vendoring"]:
+    # Ensure that the individual-files flavor has all the correct options
+    if (
+        "vendoring" in manifest
+        and manifest["vendoring"].get("flavor", "regular") == "individual-files"
+    ):
+        # Because the only way we can determine the latest tag is by doing a local clone,
+        # we don't want to do that for individual-files flavors because those flavors are
+        # usually on gigantic repos we don't want to clone for such a simple thing.
+        if manifest["vendoring"].get("tracking", "commit") == "tag":
             raise ValueError(
-                "If Updatebot tasks are specified, a vendoring url must be included."
+                "You cannot use tag tracking with the individual-files flavor. (Sorry.)"
             )
+
+        # We need either individual-files or individual-files-list
+        if (
+            "individual-files" not in manifest["vendoring"]
+            and "individual-files-list" not in manifest["vendoring"]
+        ):
+            raise ValueError(
+                "The individual-files flavor must include either "
+                + "'individual-files' or 'individual-files-list'"
+            )
+        # For whichever we have, make sure we don't have the other and we don't have
+        # options we shouldn't or lack ones we should.
+        if "individual-files" in manifest["vendoring"]:
+            if "individual-files-list" in manifest["vendoring"]:
+                raise ValueError(
+                    "individual-files-list is mutually exclusive with individual-files"
+                )
+            if "individual-files-default-upstream" in manifest["vendoring"]:
+                raise ValueError(
+                    "individual-files-default-upstream can only be used with individual-files-list"
+                )
+            if "individual-files-default-destination" in manifest["vendoring"]:
+                raise ValueError(
+                    "individual-files-default-destination can only be used "
+                    + "with individual-files-list"
+                )
+        if "individual-files-list" in manifest["vendoring"]:
+            if "individual-files" in manifest["vendoring"]:
+                raise ValueError(
+                    "individual-files is mutually exclusive with individual-files-list"
+                )
+            if "individual-files-default-upstream" not in manifest["vendoring"]:
+                raise ValueError(
+                    "individual-files-default-upstream must be used with individual-files-list"
+                )
+            if "individual-files-default-destination" not in manifest["vendoring"]:
+                raise ValueError(
+                    "individual-files-default-destination must be used with individual-files-list"
+                )
+
+    if "updatebot" in manifest:
+        # If there are Updatebot tasks, then certain fields must be present and
+        # defaults need to be set.
+        if "tasks" in manifest["updatebot"]:
+            if "vendoring" not in manifest or "url" not in manifest["vendoring"]:
+                raise ValueError(
+                    "If Updatebot tasks are specified, a vendoring url must be included."
+                )
+
+        if "try-preset" in manifest["updatebot"]:
+            for f in ["fuzzy-query", "fuzzy-paths"]:
+                if f in manifest["updatebot"]:
+                    raise ValueError(
+                        "If 'try-preset' is specified, then %s cannot be" % f
+                    )
 
     # Check for a simple YAML file
     with open(filename, "r") as f:
@@ -567,7 +671,7 @@ class UpdateActions(object):
         for v in values:
             if "action" not in v:
                 raise Invalid("All file-update entries must specify a valid action")
-            if v["action"] in ["copy-file", "move-file", "movie-dir"]:
+            if v["action"] in ["copy-file", "move-file", "move-dir"]:
                 if "from" not in v or "to" not in v or len(v.keys()) != 3:
                     raise Invalid(
                         "%s action must (only) specify 'from' and 'to' keys"
@@ -631,10 +735,11 @@ class UpdatebotTasks(object):
             seenTaskTypes.add(v["type"])
 
             if v["type"] == "vendoring":
-                if "filter" in v or "source-extensions" in v:
-                    raise Invalid(
-                        "'filter' and 'source-extensions' only valid for commit-alert task types"
-                    )
+                for i in ["filter", "branch", "source-extensions"]:
+                    if i in v:
+                        raise Invalid(
+                            "'%s' is only valid for commit-alert task types" % i
+                        )
             elif v["type"] == "commit-alert":
                 pass
             else:

@@ -3,15 +3,15 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import json
 import os
-import threading
 import socketserver
+import threading
 import time
 from pathlib import Path
 
 from mozlog import get_proxy_logger
+
 from mozperftest.layers import Layer
 from mozperftest.utils import install_package
-
 
 LOG = get_proxy_logger(component="proxy")
 HERE = os.path.dirname(__file__)
@@ -34,14 +34,14 @@ class PingServer(Layer):
     def _wait_for_server(self, endpoint):
         import requests
 
-        start = time.time()
+        start = time.monotonic()
         while True:
             try:
                 requests.get(endpoint, timeout=0.1)
                 return
             except Exception:
                 # we want to wait at most 5sec.
-                if time.time() - start > 5.0:
+                if time.monotonic() - start > 5.0:
                     raise
                 time.sleep(0.01)
 

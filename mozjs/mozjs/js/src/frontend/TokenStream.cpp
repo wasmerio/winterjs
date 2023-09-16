@@ -31,6 +31,7 @@
 #include "jsnum.h"
 
 #include "frontend/BytecodeCompiler.h"
+#include "frontend/FrontendContext.h"
 #include "frontend/Parser.h"
 #include "frontend/ParserAtom.h"
 #include "frontend/ReservedWords.h"
@@ -40,7 +41,6 @@
 #include "js/UniquePtr.h"
 #include "util/Text.h"
 #include "util/Unicode.h"
-#include "vm/ErrorContext.h"
 #include "vm/FrameIter.h"  // js::{,NonBuiltin}FrameIter
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
@@ -356,9 +356,9 @@ TaggedParserAtomIndex TokenStreamAnyChars::reservedWordToPropertyName(
   return TaggedParserAtomIndex::null();
 }
 
-SourceCoords::SourceCoords(JSContext* cx, uint32_t initialLineNumber,
+SourceCoords::SourceCoords(FrontendContext* fc, uint32_t initialLineNumber,
                            uint32_t initialOffset)
-    : lineStartOffsets_(cx), initialLineNum_(initialLineNumber), lastIndex_(0) {
+    : lineStartOffsets_(fc), initialLineNum_(initialLineNumber), lastIndex_(0) {
   // This is actually necessary!  Removing it causes compile errors on
   // GCC and clang.  You could try declaring this:
   //
@@ -491,16 +491,15 @@ SourceCoords::LineToken SourceCoords::lineToken(uint32_t offset) const {
   return LineToken(indexFromOffset(offset), offset);
 }
 
-TokenStreamAnyChars::TokenStreamAnyChars(JSContext* cx, ErrorContext* ec,
+TokenStreamAnyChars::TokenStreamAnyChars(FrontendContext* fc,
                                          const ReadOnlyCompileOptions& options,
                                          StrictModeGetter* smg)
-    : cx(cx),
-      ec(ec),
+    : fc(fc),
       options_(options),
       strictModeGetter_(smg),
       filename_(options.filename()),
-      longLineColumnInfo_(cx),
-      srcCoords(cx, options.lineno, options.scriptSourceOffset),
+      longLineColumnInfo_(fc),
+      srcCoords(fc, options.lineno, options.scriptSourceOffset),
       lineno(options.lineno),
       mutedErrors(options.mutedErrors()) {
   // |isExprEnding| was initially zeroed: overwrite the true entries here.
@@ -513,10 +512,12 @@ TokenStreamAnyChars::TokenStreamAnyChars(JSContext* cx, ErrorContext* ec,
 }
 
 template <typename Unit>
-TokenStreamCharsBase<Unit>::TokenStreamCharsBase(
-    JSContext* cx, ErrorContext* ec, ParserAtomsTable* parserAtoms,
-    const Unit* units, size_t length, size_t startOffset)
-    : TokenStreamCharsShared(cx, ec, parserAtoms),
+TokenStreamCharsBase<Unit>::TokenStreamCharsBase(FrontendContext* fc,
+                                                 ParserAtomsTable* parserAtoms,
+                                                 const Unit* units,
+                                                 size_t length,
+                                                 size_t startOffset)
+    : TokenStreamCharsShared(fc, parserAtoms),
       sourceUnits(units, length, startOffset) {}
 
 bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
@@ -580,9 +581,9 @@ bool FillCharBufferFromSourceNormalizingAsciiLineBreaks(CharBuffer& charBuffer,
 
 template <typename Unit, class AnyCharsAccess>
 TokenStreamSpecific<Unit, AnyCharsAccess>::TokenStreamSpecific(
-    JSContext* cx, ErrorContext* ec, ParserAtomsTable* parserAtoms,
+    FrontendContext* fc, ParserAtomsTable* parserAtoms,
     const ReadOnlyCompileOptions& options, const Unit* units, size_t length)
-    : TokenStreamChars<Unit, AnyCharsAccess>(cx, ec, parserAtoms, units, length,
+    : TokenStreamChars<Unit, AnyCharsAccess>(fc, parserAtoms, units, length,
                                              options.scriptSourceOffset) {}
 
 bool TokenStreamAnyChars::checkOptions() {
@@ -609,7 +610,7 @@ void TokenStreamAnyChars::reportErrorNoOffsetVA(unsigned errorNumber,
   ErrorMetadata metadata;
   computeErrorMetadataNoOffset(&metadata);
 
-  ReportCompileErrorLatin1(ec, std::move(metadata), nullptr, errorNumber, args);
+  ReportCompileErrorLatin1(fc, std::move(metadata), nullptr, errorNumber, args);
 }
 
 [[nodiscard]] MOZ_ALWAYS_INLINE bool
@@ -810,9 +811,9 @@ uint32_t TokenStreamAnyChars::computePartialColumn(
     if (!ptr) {
       // This could rehash and invalidate a cached vector pointer, but the outer
       // condition means we don't have a cached pointer.
-      if (!longLineColumnInfo_.add(ptr, line, Vector<ChunkInfo>(cx))) {
+      if (!longLineColumnInfo_.add(ptr, line, Vector<ChunkInfo>(fc))) {
         // In case of OOM, just count columns from the start of the line.
-        ec->recoverFromOutOfMemory();
+        fc->recoverFromOutOfMemory();
         return ColumnFromPartial(start, 0, UnitsType::PossiblyMultiUnit);
       }
     }
@@ -881,7 +882,7 @@ uint32_t TokenStreamAnyChars::computePartialColumn(
 
     if (!lastChunkVectorForLine_->reserve(chunkIndex + 1)) {
       // As earlier, just start from the greatest offset/column in case of OOM.
-      ec->recoverFromOutOfMemory();
+      fc->recoverFromOutOfMemory();
       return ColumnFromPartial(partialOffset, partialColumn,
                                UnitsType::PossiblyMultiUnit);
     }
@@ -1007,7 +1008,7 @@ MOZ_COLD void TokenStreamChars<Utf8Unit, AnyCharsAccess>::internalEncodingError(
 
     auto notes = MakeUnique<JSErrorNotes>();
     if (!notes) {
-      ReportOutOfMemory(anyChars.ec);
+      ReportOutOfMemory(anyChars.fc);
       break;
     }
 
@@ -1033,13 +1034,13 @@ MOZ_COLD void TokenStreamChars<Utf8Unit, AnyCharsAccess>::internalEncodingError(
     uint32_t line, column;
     computeLineAndColumn(offset, &line, &column);
 
-    if (!notes->addNoteASCII(anyChars.ec, anyChars.getFilename(), 0, line,
+    if (!notes->addNoteASCII(anyChars.fc, anyChars.getFilename(), 0, line,
                              column, GetErrorMessage, nullptr,
                              JSMSG_BAD_CODE_UNITS, badUnitsStr)) {
       break;
     }
 
-    ReportCompileErrorLatin1(anyChars.ec, std::move(err), std::move(notes),
+    ReportCompileErrorLatin1(anyChars.fc, std::move(err), std::move(notes),
                              errorNumber, &args);
   } while (false);
 
@@ -1217,23 +1218,6 @@ bool TokenStreamChars<char16_t, AnyCharsAccess>::getNonAsciiCodePoint(
   *codePoint = unicode::UTF16Decode(lead, this->sourceUnits.getCodeUnit());
   MOZ_ASSERT(!IsLineTerminator(*codePoint));
   return true;
-}
-
-template <typename Unit, class AnyCharsAccess>
-bool TokenStreamSpecific<Unit, AnyCharsAccess>::getCodePoint() {
-  int32_t unit = getCodeUnit();
-  if (unit == EOF) {
-    MOZ_ASSERT(anyCharsAccess().flags.isEOF,
-               "flags.isEOF should have been set by getCodeUnit()");
-    return true;
-  }
-
-  if (isAsciiCodePoint(unit)) {
-    return getFullAsciiCodePoint(unit);
-  }
-
-  char32_t cp;
-  return getNonAsciiCodePoint(unit, &cp);
 }
 
 template <class AnyCharsAccess>
@@ -1604,13 +1588,17 @@ bool TokenStreamAnyChars::fillExceptingContext(ErrorMetadata* err,
 
   // If this TokenStreamAnyChars doesn't have location information, try to
   // get it from the caller.
-  if (!filename_ && !cx->isHelperThreadContext()) {
-    NonBuiltinFrameIter iter(cx, FrameIter::FOLLOW_DEBUGGER_EVAL_PREV_LINK,
-                             cx->realm()->principals());
-    if (!iter.done() && iter.filename()) {
-      err->filename = iter.filename();
-      err->lineNumber = iter.computeLine(&err->columnNumber);
-      return false;
+  if (!filename_) {
+    JSContext* maybeCx = context()->maybeCurrentJSContext();
+    if (maybeCx && !maybeCx->isHelperThreadContext()) {
+      NonBuiltinFrameIter iter(maybeCx,
+                               FrameIter::FOLLOW_DEBUGGER_EVAL_PREV_LINK,
+                               maybeCx->realm()->principals());
+      if (!iter.done() && iter.filename()) {
+        err->filename = iter.filename();
+        err->lineNumber = iter.computeLine(&err->columnNumber);
+        return false;
+      }
     }
   }
 
@@ -1691,7 +1679,7 @@ bool TokenStreamCharsBase<Unit>::addLineOfContext(ErrorMetadata* err,
     return true;
   }
 
-  CharBuffer lineOfContext(cx);
+  CharBuffer lineOfContext(fc);
 
   const Unit* encodedWindow = sourceUnits.codeUnitPtrAt(encodedWindowStart);
   if (!FillCharBufferFromSourceNormalizingAsciiLineBreaks(
@@ -1787,7 +1775,7 @@ void TokenStreamSpecific<Unit, AnyCharsAccess>::reportIllegalCharacter(
     int32_t cp) {
   UniqueChars display = JS_smprintf("U+%04X", cp);
   if (!display) {
-    ReportOutOfMemory(anyCharsAccess().ec);
+    ReportOutOfMemory(anyCharsAccess().fc);
     return;
   }
   error(JSMSG_ILLEGAL_CHARACTER, display.get());
@@ -1970,10 +1958,10 @@ bool TokenStreamSpecific<Unit, AnyCharsAccess>::getDirectives(
 }
 
 [[nodiscard]] bool TokenStreamCharsShared::copyCharBufferTo(
-    JSContext* cx, UniquePtr<char16_t[], JS::FreePolicy>* destination) {
+    UniquePtr<char16_t[], JS::FreePolicy>* destination) {
   size_t length = charBuffer.length();
 
-  *destination = cx->make_pod_array<char16_t>(length + 1);
+  *destination = fc->getAllocator()->make_pod_array<char16_t>(length + 1);
   if (!*destination) {
     return false;
   }
@@ -2054,7 +2042,7 @@ template <typename Unit, class AnyCharsAccess>
     return true;
   }
 
-  return copyCharBufferTo(anyCharsAccess().cx, destination);
+  return copyCharBufferTo(destination);
 }
 
 template <typename Unit, class AnyCharsAccess>
@@ -2444,8 +2432,11 @@ TokenStreamSpecific<Unit, AnyCharsAccess>::matchIntegerAfterFirstDigit(
     unit = getCodeUnit();
     if (!isIntegerUnit(unit)) {
       if (unit == '_') {
+        ungetCodeUnit(unit);
         error(JSMSG_NUMBER_MULTIPLE_ADJACENT_UNDERSCORES);
       } else {
+        ungetCodeUnit(unit);
+        ungetCodeUnit('_');
         error(JSMSG_NUMBER_END_WITH_UNDERSCORE);
       }
       return false;
@@ -2481,8 +2472,9 @@ template <typename Unit, class AnyCharsAccess>
 
     // Most numbers are pure decimal integers without fractional component
     // or exponential notation.  Handle that with optimized code.
-    if (!GetDecimalInteger(anyCharsAccess().cx, numStart,
-                           this->sourceUnits.addressOfNextCodeUnit(), &dval)) {
+    if (!GetDecimalInteger(numStart, this->sourceUnits.addressOfNextCodeUnit(),
+                           &dval)) {
+      ReportOutOfMemory(this->fc);
       return false;
     }
   } else if (unit == 'n') {
@@ -2519,8 +2511,9 @@ template <typename Unit, class AnyCharsAccess>
 
     ungetCodeUnit(unit);
 
-    if (!GetDecimal(anyCharsAccess().cx, numStart,
-                    this->sourceUnits.addressOfNextCodeUnit(), &dval)) {
+    if (!GetDecimal(numStart, this->sourceUnits.addressOfNextCodeUnit(),
+                    &dval)) {
+      ReportOutOfMemory(this->fc);
       return false;
     }
   }
@@ -2971,11 +2964,13 @@ template <typename Unit, class AnyCharsAccess>
         } while (IsAsciiDigit(unit));
 
         if (unit == '_') {
+          ungetCodeUnit(unit);
           error(JSMSG_SEPARATOR_IN_ZERO_PREFIXED_NUMBER);
           return badToken();
         }
 
         if (unit == 'n') {
+          ungetCodeUnit(unit);
           error(JSMSG_BIGINT_INVALID_SYNTAX);
           return badToken();
         }
@@ -2986,6 +2981,7 @@ template <typename Unit, class AnyCharsAccess>
         }
       } else if (unit == '_') {
         // Give a more explicit error message when '_' is used after '0'.
+        ungetCodeUnit(unit);
         error(JSMSG_SEPARATOR_IN_ZERO_PREFIXED_NUMBER);
         return badToken();
       } else {
@@ -3026,9 +3022,10 @@ template <typename Unit, class AnyCharsAccess>
       }
 
       double dval;
-      if (!GetFullInteger(anyCharsAccess().cx, numStart,
-                          this->sourceUnits.addressOfNextCodeUnit(), radix,
-                          IntegerSeparatorHandling::SkipUnderscore, &dval)) {
+      if (!GetFullInteger(numStart, this->sourceUnits.addressOfNextCodeUnit(),
+                          radix, IntegerSeparatorHandling::SkipUnderscore,
+                          &dval)) {
+        ReportOutOfMemory(this->fc);
         return badToken();
       }
       newNumberToken(dval, NoDecimal, start, modifier, ttp);

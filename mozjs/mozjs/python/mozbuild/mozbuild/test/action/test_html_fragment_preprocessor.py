@@ -1,15 +1,16 @@
 import os
 import unittest
-import mozunit
 import xml.etree.ElementTree as ET
 
+import mozpack.path as mozpath
+import mozunit
+
 from mozbuild.action.html_fragment_preprocesor import (
+    fill_html_fragments_map,
     generate,
     get_fragment_key,
     get_html_fragments_from_file,
-    fill_html_fragments_map,
 )
-import mozpack.path as mozpath
 
 test_data_path = mozpath.abspath(mozpath.dirname(__file__))
 test_data_path = mozpath.join(test_data_path, "data", "html_fragment_preprocesor")
@@ -146,9 +147,9 @@ class TestNode(unittest.TestCase):
             + 'gatekeeper/there.is.only.xul" flex="1" id="label-box" '
             + 'part="label-box" role="none"> '
             + '<image part="icon" role="none"></image> '
-            + '<label crop="right" flex="1" id="label" part="label" '
+            + '<label crop="end" flex="1" id="label" part="label" '
             + 'role="none"></label> '
-            + '<label crop="right" flex="1" id="highlightable-label" '
+            + '<label crop="end" flex="1" id="highlightable-label" '
             + 'part="label" role="none"></label> '
             + "</hbox> "
             + '<html:slot xmlns:html="http://www.w3.org/1999/xhtml">'

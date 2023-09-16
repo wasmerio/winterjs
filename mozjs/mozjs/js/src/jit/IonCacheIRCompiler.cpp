@@ -12,7 +12,9 @@
 #include "jit/CacheIRCompiler.h"
 #include "jit/CacheIRWriter.h"
 #include "jit/IonIC.h"
+#include "jit/JitcodeMap.h"
 #include "jit/JitFrames.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitZone.h"
 #include "jit/JSJitFrameIter.h"
 #include "jit/Linker.h"
@@ -554,7 +556,9 @@ JitCode* IonCacheIRCompiler::compile(IonICStub* stub) {
 
   CacheIRReader reader(writer_);
   do {
-    switch (reader.readOp()) {
+    CacheOp op = reader.readOp();
+    perfSpewer_.recordInstruction(masm, op);
+    switch (op) {
 #define DEFINE_OP(op, ...)                 \
   case CacheOp::op:                        \
     if (!emit##op(reader)) return nullptr; \
@@ -1088,7 +1092,7 @@ bool IonCacheIRCompiler::emitProxyGetResult(ObjOperandId objId,
   masm.enterFakeExitFrame(argJSContext, scratch, ExitFrameType::IonOOLProxy);
 
   // Make the call.
-  using Fn = bool (*)(JSContext * cx, HandleObject proxy, HandleId id,
+  using Fn = bool (*)(JSContext* cx, HandleObject proxy, HandleId id,
                       MutableHandleValue vp);
   masm.setupUnalignedABICall(scratch);
   masm.passABIArg(argJSContext);
@@ -1240,7 +1244,7 @@ bool IonCacheIRCompiler::emitAddAndStoreSlotShared(
                          liveVolatileFloatRegs());
     masm.PushRegsInMask(save);
 
-    using Fn = bool (*)(JSContext * cx, NativeObject * obj, uint32_t newCount);
+    using Fn = bool (*)(JSContext* cx, NativeObject* obj, uint32_t newCount);
     masm.setupUnalignedABICall(scratch1);
     masm.loadJSContext(scratch1);
     masm.passABIArg(scratch1);
@@ -1313,7 +1317,8 @@ bool IonCacheIRCompiler::emitAllocateAndStoreDynamicSlot(
 }
 
 bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
-                                                  Int32OperandId indexId) {
+                                                  Int32OperandId indexId,
+                                                  bool handleOOB) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
   Register str = allocator.useRegister(masm, strId);
@@ -1328,10 +1333,23 @@ bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   }
 
   // Bounds check, load string char.
-  masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
-                            scratch1, failure->label());
-  masm.loadStringChar(str, index, scratch1, scratch2, scratch3,
-                      failure->label());
+  Label done;
+  Label loadFailed;
+  if (!handleOOB) {
+    masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                              scratch1, failure->label());
+    masm.loadStringChar(str, index, scratch1, scratch2, scratch3,
+                        failure->label());
+  } else {
+    // Return the empty string for out-of-bounds access.
+    masm.movePtr(ImmGCPtr(cx_->runtime()->emptyString), scratch2);
+
+    // This CacheIR op is always preceded by |LinearizeForCharAccess|, so we're
+    // guaranteed to see no nested ropes.
+    masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                              scratch1, &done);
+    masm.loadStringChar(str, index, scratch1, scratch2, scratch3, &loadFailed);
+  }
 
   // Load StaticString for this char. For larger code units perform a VM call.
   Label vmCall;
@@ -1340,8 +1358,12 @@ bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   masm.movePtr(ImmPtr(&cx_->staticStrings().unitStaticTable), scratch2);
   masm.loadPtr(BaseIndex(scratch2, scratch1, ScalePointer), scratch2);
 
-  Label done;
   masm.jump(&done);
+
+  if (handleOOB) {
+    masm.bind(&loadFailed);
+    masm.assumeUnreachable("loadStringChar can't fail for linear strings");
+  }
 
   {
     masm.bind(&vmCall);
@@ -1358,7 +1380,7 @@ bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
     volatileRegs.takeUnchecked(output);
     masm.PushRegsInMask(volatileRegs);
 
-    using Fn = JSLinearString* (*)(JSContext * cx, int32_t code);
+    using Fn = JSLinearString* (*)(JSContext* cx, int32_t code);
     masm.setupUnalignedABICall(scratch2);
     masm.loadJSContext(scratch2);
     masm.passABIArg(scratch2);
@@ -1610,7 +1632,7 @@ bool IonCacheIRCompiler::emitCallAddOrUpdateSparseElementHelper(
   masm.Push(id);
   masm.Push(obj);
 
-  using Fn = bool (*)(JSContext * cx, Handle<NativeObject*> obj, int32_t int_id,
+  using Fn = bool (*)(JSContext* cx, Handle<NativeObject*> obj, int32_t int_id,
                       HandleValue v, bool strict);
   callVM<Fn, AddOrUpdateSparseElementHelper>(masm);
   return true;
@@ -1631,14 +1653,12 @@ bool IonCacheIRCompiler::emitMegamorphicSetElement(ObjOperandId objId,
   enterStubFrame(masm, save);
 
   masm.Push(Imm32(strict));
-  masm.Push(TypedOrValueRegister(MIRType::Object, AnyRegister(obj)));
   masm.Push(val);
   masm.Push(idVal);
   masm.Push(obj);
 
-  using Fn = bool (*)(JSContext*, HandleObject, HandleValue, HandleValue,
-                      HandleValue, bool);
-  callVM<Fn, SetElementMegamorphic>(masm);
+  using Fn = bool (*)(JSContext*, HandleObject, HandleValue, HandleValue, bool);
+  callVM<Fn, SetElementMegamorphic<false>>(masm);
   return true;
 }
 
@@ -1650,64 +1670,6 @@ bool IonCacheIRCompiler::emitReturnFromIC() {
 
   uint8_t* rejoinAddr = ic_->rejoinAddr(ionScript_);
   masm.jump(ImmPtr(rejoinAddr));
-  return true;
-}
-
-bool IonCacheIRCompiler::emitGuardAndGetIterator(ObjOperandId objId,
-                                                 uint32_t iterOffset,
-                                                 uint32_t enumeratorsAddrOffset,
-                                                 ObjOperandId resultId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-  AutoScratchRegister niScratch(allocator, masm);
-
-  PropertyIteratorObject* iterobj =
-      &objectStubField(iterOffset)->as<PropertyIteratorObject>();
-  NativeIterator** enumerators =
-      rawPointerStubField<NativeIterator**>(enumeratorsAddrOffset);
-
-  Register output = allocator.defineRegister(masm, resultId);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  // Load our PropertyIteratorObject* and its NativeIterator.
-  masm.movePtr(ImmGCPtr(iterobj), output);
-
-  Address slotAddr(output, PropertyIteratorObject::offsetOfIteratorSlot());
-  masm.loadPrivate(slotAddr, niScratch);
-
-  // Ensure the iterator is reusable: see NativeIterator::isReusable.
-  masm.branchIfNativeIteratorNotReusable(niScratch, failure->label());
-
-  // 'objectBeingIterated_' must be nullptr, so we don't need a pre-barrier.
-  Address iterObjAddr(niScratch, NativeIterator::offsetOfObjectBeingIterated());
-#ifdef DEBUG
-  Label ok;
-  masm.branchPtr(Assembler::Equal, iterObjAddr, ImmPtr(nullptr), &ok);
-  masm.assumeUnreachable("iterator with non-null object");
-  masm.bind(&ok);
-#endif
-
-  // Mark iterator as active.
-  Address iterFlagsAddr(niScratch, NativeIterator::offsetOfFlagsAndCount());
-  masm.storePtr(obj, iterObjAddr);
-  masm.or32(Imm32(NativeIterator::Flags::Active), iterFlagsAddr);
-
-  // Post-write barrier for stores to 'objectBeingIterated_'.
-  emitPostBarrierSlot(output,
-                      TypedOrValueRegister(MIRType::Object, AnyRegister(obj)),
-                      scratch1);
-
-  // Chain onto the active iterator stack.
-  masm.loadPtr(AbsoluteAddress(enumerators), scratch1);
-  emitRegisterEnumerator(scratch1, niScratch, scratch2);
-
   return true;
 }
 
@@ -1849,6 +1811,28 @@ void IonIC::attachCacheIRStub(JSContext* cx, const CacheIRWriter& writer,
     return;
   }
 
+  // Record the stub code if perf spewer is enabled.
+  CacheKind stubKind = newStub->stubInfo()->kind();
+  compiler.perfSpewer().saveProfile(cx, script(), code,
+                                    CacheKindNames[uint8_t(stubKind)]);
+
+  // Add an entry to the profiler's code table, so that the profiler can
+  // identify this as Ion code.
+  if (ionScript->hasProfilingInstrumentation()) {
+    uint8_t* addr = rejoinAddr(ionScript);
+    auto entry = MakeJitcodeGlobalEntry<IonICEntry>(cx, code, code->raw(),
+                                                    code->rawEnd(), addr);
+    if (!entry) {
+      cx->recoverFromOutOfMemory();
+      return;
+    }
+
+    auto* globalTable = cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
+    if (!globalTable->addEntry(std::move(entry))) {
+      return;
+    }
+  }
+
   attachStub(newStub, code);
   *attached = true;
 }
@@ -1967,6 +1951,14 @@ bool IonCacheIRCompiler::emitCallScriptedFunction(ObjOperandId calleeId,
   MOZ_CRASH("Call ICs not used in ion");
 }
 
+bool IonCacheIRCompiler::emitCallBoundScriptedFunction(ObjOperandId calleeId,
+                                                       ObjOperandId targetId,
+                                                       Int32OperandId argcId,
+                                                       CallFlags flags,
+                                                       uint32_t numBoundArgs) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
 bool IonCacheIRCompiler::emitCallWasmFunction(
     ObjOperandId calleeId, Int32OperandId argcId, CallFlags flags,
     uint32_t argcFixed, uint32_t funcExportOffset, uint32_t instanceOffset) {
@@ -2017,6 +2009,17 @@ bool IonCacheIRCompiler::emitCallInlinedFunction(ObjOperandId calleeId,
                                                  uint32_t icScriptOffset,
                                                  CallFlags flags,
                                                  uint32_t argcFixed) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitBindFunctionResult(ObjOperandId targetId,
+                                                uint32_t argc,
+                                                uint32_t templateObjectOffset) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitSpecializedBindFunctionResult(
+    ObjOperandId targetId, uint32_t argc, uint32_t templateObjectOffset) {
   MOZ_CRASH("Call ICs not used in ion");
 }
 
@@ -2111,4 +2114,27 @@ bool IonCacheIRCompiler::emitNewPlainObjectResult(uint32_t numFixedSlots,
                                                   uint32_t shapeOffset,
                                                   uint32_t siteOffset) {
   MOZ_CRASH("NewObject ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitCallRegExpMatcherResult(ObjOperandId regexpId,
+                                                     StringOperandId inputId,
+                                                     Int32OperandId lastIndexId,
+                                                     uint32_t stubOffset) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitCallRegExpSearcherResult(
+    ObjOperandId regexpId, StringOperandId inputId, Int32OperandId lastIndexId,
+    uint32_t stubOffset) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitRegExpBuiltinExecMatchResult(
+    ObjOperandId regexpId, StringOperandId inputId, uint32_t stubOffset) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitRegExpBuiltinExecTestResult(
+    ObjOperandId regexpId, StringOperandId inputId, uint32_t stubOffset) {
+  MOZ_CRASH("Call ICs not used in ion");
 }

@@ -1,11 +1,8 @@
 #!/usr/bin/env python
 # coding=UTF-8
 
-from __future__ import absolute_import
-
 import mozunit
 import pytest
-
 from conftest import fspath
 
 
@@ -39,7 +36,7 @@ def test_test_name_unicode(check_for_crashes, minidump_files, capsys):
     assert 1 == check_for_crashes(test_name=u"🍪", quiet=False)
 
     out, err = capsys.readouterr()
-    assert u"| 🍪 |" in out
+    assert u"| 🍪" in out
 
 
 if __name__ == "__main__":

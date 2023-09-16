@@ -2,17 +2,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
-
-import unittest
-
 import os
 import shutil
-from six import StringIO
-
+import unittest
 from tempfile import mkdtemp
 
-from mozunit import main, MockedOpen
+from mozunit import MockedOpen, main
+from six import StringIO
 
 from mozbuild.preprocessor import Preprocessor
 
@@ -348,6 +344,14 @@ class TestPreprocessor(unittest.TestCase):
             with self.assertRaises(Preprocessor.Error) as e:
                 self.pp.do_include("f")
                 self.assertEqual(e.args[0][-1], "spit this message out")
+
+    def test_ambigous_command(self):
+        comment = "# if I tell you a joke\n"
+        with MockedOpen({"f": comment}):
+            with self.assertRaises(Preprocessor.Error) as e:
+                self.pp.do_include("f")
+            the_exception = e.exception
+            self.assertEqual(the_exception.args[0][-1], comment)
 
     def test_javascript_line(self):
         # The preprocessor is reading the filename from somewhere not caught

@@ -44,6 +44,7 @@ namespace wasm {
 
 using mozilla::EnumeratedArray;
 
+struct ModuleEnvironment;
 struct TableDesc;
 struct V128;
 
@@ -105,7 +106,7 @@ class ArgTypeVector {
     if (isSyntheticStackResultPointerArg(i)) {
       return jit::MIRType::StackResults;
     }
-    return ToMIRType(args_[naturalIndex(i)]);
+    return args_[naturalIndex(i)].toMIRType();
   }
 };
 
@@ -219,6 +220,9 @@ struct FuncOffsets : CallableOffsets {
   // falling through to the normal prologue. The checked call entry is thus at
   // the beginning of the CodeRange and the unchecked call entry is at some
   // offset after the checked call entry.
+  //
+  // Note that there won't always be a checked call entry because not all
+  // functions require them. See GenerateFunctionPrologue.
   uint32_t uncheckedCallEntry;
 
   // The tierEntry is the point within a function to which the patching code
@@ -265,8 +269,8 @@ class CodeRange {
       union {
         struct {
           uint32_t lineOrBytecode_;
-          uint8_t beginToUncheckedCallEntry_;
-          uint8_t beginToTierEntry_;
+          uint16_t beginToUncheckedCallEntry_;
+          uint16_t beginToTierEntry_;
         } func;
       };
     };
@@ -354,6 +358,9 @@ class CodeRange {
 
   uint32_t funcCheckedCallEntry() const {
     MOZ_ASSERT(isFunction());
+    // not all functions have the checked call prologue;
+    // see GenerateFunctionPrologue
+    MOZ_ASSERT(u.func.beginToUncheckedCallEntry_ != 0);
     return begin_;
   }
   uint32_t funcUncheckedCallEntry() const {
@@ -426,6 +433,11 @@ class CallSiteDesc {
     MOZ_ASSERT(kind == Kind(kind_));
     MOZ_ASSERT(lineOrBytecode == lineOrBytecode_);
   }
+  CallSiteDesc(BytecodeOffset bytecodeOffset, Kind kind)
+      : lineOrBytecode_(bytecodeOffset.offset()), kind_(kind) {
+    MOZ_ASSERT(kind == Kind(kind_));
+    MOZ_ASSERT(bytecodeOffset.offset() == lineOrBytecode_);
+  }
   uint32_t lineOrBytecode() const { return lineOrBytecode_; }
   Kind kind() const { return Kind(kind_); }
   bool isImportCall() const { return kind() == CallSiteDesc::Import; }
@@ -452,7 +464,7 @@ class CallSite : public CallSiteDesc {
   CallSite(CallSiteDesc desc, uint32_t returnAddressOffset)
       : CallSiteDesc(desc), returnAddressOffset_(returnAddressOffset) {}
 
-  void offsetBy(int32_t delta) { returnAddressOffset_ += delta; }
+  void offsetBy(uint32_t delta) { returnAddressOffset_ += delta; }
   uint32_t returnAddressOffset() const { return returnAddressOffset_; }
 };
 
@@ -609,6 +621,46 @@ struct TryNote {
 WASM_DECLARE_CACHEABLE_POD(TryNote);
 WASM_DECLARE_POD_VECTOR(TryNote, TryNoteVector)
 
+// CallIndirectId describes how to compile a call_indirect and matching
+// signature check in the function prologue for a given function type.
+
+enum class CallIndirectIdKind { AsmJS, Immediate, Global, None };
+
+class CallIndirectId {
+  CallIndirectIdKind kind_;
+  size_t bits_;
+
+  CallIndirectId(CallIndirectIdKind kind, size_t bits)
+      : kind_(kind), bits_(bits) {}
+
+ public:
+  CallIndirectId() : kind_(CallIndirectIdKind::None), bits_(0) {}
+
+  // Get a CallIndirectId for an asm.js function which will generate a no-op
+  // checked call prologue.
+  static CallIndirectId forAsmJSFunc();
+
+  // Get the CallIndirectId for a function in a specific module.
+  static CallIndirectId forFunc(const ModuleEnvironment& moduleEnv,
+                                uint32_t funcIndex);
+
+  // Get the CallIndirectId for a function type in a specific module.
+  static CallIndirectId forFuncType(const ModuleEnvironment& moduleEnv,
+                                    uint32_t funcTypeIndex);
+
+  CallIndirectIdKind kind() const { return kind_; }
+  bool isGlobal() const { return kind_ == CallIndirectIdKind::Global; }
+
+  uint32_t immediate() const {
+    MOZ_ASSERT(kind_ == CallIndirectIdKind::Immediate);
+    return bits_;
+  }
+  uint32_t instanceDataOffset() const {
+    MOZ_ASSERT(kind_ == CallIndirectIdKind::Global);
+    return bits_;
+  }
+};
+
 // CalleeDesc describes how to compile one of the variety of asm.js/wasm calls.
 // This is hoisted into WasmCodegenTypes.h for sharing between Ion and Baseline.
 
@@ -647,27 +699,26 @@ class CalleeDesc {
     U() : funcIndex_(0) {}
     uint32_t funcIndex_;
     struct {
-      uint32_t globalDataOffset_;
+      uint32_t instanceDataOffset_;
     } import;
     struct {
-      uint32_t globalDataOffset_;
+      uint32_t instanceDataOffset_;
       uint32_t minLength_;
       Maybe<uint32_t> maxLength_;
-      TypeIdDesc funcTypeId_;
+      CallIndirectId callIndirectId_;
     } table;
     SymbolicAddress builtin_;
   } u;
 
-  WASM_CHECK_CACHEABLE_POD(which_, u.funcIndex_, u.import.globalDataOffset_,
-                           u.table.globalDataOffset_, u.table.minLength_,
-                           u.table.maxLength_, u.table.funcTypeId_, u.builtin_);
-
  public:
   CalleeDesc() = default;
   static CalleeDesc function(uint32_t funcIndex);
-  static CalleeDesc import(uint32_t globalDataOffset);
-  static CalleeDesc wasmTable(const TableDesc& desc, TypeIdDesc funcTypeId);
-  static CalleeDesc asmJSTable(const TableDesc& desc);
+  static CalleeDesc import(uint32_t instanceDataOffset);
+  static CalleeDesc wasmTable(const ModuleEnvironment& moduleEnv,
+                              const TableDesc& desc, uint32_t tableIndex,
+                              CallIndirectId callIndirectId);
+  static CalleeDesc asmJSTable(const ModuleEnvironment& moduleEnv,
+                               uint32_t tableIndex);
   static CalleeDesc builtin(SymbolicAddress callee);
   static CalleeDesc builtinInstanceMethod(SymbolicAddress callee);
   static CalleeDesc wasmFuncRef();
@@ -676,22 +727,22 @@ class CalleeDesc {
     MOZ_ASSERT(which_ == Func);
     return u.funcIndex_;
   }
-  uint32_t importGlobalDataOffset() const {
+  uint32_t importInstanceDataOffset() const {
     MOZ_ASSERT(which_ == Import);
-    return u.import.globalDataOffset_;
+    return u.import.instanceDataOffset_;
   }
   bool isTable() const { return which_ == WasmTable || which_ == AsmJSTable; }
-  uint32_t tableLengthGlobalDataOffset() const {
+  uint32_t tableLengthInstanceDataOffset() const {
     MOZ_ASSERT(isTable());
-    return u.table.globalDataOffset_ + offsetof(TableInstanceData, length);
+    return u.table.instanceDataOffset_ + offsetof(TableInstanceData, length);
   }
-  uint32_t tableFunctionBaseGlobalDataOffset() const {
+  uint32_t tableFunctionBaseInstanceDataOffset() const {
     MOZ_ASSERT(isTable());
-    return u.table.globalDataOffset_ + offsetof(TableInstanceData, elements);
+    return u.table.instanceDataOffset_ + offsetof(TableInstanceData, elements);
   }
-  TypeIdDesc wasmTableSigId() const {
+  CallIndirectId wasmTableSigId() const {
     MOZ_ASSERT(which_ == WasmTable);
-    return u.table.funcTypeId_;
+    return u.table.callIndirectId_;
   }
   uint32_t wasmTableMinLength() const {
     MOZ_ASSERT(which_ == WasmTable);
@@ -707,8 +758,6 @@ class CalleeDesc {
   }
   bool isFuncRef() const { return which_ == FuncRef; }
 };
-
-WASM_DECLARE_CACHEABLE_POD(CalleeDesc);
 
 }  // namespace wasm
 }  // namespace js

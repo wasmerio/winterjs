@@ -17,7 +17,6 @@
 #include "mozilla/Latin1.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Tuple.h"
 
 #include <limits>
 #include <type_traits>
@@ -47,6 +46,7 @@
 #include "jit/MIRGenerator.h"
 #include "jit/MoveEmitter.h"
 #include "jit/RangeAnalysis.h"
+#include "jit/RegExpStubConstants.h"
 #include "jit/SafepointIndex.h"
 #include "jit/SharedICHelpers.h"
 #include "jit/SharedICRegisters.h"
@@ -73,11 +73,14 @@
 #include "vm/StringObject.h"
 #include "vm/StringType.h"
 #include "vm/TypedArrayObject.h"
+#include "wasm/WasmCodegenConstants.h"
+#include "wasm/WasmValType.h"
 #ifdef MOZ_VTUNE
 #  include "vtune/VTuneWrapper.h"
 #endif
 #include "wasm/WasmBinary.h"
 #include "wasm/WasmGC.h"
+#include "wasm/WasmGcObject.h"
 #include "wasm/WasmStubs.h"
 
 #include "builtin/Boolean-inl.h"
@@ -347,6 +350,7 @@ void CodeGenerator::callVMInternal(VMFunctionId id, LInstruction* ins) {
   // when returning from the call.  Failures are handled with exceptions based
   // on the return value of the C functions.  To guard the outcome of the
   // returned value, use another LIR instruction.
+  ensureOsiSpace();
   uint32_t callOffset = masm.callJit(code);
   markSafepointAt(callOffset, ins);
 
@@ -394,14 +398,14 @@ void CodeGenerator::callVM(LInstruction* ins) {
 
 template <typename... ArgTypes>
 class ArgSeq {
-  mozilla::Tuple<std::remove_reference_t<ArgTypes>...> args_;
+  std::tuple<std::remove_reference_t<ArgTypes>...> args_;
 
   template <std::size_t... ISeq>
   inline void generate(CodeGenerator* codegen,
                        std::index_sequence<ISeq...>) const {
     // Arguments are pushed in reverse order, from last argument to first
     // argument.
-    (codegen->pushArg(mozilla::Get<sizeof...(ISeq) - 1 - ISeq>(args_)), ...);
+    (codegen->pushArg(std::get<sizeof...(ISeq) - 1 - ISeq>(args_)), ...);
   }
 
  public:
@@ -841,8 +845,8 @@ void CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool) {
       icInfo_[cacheInfoIndex].icOffsetForPush = pushArgWithPatch(ImmWord(-1));
       pushArg(ImmGCPtr(gen->outerInfo().script()));
 
-      using Fn = bool (*)(JSContext * cx, HandleScript outerScript,
-                          IonUnaryArithIC * stub, HandleValue val,
+      using Fn = bool (*)(JSContext* cx, HandleScript outerScript,
+                          IonUnaryArithIC* stub, HandleValue val,
                           MutableHandleValue res);
       callVM<Fn, IonUnaryArithIC::update>(lir);
 
@@ -861,8 +865,8 @@ void CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool) {
       icInfo_[cacheInfoIndex].icOffsetForPush = pushArgWithPatch(ImmWord(-1));
       pushArg(ImmGCPtr(gen->outerInfo().script()));
 
-      using Fn = bool (*)(JSContext * cx, HandleScript outerScript,
-                          IonToPropertyKeyIC * ic, HandleValue val,
+      using Fn = bool (*)(JSContext* cx, HandleScript outerScript,
+                          IonToPropertyKeyIC* ic, HandleValue val,
                           MutableHandleValue res);
       callVM<Fn, IonToPropertyKeyIC::update>(lir);
 
@@ -883,8 +887,8 @@ void CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool) {
       icInfo_[cacheInfoIndex].icOffsetForPush = pushArgWithPatch(ImmWord(-1));
       pushArg(ImmGCPtr(gen->outerInfo().script()));
 
-      using Fn = bool (*)(JSContext * cx, HandleScript outerScript,
-                          IonBinaryArithIC * stub, HandleValue lhs,
+      using Fn = bool (*)(JSContext* cx, HandleScript outerScript,
+                          IonBinaryArithIC* stub, HandleValue lhs,
                           HandleValue rhs, MutableHandleValue res);
       callVM<Fn, IonBinaryArithIC::update>(lir);
 
@@ -904,9 +908,9 @@ void CodeGenerator::visitOutOfLineICFallback(OutOfLineICFallback* ool) {
       icInfo_[cacheInfoIndex].icOffsetForPush = pushArgWithPatch(ImmWord(-1));
       pushArg(ImmGCPtr(gen->outerInfo().script()));
 
-      using Fn = bool (*)(JSContext * cx, HandleScript outerScript,
-                          IonCompareIC * stub, HandleValue lhs, HandleValue rhs,
-                          bool* res);
+      using Fn =
+          bool (*)(JSContext* cx, HandleScript outerScript, IonCompareIC* stub,
+                   HandleValue lhs, HandleValue rhs, bool* res);
       callVM<Fn, IonCompareIC::update>(lir);
 
       StoreRegisterTo(compareIC->output()).generate(this);
@@ -958,23 +962,6 @@ CodeGenerator::CodeGenerator(MIRGenerator* gen, LIRGraph* graph,
 
 CodeGenerator::~CodeGenerator() { js_delete(scriptCounts_); }
 
-class OutOfLineZeroIfNaN : public OutOfLineCodeBase<CodeGenerator> {
-  LInstruction* lir_;
-  FloatRegister input_;
-  Register output_;
-
- public:
-  OutOfLineZeroIfNaN(LInstruction* lir, FloatRegister input, Register output)
-      : lir_(lir), input_(input), output_(output) {}
-
-  void accept(CodeGenerator* codegen) override {
-    codegen->visitOutOfLineZeroIfNaN(this);
-  }
-  LInstruction* lir() const { return lir_; }
-  FloatRegister input() const { return input_; }
-  Register output() const { return output_; }
-};
-
 void CodeGenerator::visitValueToInt32(LValueToInt32* lir) {
   ValueOperand operand = ToValue(lir, LValueToInt32::Input);
   Register output = ToRegister(lir->output());
@@ -997,40 +984,14 @@ void CodeGenerator::visitValueToInt32(LValueToInt32* lir) {
                               oolDouble->entry(), stringReg, temp, output,
                               &fails);
     masm.bind(oolDouble->rejoin());
-  } else if (lir->mode() == LValueToInt32::TRUNCATE_NOWRAP) {
-    auto* ool = new (alloc()) OutOfLineZeroIfNaN(lir, temp, output);
-    addOutOfLineCode(ool, lir->mir());
-    masm.truncateNoWrapValueToInt32(operand, temp, output, ool->entry(),
-                                    &fails);
-    masm.bind(ool->rejoin());
   } else {
+    MOZ_ASSERT(lir->mode() == LValueToInt32::NORMAL);
     masm.convertValueToInt32(operand, temp, output, &fails,
                              lir->mirNormal()->needsNegativeZeroCheck(),
                              lir->mirNormal()->conversion());
   }
 
   bailoutFrom(&fails, lir->snapshot());
-}
-
-void CodeGenerator::visitOutOfLineZeroIfNaN(OutOfLineZeroIfNaN* ool) {
-  FloatRegister input = ool->input();
-  Register output = ool->output();
-
-  // NaN triggers the failure path for branchTruncateDoubleToInt32() on x86,
-  // x64, and ARM64, so handle it here. In all other cases bail out.
-
-  Label fails;
-  if (input.isSingle()) {
-    masm.branchFloat(Assembler::DoubleOrdered, input, input, &fails);
-  } else {
-    masm.branchDouble(Assembler::DoubleOrdered, input, input, &fails);
-  }
-
-  // ToInteger(NaN) is 0.
-  masm.move32(Imm32(0), output);
-  masm.jump(ool->rejoin());
-
-  bailoutFrom(&fails, ool->lir()->snapshot());
 }
 
 void CodeGenerator::visitValueToDouble(LValueToDouble* lir) {
@@ -1216,48 +1177,12 @@ void CodeGenerator::visitFloat32ToInt32(LFloat32ToInt32* lir) {
   bailoutFrom(&fail, lir->snapshot());
 }
 
-void CodeGenerator::visitDoubleToIntegerInt32(LDoubleToIntegerInt32* lir) {
-  FloatRegister input = ToFloatRegister(lir->input());
-  Register output = ToRegister(lir->output());
-
-  auto* ool = new (alloc()) OutOfLineZeroIfNaN(lir, input, output);
-  addOutOfLineCode(ool, lir->mir());
-
-  masm.branchTruncateDoubleToInt32(input, output, ool->entry());
-  masm.bind(ool->rejoin());
-}
-
-void CodeGenerator::visitFloat32ToIntegerInt32(LFloat32ToIntegerInt32* lir) {
-  FloatRegister input = ToFloatRegister(lir->input());
-  Register output = ToRegister(lir->output());
-
-  auto* ool = new (alloc()) OutOfLineZeroIfNaN(lir, input, output);
-  addOutOfLineCode(ool, lir->mir());
-
-  masm.branchTruncateFloat32ToInt32(input, output, ool->entry());
-  masm.bind(ool->rejoin());
-}
-
 void CodeGenerator::visitInt32ToIntPtr(LInt32ToIntPtr* lir) {
 #ifdef JS_64BIT
+  // This LIR instruction is only used if the input can be negative.
+  MOZ_ASSERT(lir->mir()->canBeNegative());
+
   Register output = ToRegister(lir->output());
-
-  // This is a no-op if the input can't be negative. In debug builds assert
-  // (1) the upper 32 bits are zero and (2) the value <= INT32_MAX so that sign
-  // extension isn't needed.
-  if (!lir->mir()->canBeNegative()) {
-    MOZ_ASSERT(ToRegister(lir->input()) == output);
-#  ifdef DEBUG
-    Label ok;
-    masm.branchPtr(Assembler::BelowOrEqual, output, ImmWord(INT32_MAX), &ok);
-    masm.assumeUnreachable("LInt32ToIntPtr: unexpected range for value");
-    masm.bind(&ok);
-#  else
-    MOZ_CRASH("Not used in non-debug mode");
-#  endif
-    return;
-  }
-
   const LAllocation* input = lir->input();
   if (input->isRegister()) {
     masm.move32SignExtendToPtr(ToRegister(input), output);
@@ -1312,7 +1237,7 @@ void CodeGenerator::emitOOLTestObject(Register objreg,
                                       Label* ifDoesntEmulateUndefined,
                                       Register scratch) {
   saveVolatile(scratch);
-  using Fn = bool (*)(JSObject * obj);
+  using Fn = bool (*)(JSObject* obj);
   masm.setupAlignedABICall();
   masm.passABIArg(objreg);
   masm.callWithABI<Fn, js::EmulatesUndefined>();
@@ -1842,20 +1767,13 @@ void CodeGenerator::visitRegExp(LRegExp* lir) {
       lir, ArgList(ImmGCPtr(source)), StoreRegisterTo(output));
   if (lir->mir()->hasShared()) {
     TemplateObject templateObject(source);
-    masm.createGCObject(output, temp, templateObject, gc::DefaultHeap,
+    masm.createGCObject(output, temp, templateObject, gc::Heap::Default,
                         ool->entry());
   } else {
     masm.jump(ool->entry());
   }
   masm.bind(ool->rejoin());
 }
-
-static constexpr size_t InputOutputDataSize = sizeof(irregexp::InputOutputData);
-
-// Amount of space to reserve on the stack when executing RegExps inline.
-static constexpr size_t RegExpReservedStack =
-    InputOutputDataSize + sizeof(MatchPairs) +
-    RegExpObject::MaxPairCount * sizeof(MatchPair);
 
 static constexpr int32_t RegExpPairsVectorStartOffset(
     int32_t inputOutputDataStartOffset) {
@@ -1936,8 +1854,7 @@ static void StepBackToLeadSurrogate(MacroAssembler& masm, Register regexpShared,
 static void UpdateRegExpStatics(MacroAssembler& masm, Register regexp,
                                 Register input, Register lastIndex,
                                 Register staticsReg, Register temp1,
-                                Register temp2,
-                                gc::InitialHeap initialStringHeap,
+                                Register temp2, gc::Heap initialStringHeap,
                                 LiveGeneralRegisterSet& volatileRegs) {
   Address pendingInputAddress(staticsReg,
                               RegExpStatics::offsetOfPendingInput());
@@ -1950,7 +1867,7 @@ static void UpdateRegExpStatics(MacroAssembler& masm, Register regexp,
   masm.guardedCallPreBarrier(matchesInputAddress, MIRType::String);
   masm.guardedCallPreBarrier(lazySourceAddress, MIRType::String);
 
-  if (initialStringHeap == gc::DefaultHeap) {
+  if (initialStringHeap == gc::Heap::Default) {
     // Writing into RegExpStatics tenured memory; must post-barrier.
     if (staticsReg.volatile_()) {
       volatileRegs.add(staticsReg);
@@ -1996,14 +1913,14 @@ static void UpdateRegExpStatics(MacroAssembler& masm, Register regexp,
 // Otherwise, jump to notFound or failure.
 //
 // inputOutputDataStartOffset is the offset relative to the frame pointer
-// register. This offset is negative for the RegExpTester stub.
+// register. This offset is negative for the RegExpExecTest stub.
 static bool PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm,
                                     Register regexp, Register input,
                                     Register lastIndex, Register temp1,
                                     Register temp2, Register temp3,
                                     int32_t inputOutputDataStartOffset,
-                                    gc::InitialHeap initialStringHeap,
-                                    Label* notFound, Label* failure) {
+                                    gc::Heap initialStringHeap, Label* notFound,
+                                    Label* failure) {
   JitSpew(JitSpew_Codegen, "# Emitting PrepareAndExecuteRegExp");
 
   using irregexp::InputOutputData;
@@ -2083,8 +2000,37 @@ static bool PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm,
   // Initialize MatchPairs::pairs[0]::start to MatchPair::NoMatch
   masm.store32(Imm32(MatchPair::NoMatch), firstMatchStartAddress);
 
-  // Check for a linear input string.
-  masm.branchIfRope(input, failure);
+  // Determine the set of volatile inputs to save when calling into C++ or
+  // regexp code.
+  LiveGeneralRegisterSet volatileRegs;
+  if (lastIndex.volatile_()) {
+    volatileRegs.add(lastIndex);
+  }
+  if (input.volatile_()) {
+    volatileRegs.add(input);
+  }
+  if (regexp.volatile_()) {
+    volatileRegs.add(regexp);
+  }
+
+  // Ensure the input string is not a rope.
+  Label isLinear;
+  masm.branchIfNotRope(input, &isLinear);
+  {
+    masm.PushRegsInMask(volatileRegs);
+
+    using Fn = JSLinearString* (*)(JSString*);
+    masm.setupUnalignedABICall(temp1);
+    masm.passABIArg(input);
+    masm.callWithABI<Fn, js::jit::LinearizeForCharAccessPure>();
+
+    MOZ_ASSERT(!volatileRegs.has(temp1));
+    masm.storeCallPointerResult(temp1);
+    masm.PopRegsInMask(volatileRegs);
+
+    masm.branchTestPtr(Assembler::Zero, temp1, temp1, failure);
+  }
+  masm.bind(&isLinear);
 
   // Load the RegExpShared.
   Register regexpReg = temp1;
@@ -2099,16 +2045,11 @@ static bool PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm,
                  Address(regexpReg, RegExpShared::offsetOfPatternAtom()),
                  ImmWord(0), &notAtom);
   {
-    LiveGeneralRegisterSet regsToSave(GeneralRegisterSet::Volatile());
-    regsToSave.takeUnchecked(temp1);
-    regsToSave.takeUnchecked(temp2);
-    regsToSave.takeUnchecked(temp3);
-
     masm.computeEffectiveAddress(matchPairsAddress, temp3);
 
-    masm.PushRegsInMask(regsToSave);
-    using Fn = RegExpRunStatus (*)(RegExpShared * re, JSLinearString * input,
-                                   size_t start, MatchPairs * matchPairs);
+    masm.PushRegsInMask(volatileRegs);
+    using Fn = RegExpRunStatus (*)(RegExpShared* re, JSLinearString* input,
+                                   size_t start, MatchPairs* matchPairs);
     masm.setupUnalignedABICall(temp2);
     masm.passABIArg(regexpReg);
     masm.passABIArg(input);
@@ -2116,8 +2057,9 @@ static bool PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm,
     masm.passABIArg(temp3);
     masm.callWithABI<Fn, js::ExecuteRegExpAtomRaw>();
 
+    MOZ_ASSERT(!volatileRegs.has(temp1));
     masm.storeCallInt32Result(temp1);
-    masm.PopRegsInMask(regsToSave);
+    masm.PopRegsInMask(volatileRegs);
 
     masm.jump(&checkSuccess);
   }
@@ -2179,18 +2121,6 @@ static bool PrepareAndExecuteRegExp(JSContext* cx, MacroAssembler& masm,
   masm.computeEffectiveAddress(matchPairsAddress, temp2);
   masm.storePtr(temp2, matchesAddress);
   masm.storePtr(lastIndex, startIndexAddress);
-
-  // Save any volatile inputs.
-  LiveGeneralRegisterSet volatileRegs;
-  if (lastIndex.volatile_()) {
-    volatileRegs.add(lastIndex);
-  }
-  if (input.volatile_()) {
-    volatileRegs.add(input);
-  }
-  if (regexp.volatile_()) {
-    volatileRegs.add(regexp);
-  }
 
   // Execute the RegExp.
   masm.computeEffectiveAddress(
@@ -2257,7 +2187,7 @@ class CreateDependentString {
   void generate(MacroAssembler& masm, const JSAtomState& names,
                 CompileRuntime* runtime, Register base,
                 BaseIndex startIndexAddress, BaseIndex limitIndexAddress,
-                gc::InitialHeap initialStringHeap);
+                gc::Heap initialStringHeap);
 
   // Generate fallback path for creating DependentString.
   void generateFallback(MacroAssembler& masm);
@@ -2268,7 +2198,7 @@ void CreateDependentString::generate(MacroAssembler& masm,
                                      CompileRuntime* runtime, Register base,
                                      BaseIndex startIndexAddress,
                                      BaseIndex limitIndexAddress,
-                                     gc::InitialHeap initialStringHeap) {
+                                     gc::Heap initialStringHeap) {
   JitSpew(JitSpew_Codegen, "# Emitting CreateDependentString (encoding=%s)",
           (encoding_ == CharEncoding::Latin1 ? "Latin-1" : "Two-Byte"));
 
@@ -2426,7 +2356,7 @@ void CreateDependentString::generate(MacroAssembler& masm,
 
     masm.mov(ImmPtr(runtime), temp1_);
 
-    using Fn = void (*)(JSRuntime * rt, js::gc::Cell * cell);
+    using Fn = void (*)(JSRuntime* rt, js::gc::Cell* cell);
     masm.setupUnalignedABICall(temp2_);
     masm.passABIArg(temp1_);
     masm.passABIArg(string_);
@@ -2452,7 +2382,7 @@ void CreateDependentString::generateFallback(MacroAssembler& masm) {
 
     masm.PushRegsInMask(regsToSave);
 
-    using Fn = void* (*)(JSContext * cx);
+    using Fn = void* (*)(JSContext* cx);
     masm.setupUnalignedABICall(string_);
     masm.loadJSContext(string_);
     masm.passABIArg(string_);
@@ -2486,8 +2416,7 @@ static void CreateMatchResultFallback(MacroAssembler& masm, Register object,
 
   masm.PushRegsInMask(regsToSave);
 
-  using Fn =
-      void* (*)(JSContext * cx, gc::AllocKind kind, size_t nDynamicSlots);
+  using Fn = void* (*)(JSContext* cx, gc::AllocKind kind, size_t nDynamicSlots);
   masm.setupUnalignedABICall(object);
 
   masm.loadJSContext(object);
@@ -2508,8 +2437,15 @@ static void CreateMatchResultFallback(MacroAssembler& masm, Register object,
   masm.initGCThing(object, temp1, templateObject);
 }
 
-JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
-  JitSpew(JitSpew_Codegen, "# Emitting RegExpMatcher stub");
+// Generate the RegExpMatcher and RegExpExecMatch stubs. These are very similar,
+// but RegExpExecMatch also has to load and update .lastIndex for global/sticky
+// regular expressions.
+static JitCode* GenerateRegExpMatchStubShared(JSContext* cx, bool isExecMatch) {
+  if (isExecMatch) {
+    JitSpew(JitSpew_Codegen, "# Emitting RegExpExecMatch stub");
+  } else {
+    JitSpew(JitSpew_Codegen, "# Emitting RegExpMatcher stub");
+  }
 
   Register regexp = RegExpMatcherRegExpReg;
   Register input = RegExpMatcherStringReg;
@@ -2537,6 +2473,9 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
     maybeTemp5 = regs.takeAny();
   }
 
+  Address flagsSlot(regexp, RegExpObject::offsetOfFlags());
+  Address lastIndexSlot(regexp, RegExpObject::offsetOfLastIndex());
+
   ArrayObject* templateObject =
       cx->realm()->regExps.getOrCreateMatchResultTemplateObject(cx);
   if (!templateObject) {
@@ -2554,7 +2493,7 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   TempAllocator temp(&cx->tempLifoAlloc());
   JitContext jcx(cx);
   StackMacroAssembler masm(cx, temp);
-  AutoCreatedBy acb(masm, "JitRealm::generateRegExpMatcherStub");
+  AutoCreatedBy acb(masm, "GenerateRegExpMatchStubShared");
 
 #ifdef JS_USE_LINK_REGISTER
   masm.pushReturnAddress();
@@ -2562,9 +2501,17 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   masm.push(FramePointer);
   masm.moveStackPtrTo(FramePointer);
 
+  Label notFoundZeroLastIndex;
+  if (isExecMatch) {
+    masm.loadRegExpLastIndex(regexp, input, lastIndex, &notFoundZeroLastIndex);
+  }
+
   // The InputOutputData is placed above the frame pointer and return address on
   // the stack.
   int32_t inputOutputDataStartOffset = 2 * sizeof(void*);
+
+  JS::AutoAssertNoGC nogc(cx);
+  gc::Heap initialStringHeap = cx->realm()->jitRealm()->getInitialStringHeap();
 
   Label notFound, oolEntry;
   if (!PrepareAndExecuteRegExp(cx, masm, regexp, input, lastIndex, temp1, temp2,
@@ -2591,13 +2538,13 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   // Construct the result.
   Register object = temp1;
   Label matchResultFallback, matchResultJoin;
-  masm.createGCObject(object, temp2, templateObj, gc::DefaultHeap,
+  masm.createGCObject(object, temp2, templateObj, gc::Heap::Default,
                       &matchResultFallback);
   masm.bind(&matchResultJoin);
 
   MOZ_ASSERT(nativeTemplateObj.numFixedSlots() == 0);
-  // Dynamic slot count is always one less than a power of 2.
-  MOZ_ASSERT(nativeTemplateObj.numDynamicSlots() == 3);
+  // Dynamic slot count is always two less than a power of 2.
+  MOZ_ASSERT(nativeTemplateObj.numDynamicSlots() == 6);
   static_assert(RegExpRealm::MatchResultObjectIndexSlot == 0,
                 "First slot holds the 'index' property");
   static_assert(RegExpRealm::MatchResultObjectInputSlot == 1,
@@ -2777,6 +2724,8 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
 
   Address firstMatchPairStartAddress(
       FramePointer, pairsVectorStartOffset + MatchPair::offsetOfStart());
+  Address firstMatchPairLimitAddress(
+      FramePointer, pairsVectorStartOffset + MatchPair::offsetOfLimit());
 
   masm.loadPtr(Address(object, NativeObject::offsetOfSlots()), temp2);
 
@@ -2786,12 +2735,34 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
   // No post barrier needed (address is within nursery object.)
   masm.storeValue(JSVAL_TYPE_STRING, input, Address(temp2, sizeof(Value)));
 
+  // For the ExecMatch stub, if the regular expression is global or sticky, we
+  // have to update its .lastIndex slot.
+  if (isExecMatch) {
+    MOZ_ASSERT(object != lastIndex);
+    Label notGlobalOrSticky;
+    masm.branchTest32(Assembler::Zero, flagsSlot,
+                      Imm32(JS::RegExpFlag::Global | JS::RegExpFlag::Sticky),
+                      &notGlobalOrSticky);
+    masm.load32(firstMatchPairLimitAddress, lastIndex);
+    masm.storeValue(JSVAL_TYPE_INT32, lastIndex, lastIndexSlot);
+    masm.bind(&notGlobalOrSticky);
+  }
+
   // All done!
   masm.tagValue(JSVAL_TYPE_OBJECT, object, result);
   masm.pop(FramePointer);
   masm.ret();
 
   masm.bind(&notFound);
+  if (isExecMatch) {
+    Label notGlobalOrSticky;
+    masm.branchTest32(Assembler::Zero, flagsSlot,
+                      Imm32(JS::RegExpFlag::Global | JS::RegExpFlag::Sticky),
+                      &notGlobalOrSticky);
+    masm.bind(&notFoundZeroLastIndex);
+    masm.storeValue(Int32Value(0), lastIndexSlot);
+    masm.bind(&notGlobalOrSticky);
+  }
   masm.moveValue(NullValue(), result);
   masm.pop(FramePointer);
   masm.ret();
@@ -2823,12 +2794,21 @@ JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
     return nullptr;
   }
 
-  CollectPerfSpewerJitCodeProfile(code, "RegExpMatcherStub");
+  const char* name = isExecMatch ? "RegExpExecMatchStub" : "RegExpMatcherStub";
+  CollectPerfSpewerJitCodeProfile(code, name);
 #ifdef MOZ_VTUNE
-  vtune::MarkStub(code, "RegExpMatcherStub");
+  vtune::MarkStub(code, name);
 #endif
 
   return code;
+}
+
+JitCode* JitRealm::generateRegExpMatcherStub(JSContext* cx) {
+  return GenerateRegExpMatchStubShared(cx, /* isExecMatch = */ false);
+}
+
+JitCode* JitRealm::generateRegExpExecMatchStub(JSContext* cx) {
+  return GenerateRegExpMatchStubShared(cx, /* isExecMatch = */ true);
 }
 
 class OutOfLineRegExpMatcher : public OutOfLineCodeBase<CodeGenerator> {
@@ -2866,9 +2846,9 @@ void CodeGenerator::visitOutOfLineRegExpMatcher(OutOfLineRegExpMatcher* ool) {
 
   // We are not using oolCallVM because we are in a Call, and that live
   // registers are already saved by the the register allocator.
-  using Fn = bool (*)(JSContext*, HandleObject regexp, HandleString input,
-                      int32_t lastIndex, MatchPairs * pairs,
-                      MutableHandleValue output);
+  using Fn =
+      bool (*)(JSContext*, HandleObject regexp, HandleString input,
+               int32_t lastIndex, MatchPairs* pairs, MutableHandleValue output);
   callVM<Fn, RegExpMatcherRaw>(lir);
 
   masm.jump(ool->rejoin());
@@ -2908,15 +2888,82 @@ void CodeGenerator::visitRegExpMatcher(LRegExpMatcher* lir) {
   masm.freeStack(RegExpReservedStack);
 }
 
-static const int32_t RegExpSearcherResultNotFound = -1;
-static const int32_t RegExpSearcherResultFailed = -2;
+class OutOfLineRegExpExecMatch : public OutOfLineCodeBase<CodeGenerator> {
+  LRegExpExecMatch* lir_;
+
+ public:
+  explicit OutOfLineRegExpExecMatch(LRegExpExecMatch* lir) : lir_(lir) {}
+
+  void accept(CodeGenerator* codegen) override {
+    codegen->visitOutOfLineRegExpExecMatch(this);
+  }
+
+  LRegExpExecMatch* lir() const { return lir_; }
+};
+
+void CodeGenerator::visitOutOfLineRegExpExecMatch(
+    OutOfLineRegExpExecMatch* ool) {
+  LRegExpExecMatch* lir = ool->lir();
+  Register input = ToRegister(lir->string());
+  Register regexp = ToRegister(lir->regexp());
+
+  AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
+  regs.take(input);
+  regs.take(regexp);
+  Register temp = regs.takeAny();
+
+  masm.computeEffectiveAddress(
+      Address(masm.getStackPointer(), InputOutputDataSize), temp);
+
+  pushArg(temp);
+  pushArg(input);
+  pushArg(regexp);
+
+  // We are not using oolCallVM because we are in a Call and live registers have
+  // already been saved by the register allocator.
+  using Fn =
+      bool (*)(JSContext*, Handle<RegExpObject*> regexp, HandleString input,
+               MatchPairs* pairs, MutableHandleValue output);
+  callVM<Fn, RegExpBuiltinExecMatchFromJit>(lir);
+  masm.jump(ool->rejoin());
+}
+
+void CodeGenerator::visitRegExpExecMatch(LRegExpExecMatch* lir) {
+  MOZ_ASSERT(ToRegister(lir->regexp()) == RegExpMatcherRegExpReg);
+  MOZ_ASSERT(ToRegister(lir->string()) == RegExpMatcherStringReg);
+  MOZ_ASSERT(ToOutValue(lir) == JSReturnOperand);
+
+#if defined(JS_NUNBOX32)
+  static_assert(RegExpMatcherRegExpReg != JSReturnReg_Type);
+  static_assert(RegExpMatcherRegExpReg != JSReturnReg_Data);
+  static_assert(RegExpMatcherStringReg != JSReturnReg_Type);
+  static_assert(RegExpMatcherStringReg != JSReturnReg_Data);
+#elif defined(JS_PUNBOX64)
+  static_assert(RegExpMatcherRegExpReg != JSReturnReg);
+  static_assert(RegExpMatcherStringReg != JSReturnReg);
+#endif
+
+  masm.reserveStack(RegExpReservedStack);
+
+  auto* ool = new (alloc()) OutOfLineRegExpExecMatch(lir);
+  addOutOfLineCode(ool, lir->mir());
+
+  const JitRealm* jitRealm = gen->realm->jitRealm();
+  JitCode* regExpExecMatchStub =
+      jitRealm->regExpExecMatchStubNoBarrier(&realmStubsToReadBarrier_);
+  masm.call(regExpExecMatchStub);
+  masm.branchTestUndefined(Assembler::Equal, JSReturnOperand, ool->entry());
+
+  masm.bind(ool->rejoin());
+  masm.freeStack(RegExpReservedStack);
+}
 
 JitCode* JitRealm::generateRegExpSearcherStub(JSContext* cx) {
   JitSpew(JitSpew_Codegen, "# Emitting RegExpSearcher stub");
 
-  Register regexp = RegExpTesterRegExpReg;
-  Register input = RegExpTesterStringReg;
-  Register lastIndex = RegExpTesterLastIndexReg;
+  Register regexp = RegExpSearcherRegExpReg;
+  Register input = RegExpSearcherStringReg;
+  Register lastIndex = RegExpSearcherLastIndexReg;
   Register result = ReturnReg;
 
   // We are free to clobber all registers, as LRegExpSearcher is a call
@@ -3059,22 +3106,22 @@ void CodeGenerator::visitOutOfLineRegExpSearcher(OutOfLineRegExpSearcher* ool) {
 
   // We are not using oolCallVM because we are in a Call, and that live
   // registers are already saved by the the register allocator.
-  using Fn = bool (*)(JSContext * cx, HandleObject regexp, HandleString input,
-                      int32_t lastIndex, MatchPairs * pairs, int32_t * result);
+  using Fn = bool (*)(JSContext* cx, HandleObject regexp, HandleString input,
+                      int32_t lastIndex, MatchPairs* pairs, int32_t* result);
   callVM<Fn, RegExpSearcherRaw>(lir);
 
   masm.jump(ool->rejoin());
 }
 
 void CodeGenerator::visitRegExpSearcher(LRegExpSearcher* lir) {
-  MOZ_ASSERT(ToRegister(lir->regexp()) == RegExpTesterRegExpReg);
-  MOZ_ASSERT(ToRegister(lir->string()) == RegExpTesterStringReg);
-  MOZ_ASSERT(ToRegister(lir->lastIndex()) == RegExpTesterLastIndexReg);
+  MOZ_ASSERT(ToRegister(lir->regexp()) == RegExpSearcherRegExpReg);
+  MOZ_ASSERT(ToRegister(lir->string()) == RegExpSearcherStringReg);
+  MOZ_ASSERT(ToRegister(lir->lastIndex()) == RegExpSearcherLastIndexReg);
   MOZ_ASSERT(ToRegister(lir->output()) == ReturnReg);
 
-  static_assert(RegExpTesterRegExpReg != ReturnReg);
-  static_assert(RegExpTesterStringReg != ReturnReg);
-  static_assert(RegExpTesterLastIndexReg != ReturnReg);
+  static_assert(RegExpSearcherRegExpReg != ReturnReg);
+  static_assert(RegExpSearcherStringReg != ReturnReg);
+  static_assert(RegExpSearcherLastIndexReg != ReturnReg);
 
   masm.reserveStack(RegExpReservedStack);
 
@@ -3092,21 +3139,17 @@ void CodeGenerator::visitRegExpSearcher(LRegExpSearcher* lir) {
   masm.freeStack(RegExpReservedStack);
 }
 
-static const int32_t RegExpTesterResultNotFound = -1;
-static const int32_t RegExpTesterResultFailed = -2;
+JitCode* JitRealm::generateRegExpExecTestStub(JSContext* cx) {
+  JitSpew(JitSpew_Codegen, "# Emitting RegExpExecTest stub");
 
-JitCode* JitRealm::generateRegExpTesterStub(JSContext* cx) {
-  JitSpew(JitSpew_Codegen, "# Emitting RegExpTester stub");
-
-  Register regexp = RegExpTesterRegExpReg;
-  Register input = RegExpTesterStringReg;
-  Register lastIndex = RegExpTesterLastIndexReg;
+  Register regexp = RegExpExecTestRegExpReg;
+  Register input = RegExpExecTestStringReg;
   Register result = ReturnReg;
 
   TempAllocator temp(&cx->tempLifoAlloc());
   JitContext jcx(cx);
   StackMacroAssembler masm(cx, temp);
-  AutoCreatedBy acb(masm, "JitRealm::generateRegExpTesterStub");
+  AutoCreatedBy acb(masm, "JitRealm::generateRegExpExecTestStub");
 
 #ifdef JS_USE_LINK_REGISTER
   masm.pushReturnAddress();
@@ -3114,23 +3157,33 @@ JitCode* JitRealm::generateRegExpTesterStub(JSContext* cx) {
   masm.push(FramePointer);
   masm.moveStackPtrTo(FramePointer);
 
-  // We are free to clobber all registers, as LRegExpTester is a call
+  // We are free to clobber all registers, as LRegExpExecTest is a call
   // instruction.
   AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
   regs.take(input);
   regs.take(regexp);
-  regs.take(lastIndex);
 
+  // Ensure lastIndex != result.
+  regs.take(result);
+  Register lastIndex = regs.takeAny();
+  regs.add(result);
   Register temp1 = regs.takeAny();
   Register temp2 = regs.takeAny();
   Register temp3 = regs.takeAny();
 
+  Address flagsSlot(regexp, RegExpObject::offsetOfFlags());
+  Address lastIndexSlot(regexp, RegExpObject::offsetOfLastIndex());
+
   masm.reserveStack(RegExpReservedStack);
 
+  // Load lastIndex and skip RegExp execution if needed.
+  Label notFoundZeroLastIndex;
+  masm.loadRegExpLastIndex(regexp, input, lastIndex, &notFoundZeroLastIndex);
+
   // In visitRegExpMatcher and visitRegExpSearcher, we reserve stack space
-  // before calling the stub. For RegExpTester we call the stub before reserving
-  // stack space, so the offset of the InputOutputData relative to the frame
-  // pointer is negative.
+  // before calling the stub. For RegExpExecTest we call the stub before
+  // reserving stack space, so the offset of the InputOutputData relative to the
+  // frame pointer is negative.
   constexpr int32_t inputOutputDataStartOffset = -int32_t(RegExpReservedStack);
 
   // On ARM64, load/store instructions can encode an immediate offset in the
@@ -3146,23 +3199,39 @@ JitCode* JitRealm::generateRegExpTesterStub(JSContext* cx) {
     return nullptr;
   }
 
-  Label done;
+  // Set `result` to true/false to indicate found/not-found, or to
+  // RegExpExecTestResultFailed if we have to retry in C++. If the regular
+  // expression is global or sticky, we also have to update its .lastIndex slot.
 
+  Label done;
   int32_t pairsVectorStartOffset =
       RegExpPairsVectorStartOffset(inputOutputDataStartOffset);
   Address matchPairLimit(FramePointer,
                          pairsVectorStartOffset + MatchPair::offsetOfLimit());
 
-  // RegExpTester returns the end index of the match to update lastIndex.
-  masm.load32(matchPairLimit, result);
+  masm.move32(Imm32(1), result);
+  masm.branchTest32(Assembler::Zero, flagsSlot,
+                    Imm32(JS::RegExpFlag::Global | JS::RegExpFlag::Sticky),
+                    &done);
+  masm.load32(matchPairLimit, lastIndex);
+  masm.storeValue(JSVAL_TYPE_INT32, lastIndex, lastIndexSlot);
   masm.jump(&done);
 
   masm.bind(&notFound);
-  masm.move32(Imm32(RegExpTesterResultNotFound), result);
+  masm.move32(Imm32(0), result);
+  masm.branchTest32(Assembler::Zero, flagsSlot,
+                    Imm32(JS::RegExpFlag::Global | JS::RegExpFlag::Sticky),
+                    &done);
+  masm.storeValue(Int32Value(0), lastIndexSlot);
+  masm.jump(&done);
+
+  masm.bind(&notFoundZeroLastIndex);
+  masm.move32(Imm32(0), result);
+  masm.storeValue(Int32Value(0), lastIndexSlot);
   masm.jump(&done);
 
   masm.bind(&oolEntry);
-  masm.move32(Imm32(RegExpTesterResultFailed), result);
+  masm.move32(Imm32(RegExpExecTestResultFailed), result);
 
   masm.bind(&done);
   masm.freeStack(RegExpReservedStack);
@@ -3175,66 +3244,63 @@ JitCode* JitRealm::generateRegExpTesterStub(JSContext* cx) {
     return nullptr;
   }
 
-  CollectPerfSpewerJitCodeProfile(code, "RegExpTesterStub");
+  CollectPerfSpewerJitCodeProfile(code, "RegExpExecTestStub");
 #ifdef MOZ_VTUNE
-  vtune::MarkStub(code, "RegExpTesterStub");
+  vtune::MarkStub(code, "RegExpExecTestStub");
 #endif
 
   return code;
 }
 
-class OutOfLineRegExpTester : public OutOfLineCodeBase<CodeGenerator> {
-  LRegExpTester* lir_;
+class OutOfLineRegExpExecTest : public OutOfLineCodeBase<CodeGenerator> {
+  LRegExpExecTest* lir_;
 
  public:
-  explicit OutOfLineRegExpTester(LRegExpTester* lir) : lir_(lir) {}
+  explicit OutOfLineRegExpExecTest(LRegExpExecTest* lir) : lir_(lir) {}
 
   void accept(CodeGenerator* codegen) override {
-    codegen->visitOutOfLineRegExpTester(this);
+    codegen->visitOutOfLineRegExpExecTest(this);
   }
 
-  LRegExpTester* lir() const { return lir_; }
+  LRegExpExecTest* lir() const { return lir_; }
 };
 
-void CodeGenerator::visitOutOfLineRegExpTester(OutOfLineRegExpTester* ool) {
-  LRegExpTester* lir = ool->lir();
-  Register lastIndex = ToRegister(lir->lastIndex());
+void CodeGenerator::visitOutOfLineRegExpExecTest(OutOfLineRegExpExecTest* ool) {
+  LRegExpExecTest* lir = ool->lir();
   Register input = ToRegister(lir->string());
   Register regexp = ToRegister(lir->regexp());
 
-  pushArg(lastIndex);
   pushArg(input);
   pushArg(regexp);
 
-  // We are not using oolCallVM because we are in a Call, and that live
-  // registers are already saved by the the register allocator.
-  using Fn = bool (*)(JSContext * cx, HandleObject regexp, HandleString input,
-                      int32_t lastIndex, int32_t * result);
-  callVM<Fn, RegExpTesterRaw>(lir);
+  // We are not using oolCallVM because we are in a Call and live registers have
+  // already been saved by the register allocator.
+  using Fn = bool (*)(JSContext* cx, Handle<RegExpObject*> regexp,
+                      HandleString input, bool* result);
+  callVM<Fn, RegExpBuiltinExecTestFromJit>(lir);
 
   masm.jump(ool->rejoin());
 }
 
-void CodeGenerator::visitRegExpTester(LRegExpTester* lir) {
-  MOZ_ASSERT(ToRegister(lir->regexp()) == RegExpTesterRegExpReg);
-  MOZ_ASSERT(ToRegister(lir->string()) == RegExpTesterStringReg);
-  MOZ_ASSERT(ToRegister(lir->lastIndex()) == RegExpTesterLastIndexReg);
+void CodeGenerator::visitRegExpExecTest(LRegExpExecTest* lir) {
+  MOZ_ASSERT(ToRegister(lir->regexp()) == RegExpExecTestRegExpReg);
+  MOZ_ASSERT(ToRegister(lir->string()) == RegExpExecTestStringReg);
   MOZ_ASSERT(ToRegister(lir->output()) == ReturnReg);
 
-  static_assert(RegExpTesterRegExpReg != ReturnReg);
-  static_assert(RegExpTesterStringReg != ReturnReg);
-  static_assert(RegExpTesterLastIndexReg != ReturnReg);
+  static_assert(RegExpExecTestRegExpReg != ReturnReg);
+  static_assert(RegExpExecTestStringReg != ReturnReg);
 
-  OutOfLineRegExpTester* ool = new (alloc()) OutOfLineRegExpTester(lir);
+  auto* ool = new (alloc()) OutOfLineRegExpExecTest(lir);
   addOutOfLineCode(ool, lir->mir());
 
   const JitRealm* jitRealm = gen->realm->jitRealm();
-  JitCode* regExpTesterStub =
-      jitRealm->regExpTesterStubNoBarrier(&realmStubsToReadBarrier_);
-  masm.call(regExpTesterStub);
+  JitCode* regExpExecTestStub =
+      jitRealm->regExpExecTestStubNoBarrier(&realmStubsToReadBarrier_);
+  masm.call(regExpExecTestStub);
 
-  masm.branch32(Assembler::Equal, ReturnReg, Imm32(RegExpTesterResultFailed),
+  masm.branch32(Assembler::Equal, ReturnReg, Imm32(RegExpExecTestResultFailed),
                 ool->entry());
+
   masm.bind(ool->rejoin());
 }
 
@@ -3276,7 +3342,7 @@ void CodeGenerator::visitOutOfLineRegExpPrototypeOptimizable(
 
   saveVolatile(output);
 
-  using Fn = bool (*)(JSContext * cx, JSObject * proto);
+  using Fn = bool (*)(JSContext* cx, JSObject* proto);
   masm.setupAlignedABICall();
   masm.loadJSContext(output);
   masm.passABIArg(output);
@@ -3328,7 +3394,7 @@ void CodeGenerator::visitOutOfLineRegExpInstanceOptimizable(
 
   saveVolatile(output);
 
-  using Fn = bool (*)(JSContext * cx, JSObject * obj, JSObject * proto);
+  using Fn = bool (*)(JSContext* cx, JSObject* obj, JSObject* proto);
   masm.setupAlignedABICall();
   masm.loadJSContext(output);
   masm.passABIArg(output);
@@ -3528,7 +3594,7 @@ void CodeGenerator::visitLambda(LLambda* lir) {
       lir, ArgList(ImmGCPtr(fun), envChain), StoreRegisterTo(output));
 
   TemplateObject templateObject(fun);
-  masm.createGCObject(output, tempReg, templateObject, gc::DefaultHeap,
+  masm.createGCObject(output, tempReg, templateObject, gc::Heap::Default,
                       ool->entry());
 
   masm.storeValue(JSVAL_TYPE_OBJECT, envChain,
@@ -3892,6 +3958,36 @@ void CodeGenerator::visitKeepAliveObject(LKeepAliveObject* lir) {
   // No-op.
 }
 
+void CodeGenerator::visitDebugEnterGCUnsafeRegion(
+    LDebugEnterGCUnsafeRegion* lir) {
+  Register temp = ToRegister(lir->temp0());
+
+  masm.loadJSContext(temp);
+
+  Address inUnsafeRegion(temp, JSContext::offsetOfInUnsafeRegion());
+  masm.add32(Imm32(1), inUnsafeRegion);
+
+  Label ok;
+  masm.branch32(Assembler::GreaterThan, inUnsafeRegion, Imm32(0), &ok);
+  masm.assumeUnreachable("unbalanced enter/leave GC unsafe region");
+  masm.bind(&ok);
+}
+
+void CodeGenerator::visitDebugLeaveGCUnsafeRegion(
+    LDebugLeaveGCUnsafeRegion* lir) {
+  Register temp = ToRegister(lir->temp0());
+
+  masm.loadJSContext(temp);
+
+  Address inUnsafeRegion(temp, JSContext::offsetOfInUnsafeRegion());
+  masm.add32(Imm32(-1), inUnsafeRegion);
+
+  Label ok;
+  masm.branch32(Assembler::GreaterThanOrEqual, inUnsafeRegion, Imm32(0), &ok);
+  masm.assumeUnreachable("unbalanced enter/leave GC unsafe region");
+  masm.bind(&ok);
+}
+
 void CodeGenerator::visitSlots(LSlots* lir) {
   Address slots(ToRegister(lir->object()), NativeObject::offsetOfSlots());
   masm.loadPtr(slots, ToRegister(lir->output()));
@@ -4012,7 +4108,7 @@ void CodeGenerator::visitNewLexicalEnvironmentObject(
   auto* templateObj = ToConstantObject<BlockLexicalEnvironmentObject>(
       lir->mir()->templateObj());
   auto* scope = &templateObj->scope();
-  gc::InitialHeap initialHeap = gc::DefaultHeap;
+  gc::Heap initialHeap = gc::Heap::Default;
 
   using Fn =
       BlockLexicalEnvironmentObject* (*)(JSContext*, Handle<LexicalScope*>);
@@ -4034,7 +4130,7 @@ void CodeGenerator::visitNewClassBodyEnvironmentObject(
   auto* templateObj = ToConstantObject<ClassBodyLexicalEnvironmentObject>(
       lir->mir()->templateObj());
   auto* scope = &templateObj->scope();
-  gc::InitialHeap initialHeap = gc::DefaultHeap;
+  gc::Heap initialHeap = gc::Heap::Default;
 
   using Fn = ClassBodyLexicalEnvironmentObject* (*)(JSContext*,
                                                     Handle<ClassBodyScope*>);
@@ -4056,7 +4152,7 @@ void CodeGenerator::visitNewVarEnvironmentObject(
   auto* templateObj =
       ToConstantObject<VarEnvironmentObject>(lir->mir()->templateObj());
   auto* scope = &templateObj->scope().as<VarScope>();
-  gc::InitialHeap initialHeap = gc::DefaultHeap;
+  gc::Heap initialHeap = gc::Heap::Default;
 
   using Fn = VarEnvironmentObject* (*)(JSContext*, Handle<VarScope*>);
   auto* ool = oolCallVM<Fn, VarEnvironmentObject::createWithoutEnclosing>(
@@ -4074,6 +4170,21 @@ void CodeGenerator::visitGuardShape(LGuardShape* guard) {
   Label bail;
   masm.branchTestObjShape(Assembler::NotEqual, obj, guard->mir()->shape(), temp,
                           obj, &bail);
+  bailoutFrom(&bail, guard->snapshot());
+}
+
+void CodeGenerator::visitGuardMultipleShapes(LGuardMultipleShapes* guard) {
+  Register obj = ToRegister(guard->object());
+  Register shapeList = ToRegister(guard->shapeList());
+  Register temp = ToRegister(guard->temp0());
+  Register temp2 = ToRegister(guard->temp1());
+  Register temp3 = ToRegister(guard->temp2());
+  Register spectre = ToTempRegisterOrInvalid(guard->temp3());
+
+  Label bail;
+  masm.loadPtr(Address(shapeList, NativeObject::offsetOfElements()), temp);
+  masm.branchTestObjShapeList(Assembler::NotEqual, obj, temp, temp2, temp3,
+                              spectre, &bail);
   bailoutFrom(&bail, guard->snapshot());
 }
 
@@ -4106,6 +4217,16 @@ void CodeGenerator::visitGuardIsNativeObject(LGuardIsNativeObject* guard) {
 
   Label bail;
   masm.branchIfNonNativeObj(obj, temp, &bail);
+  bailoutFrom(&bail, guard->snapshot());
+}
+
+void CodeGenerator::visitGuardGlobalGeneration(LGuardGlobalGeneration* guard) {
+  Register temp = ToRegister(guard->temp0());
+  Label bail;
+
+  masm.load32(AbsoluteAddress(guard->mir()->generationAddr()), temp);
+  masm.branch32(Assembler::NotEqual, temp, Imm32(guard->mir()->expected()),
+                &bail);
   bailoutFrom(&bail, guard->snapshot());
 }
 
@@ -4220,30 +4341,34 @@ void CodeGenerator::visitMegamorphicLoadSlot(LMegamorphicLoadSlot* lir) {
   Register temp0 = ToRegister(lir->temp0());
   Register temp1 = ToRegister(lir->temp1());
   Register temp2 = ToRegister(lir->temp2());
+  Register temp3 = ToRegister(lir->temp3());
   ValueOperand output = ToOutValue(lir);
 
   Label bail, cacheHit;
   if (JitOptions.enableWatchtowerMegamorphic) {
-    masm.emitMegamorphicCacheLookup(NameToId(lir->mir()->name()), obj, temp0,
-                                    temp1, temp2, output, &bail, &cacheHit);
+    masm.emitMegamorphicCacheLookup(lir->mir()->name(), obj, temp0, temp1,
+                                    temp2, output, &cacheHit);
+  } else {
+    masm.xorPtr(temp2, temp2);
   }
 
   masm.branchIfNonNativeObj(obj, temp0, &bail);
 
   masm.Push(UndefinedValue());
-  masm.moveStackPtrTo(temp2);
+  masm.moveStackPtrTo(temp3);
 
-  using Fn =
-      bool (*)(JSContext * cx, JSObject * obj, PropertyName * name, Value * vp);
+  using Fn = bool (*)(JSContext* cx, JSObject* obj, PropertyKey id,
+                      MegamorphicCache::Entry* cacheEntry, Value* vp);
   masm.setupAlignedABICall();
   masm.loadJSContext(temp0);
   masm.passABIArg(temp0);
   masm.passABIArg(obj);
-  masm.movePtr(ImmGCPtr(lir->mir()->name()), temp1);
+  masm.movePropertyKey(lir->mir()->name(), temp1);
   masm.passABIArg(temp1);
   masm.passABIArg(temp2);
+  masm.passABIArg(temp3);
 
-  masm.callWithABI<Fn, GetNativeDataPropertyPureFallback>();
+  masm.callWithABI<Fn, GetNativeDataPropertyPure>();
 
   MOZ_ASSERT(!output.aliases(ReturnReg));
   masm.Pop(output);
@@ -4260,19 +4385,31 @@ void CodeGenerator::visitMegamorphicLoadSlotByValue(
   ValueOperand idVal = ToValue(lir, LMegamorphicLoadSlotByValue::IdIndex);
   Register temp0 = ToRegister(lir->temp0());
   Register temp1 = ToRegister(lir->temp1());
+  Register temp2 = ToRegister(lir->temp2());
   ValueOperand output = ToOutValue(lir);
 
-  Label bail;
+  Label bail, cacheHit;
+  if (JitOptions.enableWatchtowerMegamorphic) {
+    masm.emitMegamorphicCacheLookupByValue(idVal, obj, temp0, temp1, temp2,
+                                           output, &cacheHit);
+  } else {
+    masm.xorPtr(temp2, temp2);
+  }
+
+  masm.branchIfNonNativeObj(obj, temp0, &bail);
+
   // idVal will be in vp[0], result will be stored in vp[1].
   masm.reserveStack(sizeof(Value));
   masm.Push(idVal);
   masm.moveStackPtrTo(temp0);
 
-  using Fn = bool (*)(JSContext * cx, JSObject * obj, Value * vp);
+  using Fn = bool (*)(JSContext* cx, JSObject* obj,
+                      MegamorphicCache::Entry* cacheEntry, Value* vp);
   masm.setupAlignedABICall();
   masm.loadJSContext(temp1);
   masm.passABIArg(temp1);
   masm.passABIArg(obj);
+  masm.passABIArg(temp2);
   masm.passABIArg(temp0);
   masm.callWithABI<Fn, GetNativeDataPropertyByValuePure>();
 
@@ -4290,35 +4427,56 @@ void CodeGenerator::visitMegamorphicLoadSlotByValue(
   masm.setFramePushed(framePushed);
   masm.Pop(output);
 
+  masm.bind(&cacheHit);
   bailoutFrom(&bail, lir->snapshot());
 }
 
 void CodeGenerator::visitMegamorphicStoreSlot(LMegamorphicStoreSlot* lir) {
   Register obj = ToRegister(lir->object());
-  ValueOperand rhs = ToValue(lir, LMegamorphicStoreSlot::RhsIndex);
+  ValueOperand value = ToValue(lir, LMegamorphicStoreSlot::RhsIndex);
+
   Register temp0 = ToRegister(lir->temp0());
+#ifndef JS_CODEGEN_X86
   Register temp1 = ToRegister(lir->temp1());
   Register temp2 = ToRegister(lir->temp2());
+#endif
 
-  masm.Push(rhs);
-  masm.moveStackPtrTo(temp0);
+  Label cacheHit, done;
+  if (JitOptions.enableWatchtowerMegamorphic) {
+#ifdef JS_CODEGEN_X86
+    masm.emitMegamorphicCachedSetSlot(
+        lir->mir()->name(), obj, temp0, value, &cacheHit,
+        [](MacroAssembler& masm, const Address& addr, MIRType mirType) {
+          EmitPreBarrier(masm, addr, mirType);
+        });
+#else
+    masm.emitMegamorphicCachedSetSlot(
+        lir->mir()->name(), obj, temp0, temp1, temp2, value, &cacheHit,
+        [](MacroAssembler& masm, const Address& addr, MIRType mirType) {
+          EmitPreBarrier(masm, addr, mirType);
+        });
+#endif
+  }
 
-  using Fn = bool (*)(JSContext * cx, JSObject * obj, PropertyName * name,
-                      Value * val);
-  masm.setupAlignedABICall();
-  masm.loadJSContext(temp1);
-  masm.passABIArg(temp1);
-  masm.passABIArg(obj);
-  masm.movePtr(ImmGCPtr(lir->mir()->name()), temp2);
-  masm.passABIArg(temp2);
-  masm.passABIArg(temp0);
-  masm.callWithABI<Fn, SetNativeDataPropertyPure>();
+  pushArg(Imm32(lir->mir()->strict()));
+  pushArg(value);
+  pushArg(lir->mir()->name(), temp0);
+  pushArg(obj);
 
-  MOZ_ASSERT(!rhs.aliases(temp0));
-  masm.storeCallPointerResult(temp0);
-  masm.Pop(rhs);
+  using Fn = bool (*)(JSContext*, HandleObject, HandleId, HandleValue, bool);
+  callVM<Fn, SetPropertyMegamorphic<true>>(lir);
 
-  bailoutIfFalseBool(temp0, lir->snapshot());
+  masm.jump(&done);
+  masm.bind(&cacheHit);
+
+  masm.branchPtrInNurseryChunk(Assembler::Equal, obj, temp0, &done);
+  masm.branchValueIsNurseryCell(Assembler::NotEqual, value, temp0, &done);
+
+  saveVolatile(temp0);
+  emitPostWriteBarrier(obj);
+  restoreVolatile(temp0);
+
+  masm.bind(&done);
 }
 
 void CodeGenerator::visitMegamorphicHasProp(LMegamorphicHasProp* lir) {
@@ -4326,18 +4484,32 @@ void CodeGenerator::visitMegamorphicHasProp(LMegamorphicHasProp* lir) {
   ValueOperand idVal = ToValue(lir, LMegamorphicHasProp::IdIndex);
   Register temp0 = ToRegister(lir->temp0());
   Register temp1 = ToRegister(lir->temp1());
+  Register temp2 = ToRegister(lir->temp2());
   Register output = ToRegister(lir->output());
+
+  Label bail, cacheHit;
+  if (JitOptions.enableWatchtowerMegamorphic) {
+    masm.emitMegamorphicCacheLookupExists(idVal, obj, temp0, temp1, temp2,
+                                          output, &cacheHit,
+                                          lir->mir()->hasOwn());
+  } else {
+    masm.xorPtr(temp2, temp2);
+  }
+
+  masm.branchIfNonNativeObj(obj, temp0, &bail);
 
   // idVal will be in vp[0], result will be stored in vp[1].
   masm.reserveStack(sizeof(Value));
   masm.Push(idVal);
   masm.moveStackPtrTo(temp0);
 
-  using Fn = bool (*)(JSContext * cx, JSObject * obj, Value * vp);
+  using Fn = bool (*)(JSContext* cx, JSObject* obj,
+                      MegamorphicCache::Entry* cacheEntry, Value* vp);
   masm.setupAlignedABICall();
   masm.loadJSContext(temp1);
   masm.passABIArg(temp1);
   masm.passABIArg(obj);
+  masm.passABIArg(temp2);
   masm.passABIArg(temp0);
   if (lir->mir()->hasOwn()) {
     masm.callWithABI<Fn, HasNativeDataPropertyPure<true>>();
@@ -4353,12 +4525,15 @@ void CodeGenerator::visitMegamorphicHasProp(LMegamorphicHasProp* lir) {
   Label ok;
   masm.branchIfTrueBool(temp0, &ok);
   masm.freeStack(sizeof(Value));  // Discard result Value.
-  bailout(lir->snapshot());
+  masm.jump(&bail);
 
   masm.bind(&ok);
   masm.setFramePushed(framePushed);
   masm.unboxBoolean(Address(masm.getStackPointer(), 0), output);
   masm.freeStack(sizeof(Value));
+  masm.bind(&cacheHit);
+
+  bailoutFrom(&bail, lir->snapshot());
 }
 
 void CodeGenerator::visitGuardIsNotArrayBufferMaybeShared(
@@ -4421,6 +4596,13 @@ void CodeGenerator::visitGuardSpecificSymbol(LGuardSpecificSymbol* guard) {
                 guard->snapshot());
 }
 
+void CodeGenerator::visitGuardSpecificInt32(LGuardSpecificInt32* guard) {
+  Register num = ToRegister(guard->num());
+
+  bailoutCmp32(Assembler::NotEqual, num, Imm32(guard->mir()->expected()),
+               guard->snapshot());
+}
+
 void CodeGenerator::visitGuardStringToIndex(LGuardStringToIndex* lir) {
   Register str = ToRegister(lir->string());
   Register output = ToRegister(lir->output());
@@ -4436,7 +4618,7 @@ void CodeGenerator::visitGuardStringToIndex(LGuardStringToIndex* lir) {
     volatileRegs.takeUnchecked(output);
     masm.PushRegsInMask(volatileRegs);
 
-    using Fn = int32_t (*)(JSString * str);
+    using Fn = int32_t (*)(JSString* str);
     masm.setupAlignedABICall();
     masm.passABIArg(str);
     masm.callWithABI<Fn, GetIndexFromString>();
@@ -4486,7 +4668,7 @@ void CodeGenerator::visitGuardStringToDouble(LGuardStringToDouble* lir) {
     volatileRegs.takeUnchecked(temp1);
     masm.PushRegsInMask(volatileRegs);
 
-    using Fn = bool (*)(JSContext * cx, JSString * str, double* result);
+    using Fn = bool (*)(JSContext* cx, JSString* str, double* result);
     masm.setupAlignedABICall();
     masm.loadJSContext(temp1);
     masm.passABIArg(temp1);
@@ -4813,27 +4995,37 @@ static void EmitPostWriteBarrier(MacroAssembler& masm, CompileRuntime* runtime,
   Label callVM;
   Label exit;
 
+  Register temp = regs.takeAny();
+
   // We already have a fast path to check whether a global is in the store
   // buffer.
-  if (!isGlobal && maybeConstant) {
-    EmitStoreBufferCheckForConstant(masm, &maybeConstant->asTenured(), regs,
-                                    &exit, &callVM);
+  if (!isGlobal) {
+    if (maybeConstant) {
+      // Check store buffer bitmap directly for known object.
+      EmitStoreBufferCheckForConstant(masm, &maybeConstant->asTenured(), regs,
+                                      &exit, &callVM);
+    } else {
+      // Check one element cache to avoid VM call.
+      masm.loadPtr(AbsoluteAddress(runtime->addressOfLastBufferedWholeCell()),
+                   temp);
+      masm.branchPtr(Assembler::Equal, temp, objreg, &exit);
+    }
   }
 
   // Call into the VM to barrier the write.
   masm.bind(&callVM);
 
-  Register runtimereg = regs.takeAny();
+  Register runtimereg = temp;
   masm.mov(ImmPtr(runtime), runtimereg);
 
   masm.setupAlignedABICall();
   masm.passABIArg(runtimereg);
   masm.passABIArg(objreg);
   if (isGlobal) {
-    using Fn = void (*)(JSRuntime * rt, GlobalObject * obj);
+    using Fn = void (*)(JSRuntime* rt, GlobalObject* obj);
     masm.callWithABI<Fn, PostGlobalWriteBarrier>();
   } else {
-    using Fn = void (*)(JSRuntime * rt, js::gc::Cell * obj);
+    using Fn = void (*)(JSRuntime* rt, js::gc::Cell* obj);
     masm.callWithABI<Fn, PostWriteBarrier>();
   }
 
@@ -4857,6 +5049,121 @@ void CodeGenerator::emitPostWriteBarrier(const LAllocation* obj) {
   }
 
   EmitPostWriteBarrier(masm, gen->runtime, objreg, object, isGlobal, regs);
+}
+
+// Returns true if `def` might be allocated in the nursery.
+static bool ValueNeedsPostBarrier(MDefinition* def) {
+  if (def->isBox()) {
+    def = def->toBox()->input();
+  }
+  if (def->type() == MIRType::Value) {
+    return true;
+  }
+  return NeedsPostBarrier(def->type());
+}
+
+class OutOfLineElementPostWriteBarrier
+    : public OutOfLineCodeBase<CodeGenerator> {
+  LiveRegisterSet liveVolatileRegs_;
+  const LAllocation* index_;
+  int32_t indexDiff_;
+  Register obj_;
+  Register scratch_;
+
+ public:
+  OutOfLineElementPostWriteBarrier(const LiveRegisterSet& liveVolatileRegs,
+                                   Register obj, const LAllocation* index,
+                                   Register scratch, int32_t indexDiff)
+      : liveVolatileRegs_(liveVolatileRegs),
+        index_(index),
+        indexDiff_(indexDiff),
+        obj_(obj),
+        scratch_(scratch) {}
+
+  void accept(CodeGenerator* codegen) override {
+    codegen->visitOutOfLineElementPostWriteBarrier(this);
+  }
+
+  const LiveRegisterSet& liveVolatileRegs() const { return liveVolatileRegs_; }
+  const LAllocation* index() const { return index_; }
+  int32_t indexDiff() const { return indexDiff_; }
+
+  Register object() const { return obj_; }
+  Register scratch() const { return scratch_; }
+};
+
+void CodeGenerator::emitElementPostWriteBarrier(
+    MInstruction* mir, const LiveRegisterSet& liveVolatileRegs, Register obj,
+    const LAllocation* index, Register scratch, const ConstantOrRegister& val,
+    int32_t indexDiff) {
+  if (val.constant()) {
+    MOZ_ASSERT_IF(val.value().isGCThing(),
+                  !IsInsideNursery(val.value().toGCThing()));
+    return;
+  }
+
+  TypedOrValueRegister reg = val.reg();
+  if (reg.hasTyped() && !NeedsPostBarrier(reg.type())) {
+    return;
+  }
+
+  auto* ool = new (alloc()) OutOfLineElementPostWriteBarrier(
+      liveVolatileRegs, obj, index, scratch, indexDiff);
+  addOutOfLineCode(ool, mir);
+
+  masm.branchPtrInNurseryChunk(Assembler::Equal, obj, scratch, ool->rejoin());
+
+  if (reg.hasValue()) {
+    masm.branchValueIsNurseryCell(Assembler::Equal, reg.valueReg(), scratch,
+                                  ool->entry());
+  } else {
+    masm.branchPtrInNurseryChunk(Assembler::Equal, reg.typedReg().gpr(),
+                                 scratch, ool->entry());
+  }
+
+  masm.bind(ool->rejoin());
+}
+
+void CodeGenerator::visitOutOfLineElementPostWriteBarrier(
+    OutOfLineElementPostWriteBarrier* ool) {
+  Register obj = ool->object();
+  Register scratch = ool->scratch();
+  const LAllocation* index = ool->index();
+  int32_t indexDiff = ool->indexDiff();
+
+  masm.PushRegsInMask(ool->liveVolatileRegs());
+
+  AllocatableGeneralRegisterSet regs(GeneralRegisterSet::Volatile());
+  regs.takeUnchecked(obj);
+  regs.takeUnchecked(scratch);
+
+  Register indexReg;
+  if (index->isConstant()) {
+    indexReg = regs.takeAny();
+    masm.move32(Imm32(ToInt32(index) + indexDiff), indexReg);
+  } else {
+    indexReg = ToRegister(index);
+    regs.takeUnchecked(indexReg);
+    if (indexDiff != 0) {
+      masm.add32(Imm32(indexDiff), indexReg);
+    }
+  }
+
+  masm.setupUnalignedABICall(scratch);
+  masm.movePtr(ImmPtr(gen->runtime), scratch);
+  masm.passABIArg(scratch);
+  masm.passABIArg(obj);
+  masm.passABIArg(indexReg);
+  using Fn = void (*)(JSRuntime* rt, JSObject* obj, int32_t index);
+  masm.callWithABI<Fn, PostWriteElementBarrier<IndexInBounds::Yes>>();
+
+  // We don't need a sub32 here because indexReg must be in liveVolatileRegs
+  // if indexDiff is not zero, so it will be restored below.
+  MOZ_ASSERT_IF(indexDiff != 0, ool->liveVolatileRegs().has(indexReg));
+
+  masm.PopRegsInMask(ool->liveVolatileRegs());
+
+  masm.jump(ool->rejoin());
 }
 
 void CodeGenerator::emitPostWriteBarrier(Register objreg) {
@@ -5022,7 +5329,7 @@ void CodeGenerator::visitOutOfLineCallPostWriteElementBarrier(
   }
 
   Register runtimereg = regs.takeAny();
-  using Fn = void (*)(JSRuntime * rt, JSObject * obj, int32_t index);
+  using Fn = void (*)(JSRuntime* rt, JSObject* obj, int32_t index);
   masm.setupAlignedABICall();
   masm.mov(ImmPtr(gen->runtime), runtimereg);
   masm.passABIArg(runtimereg);
@@ -5082,12 +5389,11 @@ void CodeGenerator::visitAssertCanElidePostWriteBarrier(
   masm.bind(&ok);
 }
 
-void CodeGenerator::visitCallNative(LCallNative* call) {
-  WrappedFunction* target = call->getSingleTarget();
-  MOZ_ASSERT(target);
-  MOZ_ASSERT(target->isNativeWithoutJitEntry());
+template <typename LCallIns>
+void CodeGenerator::emitCallNative(LCallIns* call, JSNative native) {
+  MCallBase* mir = call->mir();
 
-  int unusedStack = UnusedStackBytesForCall(call->paddedNumStackArgs());
+  uint32_t unusedStack = UnusedStackBytesForCall(mir->paddedNumStackArgs());
 
   // Registers used for callWithABI() argument-passing.
   const Register argContextReg = ToRegister(call->getArgContextReg());
@@ -5113,19 +5419,29 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
   // Push a Value containing the callee object: natives are allowed to access
   // their callee before setting the return value. The StackPointer is moved
   // to &vp[0].
-  masm.Push(ObjectValue(*target->rawNativeJSFunction()));
+  if constexpr (std::is_same_v<LCallIns, LCallClassHook>) {
+    Register calleeReg = ToRegister(call->getCallee());
+    masm.Push(TypedOrValueRegister(MIRType::Object, AnyRegister(calleeReg)));
+
+    if (call->mir()->maybeCrossRealm()) {
+      masm.switchToObjectRealm(calleeReg, tempReg);
+    }
+  } else {
+    WrappedFunction* target = call->getSingleTarget();
+    masm.Push(ObjectValue(*target->rawNativeJSFunction()));
+
+    if (call->mir()->maybeCrossRealm()) {
+      masm.movePtr(ImmGCPtr(target->rawNativeJSFunction()), tempReg);
+      masm.switchToObjectRealm(tempReg, tempReg);
+    }
+  }
 
   // Preload arguments into registers.
   masm.loadJSContext(argContextReg);
-  masm.move32(Imm32(call->numActualArgs()), argUintNReg);
+  masm.move32(Imm32(call->mir()->numActualArgs()), argUintNReg);
   masm.moveStackPtrTo(argVpReg);
 
   masm.Push(argUintNReg);
-
-  if (call->mir()->maybeCrossRealm()) {
-    masm.movePtr(ImmGCPtr(target->rawNativeJSFunction()), tempReg);
-    masm.switchToObjectRealm(tempReg, tempReg);
-  }
 
   // Construct native exit frame.
   uint32_t safepointOffset = masm.buildFakeExitFrame(tempReg);
@@ -5139,15 +5455,23 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
   masm.passABIArg(argContextReg);
   masm.passABIArg(argUintNReg);
   masm.passABIArg(argVpReg);
-  JSNative native = target->native();
-  if (call->ignoresReturnValue() && target->hasJitInfo()) {
-    const JSJitInfo* jitInfo = target->jitInfo();
-    if (jitInfo->type() == JSJitInfo::IgnoresReturnValueNative) {
-      native = jitInfo->ignoresReturnValueMethod;
-    }
+
+  ensureOsiSpace();
+  // If we're using a simulator build, `native` will already point to the
+  // simulator's call-redirection code for LCallClassHook. Load the address in
+  // a register first so that we don't try to redirect it a second time.
+  bool emittedCall = false;
+#ifdef JS_SIMULATOR
+  if constexpr (std::is_same_v<LCallIns, LCallClassHook>) {
+    masm.movePtr(ImmPtr(native), tempReg);
+    masm.callWithABI(tempReg);
+    emittedCall = true;
   }
-  masm.callWithABI(DynamicFunction<JSNative>(native), MoveOp::GENERAL,
-                   CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+#endif
+  if (!emittedCall) {
+    masm.callWithABI(DynamicFunction<JSNative>(native), MoveOp::GENERAL,
+                     CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+  }
 
   // Test for failure.
   masm.branchIfFalseBool(ReturnReg, masm.failureLabel());
@@ -5164,7 +5488,7 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
   // Until C++ code is instrumented against Spectre, prevent speculative
   // execution from returning any private data.
   if (JitOptions.spectreJitToCxxCalls && !call->mir()->ignoresReturnValue() &&
-      call->mir()->hasLiveDefUses()) {
+      mir->hasLiveDefUses()) {
     masm.speculationBarrier();
   }
 
@@ -5177,43 +5501,53 @@ void CodeGenerator::visitCallNative(LCallNative* call) {
   MOZ_ASSERT(masm.framePushed() == initialStack);
 }
 
+void CodeGenerator::visitCallNative(LCallNative* call) {
+  WrappedFunction* target = call->getSingleTarget();
+  MOZ_ASSERT(target);
+  MOZ_ASSERT(target->isNativeWithoutJitEntry());
+
+  JSNative native = target->native();
+  if (call->ignoresReturnValue() && target->hasJitInfo()) {
+    const JSJitInfo* jitInfo = target->jitInfo();
+    if (jitInfo->type() == JSJitInfo::IgnoresReturnValueNative) {
+      native = jitInfo->ignoresReturnValueMethod;
+    }
+  }
+  emitCallNative(call, native);
+}
+
+void CodeGenerator::visitCallClassHook(LCallClassHook* call) {
+  emitCallNative(call, call->mir()->target());
+}
+
 static void LoadDOMPrivate(MacroAssembler& masm, Register obj, Register priv,
                            DOMObjectKind kind) {
   // Load the value in DOM_OBJECT_SLOT for a native or proxy DOM object. This
   // will be in the first slot but may be fixed or non-fixed.
   MOZ_ASSERT(obj != priv);
 
-  // Check if it's a proxy.
-  Label isProxy, done;
-  if (kind == DOMObjectKind::Unknown) {
-    masm.branchTestObjectIsProxy(true, obj, priv, &isProxy);
-  }
-
-  if (kind != DOMObjectKind::Proxy) {
-    // If it's a native object, the value must be in a fixed slot.
-    masm.debugAssertObjHasFixedSlots(obj, priv);
-    masm.loadPrivate(Address(obj, NativeObject::getFixedSlotOffset(0)), priv);
-    if (kind == DOMObjectKind::Unknown) {
-      masm.jump(&done);
+  switch (kind) {
+    case DOMObjectKind::Native:
+      // If it's a native object, the value must be in a fixed slot.
+      // See CanAttachDOMCall in CacheIR.cpp.
+      masm.debugAssertObjHasFixedSlots(obj, priv);
+      masm.loadPrivate(Address(obj, NativeObject::getFixedSlotOffset(0)), priv);
+      break;
+    case DOMObjectKind::Proxy: {
+#ifdef DEBUG
+      // Sanity check: it must be a DOM proxy.
+      Label isDOMProxy;
+      masm.branchTestProxyHandlerFamily(
+          Assembler::Equal, obj, priv, GetDOMProxyHandlerFamily(), &isDOMProxy);
+      masm.assumeUnreachable("Expected a DOM proxy");
+      masm.bind(&isDOMProxy);
+#endif
+      masm.loadPtr(Address(obj, ProxyObject::offsetOfReservedSlots()), priv);
+      masm.loadPrivate(
+          Address(priv, js::detail::ProxyReservedSlots::offsetOfSlot(0)), priv);
+      break;
     }
   }
-
-  if (kind != DOMObjectKind::Native) {
-    masm.bind(&isProxy);
-#ifdef DEBUG
-    // Sanity check: it must be a DOM proxy.
-    Label isDOMProxy;
-    masm.branchTestProxyHandlerFamily(Assembler::Equal, obj, priv,
-                                      GetDOMProxyHandlerFamily(), &isDOMProxy);
-    masm.assumeUnreachable("Expected a DOM proxy");
-    masm.bind(&isDOMProxy);
-#endif
-    masm.loadPtr(Address(obj, ProxyObject::offsetOfReservedSlots()), priv);
-    masm.loadPrivate(
-        Address(priv, js::detail::ProxyReservedSlots::offsetOfSlot(0)), priv);
-  }
-
-  masm.bind(&done);
 }
 
 void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
@@ -5223,7 +5557,7 @@ void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
   MOZ_ASSERT(target->hasJitInfo());
   MOZ_ASSERT(call->mir()->isCallDOMNative());
 
-  int unusedStack = UnusedStackBytesForCall(call->paddedNumStackArgs());
+  int unusedStack = UnusedStackBytesForCall(call->mir()->paddedNumStackArgs());
 
   // Registers used for callWithABI() argument-passing.
   const Register argJSContext = ToRegister(call->getArgJSContext());
@@ -5302,6 +5636,7 @@ void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
   masm.passABIArg(argObj);
   masm.passABIArg(argPrivate);
   masm.passABIArg(argArgs);
+  ensureOsiSpace();
   masm.callWithABI(DynamicFunction<JSJitMethodOp>(target->jitInfo()->method),
                    MoveOp::GENERAL,
                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
@@ -5346,8 +5681,7 @@ void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
 void CodeGenerator::visitCallGetIntrinsicValue(LCallGetIntrinsicValue* lir) {
   pushArg(ImmGCPtr(lir->mir()->name()));
 
-  using Fn =
-      bool (*)(JSContext * cx, Handle<PropertyName*>, MutableHandleValue);
+  using Fn = bool (*)(JSContext* cx, Handle<PropertyName*>, MutableHandleValue);
   callVM<Fn, GetIntrinsicValue>(lir);
 }
 
@@ -5376,7 +5710,8 @@ void CodeGenerator::visitCallGeneric(LCallGeneric* call) {
   Register calleereg = ToRegister(call->getFunction());
   Register objreg = ToRegister(call->getTempObject());
   Register nargsreg = ToRegister(call->getNargsReg());
-  uint32_t unusedStack = UnusedStackBytesForCall(call->paddedNumStackArgs());
+  uint32_t unusedStack =
+      UnusedStackBytesForCall(call->mir()->paddedNumStackArgs());
   Label invoke, thunk, makeCall, end;
 
   // Known-target case is handled by LCallKnown.
@@ -5455,6 +5790,7 @@ void CodeGenerator::visitCallGeneric(LCallGeneric* call) {
 
   // Finally call the function in objreg.
   masm.bind(&makeCall);
+  ensureOsiSpace();
   uint32_t callOffset = masm.callJit(objreg);
   markSafepointAt(callOffset, call);
 
@@ -5499,7 +5835,8 @@ void CodeGenerator::visitCallGeneric(LCallGeneric* call) {
 void CodeGenerator::visitCallKnown(LCallKnown* call) {
   Register calleereg = ToRegister(call->getFunction());
   Register objreg = ToRegister(call->getTempObject());
-  uint32_t unusedStack = UnusedStackBytesForCall(call->paddedNumStackArgs());
+  uint32_t unusedStack =
+      UnusedStackBytesForCall(call->mir()->paddedNumStackArgs());
   WrappedFunction* target = call->getSingleTarget();
 
   // Native single targets (except wasm) are handled by LCallNative.
@@ -5539,6 +5876,7 @@ void CodeGenerator::visitCallKnown(LCallKnown* call) {
   masm.PushFrameDescriptorForJitCall(FrameType::IonJS, call->numActualArgs());
 
   // Finally call the function in objreg.
+  ensureOsiSpace();
   uint32_t callOffset = masm.callJit(objreg);
   markSafepointAt(callOffset, call);
 
@@ -6020,6 +6358,7 @@ void CodeGenerator::emitApplyGeneric(T* apply) {
 
     // Finally call the function in objreg, as assigned by one of the paths
     // above.
+    ensureOsiSpace();
     uint32_t callOffset = masm.callJit(objreg);
     markSafepointAt(callOffset, apply);
 
@@ -6370,22 +6709,22 @@ void CodeGenerator::emitAssertGCThingResult(Register input,
 
     switch (type) {
       case MIRType::Object: {
-        using Fn = void (*)(JSContext * cx, JSObject * obj);
+        using Fn = void (*)(JSContext* cx, JSObject* obj);
         masm.callWithABI<Fn, AssertValidObjectPtr>();
         break;
       }
       case MIRType::String: {
-        using Fn = void (*)(JSContext * cx, JSString * str);
+        using Fn = void (*)(JSContext* cx, JSString* str);
         masm.callWithABI<Fn, AssertValidStringPtr>();
         break;
       }
       case MIRType::Symbol: {
-        using Fn = void (*)(JSContext * cx, JS::Symbol * sym);
+        using Fn = void (*)(JSContext* cx, JS::Symbol* sym);
         masm.callWithABI<Fn, AssertValidSymbolPtr>();
         break;
       }
       case MIRType::BigInt: {
-        using Fn = void (*)(JSContext * cx, JS::BigInt * bi);
+        using Fn = void (*)(JSContext* cx, JS::BigInt* bi);
         masm.callWithABI<Fn, AssertValidBigIntPtr>();
         break;
       }
@@ -6423,7 +6762,7 @@ void CodeGenerator::emitAssertResultV(const ValueOperand input,
     masm.pushValue(input);
     masm.moveStackPtrTo(temp1);
 
-    using Fn = void (*)(JSContext * cx, Value * v);
+    using Fn = void (*)(JSContext* cx, Value* v);
     masm.setupUnalignedABICall(temp2);
     masm.loadJSContext(temp2);
     masm.passABIArg(temp2);
@@ -6592,7 +6931,7 @@ bool CodeGenerator::generateBody() {
         return false;
       }
 
-      perfSpewer_.recordInstruction(masm, iter->op());
+      perfSpewer_.recordInstruction(masm, *iter);
 #ifdef JS_JITSPEW
       JitSpewStart(JitSpew_Codegen, "                                # LIR=%s",
                    iter->opName());
@@ -6693,6 +7032,7 @@ void CodeGenerator::visitNewArrayCallVM(LNewArray* lir) {
 
   masm.storeCallPointerResult(objReg);
 
+  MOZ_ASSERT(!lir->safepoint()->liveRegs().has(objReg));
   restoreLive(lir);
 }
 
@@ -6778,7 +7118,7 @@ void CodeGenerator::visitNewArrayDynamicLength(LNewArrayDynamicLength* lir) {
   Register tempReg = ToRegister(lir->temp0());
 
   JSObject* templateObject = lir->mir()->templateObject();
-  gc::InitialHeap initialHeap = lir->mir()->initialHeap();
+  gc::Heap initialHeap = lir->mir()->initialHeap();
 
   using Fn = ArrayObject* (*)(JSContext*, Handle<ArrayObject*>, int32_t length);
   OutOfLineCode* ool = oolCallVM<Fn, ArrayConstructorOneArg>(
@@ -6847,7 +7187,7 @@ void CodeGenerator::visitNewIterator(LNewIterator* lir) {
   }
 
   TemplateObject templateObject(lir->mir()->templateObject());
-  masm.createGCObject(objReg, tempReg, templateObject, gc::DefaultHeap,
+  masm.createGCObject(objReg, tempReg, templateObject, gc::Heap::Default,
                       ool->entry());
 
   masm.bind(ool->rejoin());
@@ -6857,10 +7197,10 @@ void CodeGenerator::visitNewTypedArray(LNewTypedArray* lir) {
   Register objReg = ToRegister(lir->output());
   Register tempReg = ToRegister(lir->temp0());
   Register lengthReg = ToRegister(lir->temp1());
-  LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
+  LiveRegisterSet liveRegs = liveVolatileRegs(lir);
 
   JSObject* templateObject = lir->mir()->templateObject();
-  gc::InitialHeap initialHeap = lir->mir()->initialHeap();
+  gc::Heap initialHeap = lir->mir()->initialHeap();
 
   TypedArrayObject* ttemplate = &templateObject->as<TypedArrayObject>();
 
@@ -6887,10 +7227,10 @@ void CodeGenerator::visitNewTypedArrayDynamicLength(
   Register lengthReg = ToRegister(lir->length());
   Register objReg = ToRegister(lir->output());
   Register tempReg = ToRegister(lir->temp0());
-  LiveRegisterSet liveRegs = lir->safepoint()->liveRegs();
+  LiveRegisterSet liveRegs = liveVolatileRegs(lir);
 
   JSObject* templateObject = lir->mir()->templateObject();
-  gc::InitialHeap initialHeap = lir->mir()->initialHeap();
+  gc::Heap initialHeap = lir->mir()->initialHeap();
 
   TypedArrayObject* ttemplate = &templateObject->as<TypedArrayObject>();
 
@@ -6898,6 +7238,9 @@ void CodeGenerator::visitNewTypedArrayDynamicLength(
   OutOfLineCode* ool = oolCallVM<Fn, NewTypedArrayWithTemplateAndLength>(
       lir, ArgList(ImmGCPtr(templateObject), lengthReg),
       StoreRegisterTo(objReg));
+
+  // Volatile |lengthReg| is saved across the ABI call in |initTypedArraySlots|.
+  MOZ_ASSERT_IF(lengthReg.volatile_(), liveRegs.has(lengthReg));
 
   TemplateObject templateObj(templateObject);
   masm.createGCObject(objReg, tempReg, templateObj, initialHeap, ool->entry());
@@ -6927,6 +7270,62 @@ void CodeGenerator::visitNewTypedArrayFromArrayBuffer(
   using Fn = TypedArrayObject* (*)(JSContext*, HandleObject, HandleObject,
                                    HandleValue, HandleValue);
   callVM<Fn, js::NewTypedArrayWithTemplateAndBuffer>(lir);
+}
+
+void CodeGenerator::visitBindFunction(LBindFunction* lir) {
+  Register target = ToRegister(lir->target());
+  Register temp1 = ToRegister(lir->temp0());
+  Register temp2 = ToRegister(lir->temp1());
+
+  // Try to allocate a new BoundFunctionObject we can pass to the VM function.
+  // If this fails, we set temp1 to nullptr so we do the allocation in C++.
+  TemplateObject templateObject(lir->mir()->templateObject());
+  Label allocOk, allocFailed;
+  masm.createGCObject(temp1, temp2, templateObject, gc::Heap::Default,
+                      &allocFailed);
+  masm.jump(&allocOk);
+
+  masm.bind(&allocFailed);
+  masm.movePtr(ImmWord(0), temp1);
+
+  masm.bind(&allocOk);
+
+  // Set temp2 to the address of the first argument on the stack.
+  // Note that the Value slots used for arguments are currently aligned for a
+  // JIT call, even though that's not strictly necessary for calling into C++.
+  uint32_t argc = lir->mir()->numStackArgs();
+  if (JitStackValueAlignment > 1) {
+    argc = AlignBytes(argc, JitStackValueAlignment);
+  }
+  uint32_t unusedStack = UnusedStackBytesForCall(argc);
+  masm.computeEffectiveAddress(Address(masm.getStackPointer(), unusedStack),
+                               temp2);
+
+  pushArg(temp1);
+  pushArg(Imm32(lir->mir()->numStackArgs()));
+  pushArg(temp2);
+  pushArg(target);
+
+  using Fn = BoundFunctionObject* (*)(JSContext*, Handle<JSObject*>, Value*,
+                                      uint32_t, Handle<BoundFunctionObject*>);
+  callVM<Fn, js::BoundFunctionObject::functionBindImpl>(lir);
+}
+
+void CodeGenerator::visitNewBoundFunction(LNewBoundFunction* lir) {
+  Register output = ToRegister(lir->output());
+  Register temp = ToRegister(lir->temp0());
+
+  JSObject* templateObj = lir->mir()->templateObj();
+
+  using Fn = BoundFunctionObject* (*)(JSContext*, Handle<BoundFunctionObject*>);
+  OutOfLineCode* ool = oolCallVM<Fn, BoundFunctionObject::createWithTemplate>(
+      lir, ArgList(ImmGCPtr(templateObj)), StoreRegisterTo(output));
+
+  TemplateObject templateObject(templateObj);
+  masm.createGCObject(output, temp, templateObject, gc::Heap::Default,
+                      ool->entry());
+
+  masm.bind(ool->rejoin());
 }
 
 // Out-of-line object allocation for JSOp::NewObject.
@@ -6976,6 +7375,7 @@ void CodeGenerator::visitNewObjectVMCall(LNewObject* lir) {
 
   masm.storeCallPointerResult(objReg);
 
+  MOZ_ASSERT(!lir->safepoint()->liveRegs().has(objReg));
   restoreLive(lir);
 }
 
@@ -7096,14 +7496,15 @@ void CodeGenerator::visitNewPlainObject(LNewPlainObject* lir) {
 
   auto* mir = lir->mir();
   const Shape* shape = mir->shape();
-  gc::InitialHeap initialHeap = mir->initialHeap();
+  gc::Heap initialHeap = mir->initialHeap();
   gc::AllocKind allocKind = mir->allocKind();
 
   using Fn =
-      JSObject* (*)(JSContext*, Handle<Shape*>, gc::AllocKind, gc::InitialHeap);
+      JSObject* (*)(JSContext*, Handle<SharedShape*>, gc::AllocKind, gc::Heap);
   OutOfLineCode* ool = oolCallVM<Fn, NewPlainObjectOptimizedFallback>(
       lir,
-      ArgList(ImmGCPtr(shape), Imm32(int32_t(allocKind)), Imm32(initialHeap)),
+      ArgList(ImmGCPtr(shape), Imm32(int32_t(allocKind)),
+              Imm32(int32_t(initialHeap))),
       StoreRegisterTo(objReg));
 
   bool initContents = ShouldInitFixedSlots(lir, shape, mir->numFixedSlots());
@@ -7148,7 +7549,7 @@ void CodeGenerator::visitNewArrayObject(LNewArrayObject* lir) {
   const Shape* shape = mir->shape();
 
   NewObjectKind objectKind =
-      mir->initialHeap() == gc::TenuredHeap ? TenuredObject : GenericObject;
+      mir->initialHeap() == gc::Heap::Tenured ? TenuredObject : GenericObject;
 
   using Fn =
       ArrayObject* (*)(JSContext*, uint32_t, gc::AllocKind, NewObjectKind);
@@ -7176,7 +7577,7 @@ void CodeGenerator::visitNewNamedLambdaObject(LNewNamedLambdaObject* lir) {
 
   TemplateObject templateObject(lir->mir()->templateObj());
 
-  masm.createGCObject(objReg, tempReg, templateObject, gc::DefaultHeap,
+  masm.createGCObject(objReg, tempReg, templateObject, gc::Heap::Default,
                       ool->entry());
 
   masm.bind(ool->rejoin());
@@ -7188,13 +7589,14 @@ void CodeGenerator::visitNewCallObject(LNewCallObject* lir) {
 
   CallObject* templateObj = lir->mir()->templateObject();
 
-  using Fn = CallObject* (*)(JSContext*, Handle<Shape*>);
+  using Fn = CallObject* (*)(JSContext*, Handle<SharedShape*>);
   OutOfLineCode* ool = oolCallVM<Fn, CallObject::createWithShape>(
-      lir, ArgList(ImmGCPtr(templateObj->shape())), StoreRegisterTo(objReg));
+      lir, ArgList(ImmGCPtr(templateObj->sharedShape())),
+      StoreRegisterTo(objReg));
 
   // Inline call object creation, using the OOL path only for tricky cases.
   TemplateObject templateObject(templateObj);
-  masm.createGCObject(objReg, tempReg, templateObject, gc::DefaultHeap,
+  masm.createGCObject(objReg, tempReg, templateObject, gc::Heap::Default,
                       ool->entry());
 
   masm.bind(ool->rejoin());
@@ -7212,7 +7614,7 @@ void CodeGenerator::visitNewStringObject(LNewStringObject* lir) {
                                                       StoreRegisterTo(output));
 
   TemplateObject templateObject(templateObj);
-  masm.createGCObject(output, temp, templateObject, gc::DefaultHeap,
+  masm.createGCObject(output, temp, templateObject, gc::Heap::Default,
                       ool->entry());
 
   masm.loadStringLength(input, temp);
@@ -7246,7 +7648,7 @@ void CodeGenerator::visitMutateProto(LMutateProto* lir) {
   pushArg(objReg);
 
   using Fn =
-      bool (*)(JSContext * cx, Handle<PlainObject*> obj, HandleValue value);
+      bool (*)(JSContext* cx, Handle<PlainObject*> obj, HandleValue value);
   callVM<Fn, MutatePrototype>(lir);
 }
 
@@ -7280,7 +7682,7 @@ void CodeGenerator::visitCreateThis(LCreateThis* lir) {
     pushArg(ToRegister(callee));
   }
 
-  using Fn = bool (*)(JSContext * cx, HandleObject callee,
+  using Fn = bool (*)(JSContext* cx, HandleObject callee,
                       HandleObject newTarget, MutableHandleValue rval);
   callVM<Fn, jit::CreateThisFromIon>(lir);
 }
@@ -7305,16 +7707,15 @@ void CodeGenerator::visitCreateArgumentsObject(LCreateArgumentsObject* lir) {
     // initialize these slots in ArgumentsObject::finishForIonPure.
     Label failure;
     TemplateObject templateObject(templateObj);
-    masm.createGCObject(objTemp, temp0, templateObject, gc::DefaultHeap,
+    masm.createGCObject(objTemp, temp0, templateObject, gc::Heap::Default,
                         &failure,
                         /* initContents = */ false);
 
     masm.moveStackPtrTo(temp0);
     masm.addPtr(Imm32(masm.framePushed()), temp0);
 
-    using Fn =
-        ArgumentsObject* (*)(JSContext * cx, jit::JitFrameLayout * frame,
-                             JSObject * scopeChain, ArgumentsObject * obj);
+    using Fn = ArgumentsObject* (*)(JSContext* cx, jit::JitFrameLayout* frame,
+                                    JSObject* scopeChain, ArgumentsObject* obj);
     masm.setupAlignedABICall();
     masm.loadJSContext(cxTemp);
     masm.passABIArg(cxTemp);
@@ -7390,7 +7791,7 @@ void CodeGenerator::visitCreateInlinedArgumentsObject(
     // slots in ArgumentsObject::finishForIonPure.
     Label failure;
     TemplateObject templateObject(templateObj);
-    masm.createGCObject(argsObj, temp3, templateObject, gc::DefaultHeap,
+    masm.createGCObject(argsObj, temp3, templateObject, gc::Heap::Default,
                         &failure,
                         /* initContents = */ false);
 
@@ -7443,7 +7844,17 @@ void CodeGenerator::emitGetInlinedArgument(GetInlinedArgument* lir,
                                            Register index,
                                            ValueOperand output) {
   uint32_t numActuals = lir->mir()->numActuals();
-  MOZ_ASSERT(numActuals > 0 && numActuals <= ArgumentsObject::MaxInlinedArgs);
+  MOZ_ASSERT(numActuals <= ArgumentsObject::MaxInlinedArgs);
+
+  // The index has already been bounds-checked, so the code we
+  // generate here should be unreachable. We can end up in this
+  // situation in self-hosted code using GetArgument(), or in a
+  // monomorphically inlined function if we've inlined some CacheIR
+  // that was created for a different caller.
+  if (numActuals == 0) {
+    masm.assumeUnreachable("LGetInlinedArgument: invalid index");
+    return;
+  }
 
   // Check the first n-1 possible indices.
   Label done;
@@ -7605,6 +8016,26 @@ void CodeGenerator::visitGuardArgumentsObjectFlags(
   Label bail;
   masm.branchTestArgumentsObjectFlags(argsObj, temp, lir->mir()->flags(),
                                       Assembler::NonZero, &bail);
+  bailoutFrom(&bail, lir->snapshot());
+}
+
+void CodeGenerator::visitBoundFunctionNumArgs(LBoundFunctionNumArgs* lir) {
+  Register obj = ToRegister(lir->object());
+  Register output = ToRegister(lir->output());
+
+  masm.unboxInt32(Address(obj, BoundFunctionObject::offsetOfFlagsSlot()),
+                  output);
+  masm.rshift32(Imm32(BoundFunctionObject::NumBoundArgsShift), output);
+}
+
+void CodeGenerator::visitGuardBoundFunctionIsConstructor(
+    LGuardBoundFunctionIsConstructor* lir) {
+  Register obj = ToRegister(lir->object());
+
+  Label bail;
+  Address flagsSlot(obj, BoundFunctionObject::offsetOfFlagsSlot());
+  masm.branchTest32(Assembler::Zero, flagsSlot,
+                    Imm32(BoundFunctionObject::IsConstructorFlag), &bail);
   bailoutFrom(&bail, lir->snapshot());
 }
 
@@ -8197,45 +8628,97 @@ void CodeGenerator::visitWasmCallIndirectAdjunctSafepoint(
       lir->framePushedAtStackMapBase());
 }
 
+template <typename InstructionWithMaybeTrapSite>
+void EmitSignalNullCheckTrapSite(MacroAssembler& masm,
+                                 InstructionWithMaybeTrapSite* ins) {
+  if (!ins->maybeTrap()) {
+    return;
+  }
+  wasm::BytecodeOffset trapOffset(ins->maybeTrap()->offset);
+  masm.append(wasm::Trap::NullPointerDereference,
+              wasm::TrapSite(masm.currentOffset(), trapOffset));
+}
+
 void CodeGenerator::visitWasmLoadSlot(LWasmLoadSlot* ins) {
   MIRType type = ins->type();
+  MWideningOp wideningOp = ins->wideningOp();
   Register container = ToRegister(ins->containerRef());
   Address addr(container, ins->offset());
   AnyRegister dst = ToAnyRegister(ins->output());
 
+  EmitSignalNullCheckTrapSite(masm, ins);
   switch (type) {
     case MIRType::Int32:
-      masm.load32(addr, dst.gpr());
+      switch (wideningOp) {
+        case MWideningOp::None:
+          masm.load32(addr, dst.gpr());
+          break;
+        case MWideningOp::FromU16:
+          masm.load16ZeroExtend(addr, dst.gpr());
+          break;
+        case MWideningOp::FromS16:
+          masm.load16SignExtend(addr, dst.gpr());
+          break;
+        case MWideningOp::FromU8:
+          masm.load8ZeroExtend(addr, dst.gpr());
+          break;
+        case MWideningOp::FromS8:
+          masm.load8SignExtend(addr, dst.gpr());
+          break;
+        default:
+          MOZ_CRASH("unexpected widening op in ::visitWasmLoadSlot");
+      }
       break;
     case MIRType::Float32:
+      MOZ_ASSERT(wideningOp == MWideningOp::None);
       masm.loadFloat32(addr, dst.fpu());
       break;
     case MIRType::Double:
+      MOZ_ASSERT(wideningOp == MWideningOp::None);
       masm.loadDouble(addr, dst.fpu());
       break;
     case MIRType::Pointer:
     case MIRType::RefOrNull:
+      MOZ_ASSERT(wideningOp == MWideningOp::None);
       masm.loadPtr(addr, dst.gpr());
       break;
 #ifdef ENABLE_WASM_SIMD
     case MIRType::Simd128:
+      MOZ_ASSERT(wideningOp == MWideningOp::None);
       masm.loadUnalignedSimd128(addr, dst.fpu());
       break;
 #endif
     default:
-      MOZ_CRASH("unexpected type in LoadPrimitiveValue");
+      MOZ_CRASH("unexpected type in ::visitWasmLoadSlot");
   }
 }
 
 void CodeGenerator::visitWasmStoreSlot(LWasmStoreSlot* ins) {
   MIRType type = ins->type();
+  MNarrowingOp narrowingOp = ins->narrowingOp();
   Register container = ToRegister(ins->containerRef());
   Address addr(container, ins->offset());
   AnyRegister src = ToAnyRegister(ins->value());
+  if (type != MIRType::Int32) {
+    MOZ_RELEASE_ASSERT(narrowingOp == MNarrowingOp::None);
+  }
 
+  EmitSignalNullCheckTrapSite(masm, ins);
   switch (type) {
     case MIRType::Int32:
-      masm.store32(src.gpr(), addr);
+      switch (narrowingOp) {
+        case MNarrowingOp::None:
+          masm.store32(src.gpr(), addr);
+          break;
+        case MNarrowingOp::To16:
+          masm.store16(src.gpr(), addr);
+          break;
+        case MNarrowingOp::To8:
+          masm.store8(src.gpr(), addr);
+          break;
+        default:
+          MOZ_CRASH();
+      }
       break;
     case MIRType::Float32:
       masm.storeFloat32(src.fpu(), addr);
@@ -8280,24 +8763,102 @@ void CodeGenerator::visitWasmDerivedIndexPointer(
 
 void CodeGenerator::visitWasmStoreRef(LWasmStoreRef* ins) {
   Register instance = ToRegister(ins->instance());
-  Register valueAddr = ToRegister(ins->valueAddr());
+  Register valueBase = ToRegister(ins->valueBase());
+  size_t offset = ins->offset();
   Register value = ToRegister(ins->value());
   Register temp = ToRegister(ins->temp0());
 
-  Label skipPreBarrier;
-  wasm::EmitWasmPreBarrierGuard(masm, instance, temp, valueAddr,
-                                &skipPreBarrier);
-  wasm::EmitWasmPreBarrierCall(masm, instance, temp, valueAddr);
-  masm.bind(&skipPreBarrier);
+  if (ins->preBarrierKind() == WasmPreBarrierKind::Normal) {
+    Label skipPreBarrier;
+    wasm::EmitWasmPreBarrierGuard(
+        masm, instance, temp, valueBase, offset, &skipPreBarrier,
+        ins->maybeTrap() ? &ins->maybeTrap()->offset : nullptr);
+    wasm::EmitWasmPreBarrierCall(masm, instance, temp, valueBase, offset);
+    masm.bind(&skipPreBarrier);
+  }
 
-  masm.storePtr(value, Address(valueAddr, 0));
+  EmitSignalNullCheckTrapSite(masm, ins);
+  masm.storePtr(value, Address(valueBase, offset));
   // The postbarrier is handled separately.
+}
+
+// Out-of-line path to update the store buffer for wasm references.
+class OutOfLineWasmCallPostWriteBarrier
+    : public OutOfLineCodeBase<CodeGenerator> {
+  LInstruction* lir_;
+  Register valueBase_;
+  Register temp_;
+  uint32_t valueOffset_;
+
+ public:
+  OutOfLineWasmCallPostWriteBarrier(LInstruction* lir, Register valueBase,
+                                    Register temp, uint32_t valueOffset)
+      : lir_(lir),
+        valueBase_(valueBase),
+        temp_(temp),
+        valueOffset_(valueOffset) {}
+
+  void accept(CodeGenerator* codegen) override {
+    codegen->visitOutOfLineWasmCallPostWriteBarrier(this);
+  }
+
+  LInstruction* lir() const { return lir_; }
+  Register valueBase() const { return valueBase_; }
+  Register temp() const { return temp_; }
+  uint32_t valueOffset() const { return valueOffset_; }
+};
+
+void CodeGenerator::visitOutOfLineWasmCallPostWriteBarrier(
+    OutOfLineWasmCallPostWriteBarrier* ool) {
+  saveLiveVolatile(ool->lir());
+  masm.Push(InstanceReg);
+  int32_t framePushedAfterInstance = masm.framePushed();
+
+  // Fold the value offset into the value base
+  Register valueAddr = ool->valueBase();
+  Register temp = ool->temp();
+  masm.computeEffectiveAddress(Address(valueAddr, ool->valueOffset()), temp);
+
+  // Call Instance::postBarrier
+  masm.setupWasmABICall();
+  masm.passABIArg(InstanceReg);
+  masm.passABIArg(temp);
+  int32_t instanceOffset = masm.framePushed() - framePushedAfterInstance;
+  masm.callWithABI(wasm::BytecodeOffset(0), wasm::SymbolicAddress::PostBarrier,
+                   mozilla::Some(instanceOffset), MoveOp::GENERAL);
+
+  masm.Pop(InstanceReg);
+  restoreLiveVolatile(ool->lir());
+
+  masm.jump(ool->rejoin());
+}
+
+void CodeGenerator::visitWasmPostWriteBarrier(LWasmPostWriteBarrier* lir) {
+  Register object = ToRegister(lir->object());
+  Register value = ToRegister(lir->value());
+  Register valueBase = ToRegister(lir->valueBase());
+  Register temp = ToRegister(lir->temp0());
+  MOZ_ASSERT(ToRegister(lir->instance()) == InstanceReg);
+  auto ool = new (alloc()) OutOfLineWasmCallPostWriteBarrier(
+      lir, valueBase, temp, lir->valueOffset());
+  addOutOfLineCode(ool, lir->mir());
+
+  // If the pointer being stored is null, no barrier.
+  masm.branchTestPtr(Assembler::Zero, value, value, ool->rejoin());
+
+  // If there is a containing object and it is in the nursery, no barrier.
+  masm.branchPtrInNurseryChunk(Assembler::Equal, object, temp, ool->rejoin());
+
+  // If the pointer being stored is to a tenured object, no barrier.
+  masm.branchPtrInNurseryChunk(Assembler::Equal, value, temp, ool->entry());
+  masm.bind(ool->rejoin());
 }
 
 void CodeGenerator::visitWasmLoadSlotI64(LWasmLoadSlotI64* ins) {
   Register container = ToRegister(ins->containerRef());
   Address addr(container, ins->offset());
   Register64 output = ToOutRegister64(ins);
+  EmitSignalNullCheckTrapSite(masm, ins);
   masm.load64(addr, output);
 }
 
@@ -8305,6 +8866,7 @@ void CodeGenerator::visitWasmStoreSlotI64(LWasmStoreSlotI64* ins) {
   Register container = ToRegister(ins->containerRef());
   Address addr(container, ins->offset());
   Register64 value = ToRegister64(ins->value());
+  EmitSignalNullCheckTrapSite(masm, ins);
   masm.store64(value, addr);
 }
 
@@ -9484,6 +10046,91 @@ void CodeGenerator::visitBigIntBitNot(LBigIntBitNot* ins) {
   masm.bind(ool->rejoin());
 }
 
+void CodeGenerator::visitInt32ToStringWithBase(LInt32ToStringWithBase* lir) {
+  Register input = ToRegister(lir->input());
+  RegisterOrInt32 base = ToRegisterOrInt32(lir->base());
+  Register output = ToRegister(lir->output());
+  Register temp0 = ToRegister(lir->temp0());
+  Register temp1 = ToRegister(lir->temp1());
+
+  using Fn = JSString* (*)(JSContext*, int32_t, int32_t);
+  if (base.is<Register>()) {
+    auto* ool = oolCallVM<Fn, js::Int32ToStringWithBase>(
+        lir, ArgList(input, base.as<Register>()), StoreRegisterTo(output));
+
+    LiveRegisterSet liveRegs = liveVolatileRegs(lir);
+    masm.loadInt32ToStringWithBase(input, base.as<Register>(), output, temp0,
+                                   temp1, gen->runtime->staticStrings(),
+                                   liveRegs, ool->entry());
+    masm.bind(ool->rejoin());
+  } else {
+    auto* ool = oolCallVM<Fn, js::Int32ToStringWithBase>(
+        lir, ArgList(input, Imm32(base.as<int32_t>())),
+        StoreRegisterTo(output));
+
+    masm.loadInt32ToStringWithBase(input, base.as<int32_t>(), output, temp0,
+                                   temp1, gen->runtime->staticStrings(),
+                                   ool->entry());
+    masm.bind(ool->rejoin());
+  }
+}
+
+void CodeGenerator::visitNumberParseInt(LNumberParseInt* lir) {
+  Register string = ToRegister(lir->string());
+  Register radix = ToRegister(lir->radix());
+  ValueOperand output = ToOutValue(lir);
+  Register temp = ToRegister(lir->temp0());
+
+#ifdef DEBUG
+  Label ok;
+  masm.branch32(Assembler::Equal, radix, Imm32(0), &ok);
+  masm.branch32(Assembler::Equal, radix, Imm32(10), &ok);
+  masm.assumeUnreachable("radix must be 0 or 10 for indexed value fast path");
+  masm.bind(&ok);
+#endif
+
+  // Use indexed value as fast path if possible.
+  Label vmCall, done;
+  masm.loadStringIndexValue(string, temp, &vmCall);
+  masm.tagValue(JSVAL_TYPE_INT32, temp, output);
+  masm.jump(&done);
+  {
+    masm.bind(&vmCall);
+
+    pushArg(radix);
+    pushArg(string);
+
+    using Fn = bool (*)(JSContext*, HandleString, int32_t, MutableHandleValue);
+    callVM<Fn, js::NumberParseInt>(lir);
+  }
+  masm.bind(&done);
+}
+
+void CodeGenerator::visitDoubleParseInt(LDoubleParseInt* lir) {
+  FloatRegister number = ToFloatRegister(lir->number());
+  Register output = ToRegister(lir->output());
+  FloatRegister temp = ToFloatRegister(lir->temp0());
+
+  Label bail;
+  masm.branchDouble(Assembler::DoubleUnordered, number, number, &bail);
+  masm.branchTruncateDoubleToInt32(number, output, &bail);
+
+  Label ok;
+  masm.branch32(Assembler::NotEqual, output, Imm32(0), &ok);
+  {
+    // Accept both +0 and -0 and return 0.
+    masm.loadConstantDouble(0.0, temp);
+    masm.branchDouble(Assembler::DoubleEqual, number, temp, &ok);
+
+    // Fail if a non-zero input is in the exclusive range (-1, 1.0e-6).
+    masm.loadConstantDouble(DOUBLE_DECIMAL_IN_SHORTEST_LOW, temp);
+    masm.branchDouble(Assembler::DoubleLessThan, number, temp, &bail);
+  }
+  masm.bind(&ok);
+
+  bailoutFrom(&bail, lir->snapshot());
+}
+
 void CodeGenerator::visitFloor(LFloor* lir) {
   FloatRegister input = ToFloatRegister(lir->input());
   Register output = ToRegister(lir->output());
@@ -10317,10 +10964,10 @@ void CodeGenerator::visitSameValue(LSameValue* lir) {
 
 void CodeGenerator::emitConcat(LInstruction* lir, Register lhs, Register rhs,
                                Register output) {
-  using Fn = JSString* (*)(JSContext*, HandleString, HandleString,
-                           js::gc::InitialHeap);
+  using Fn =
+      JSString* (*)(JSContext*, HandleString, HandleString, js::gc::Heap);
   OutOfLineCode* ool = oolCallVM<Fn, ConcatStrings<CanGC>>(
-      lir, ArgList(lhs, rhs, static_cast<Imm32>(gc::DefaultHeap)),
+      lir, ArgList(lhs, rhs, static_cast<Imm32>(int32_t(gc::Heap::Default))),
       StoreRegisterTo(output));
 
   const JitRealm* jitRealm = gen->realm->jitRealm();
@@ -10416,7 +11063,7 @@ static void CopyStringCharsMaybeInflate(MacroAssembler& masm, Register input,
 
 static void AllocateThinOrFatInlineString(MacroAssembler& masm, Register output,
                                           Register length, Register temp,
-                                          gc::InitialHeap initialStringHeap,
+                                          gc::Heap initialStringHeap,
                                           Label* failure,
                                           CharEncoding encoding) {
 #ifdef DEBUG
@@ -10468,8 +11115,7 @@ static void AllocateThinOrFatInlineString(MacroAssembler& masm, Register output,
 
 static void ConcatInlineString(MacroAssembler& masm, Register lhs, Register rhs,
                                Register output, Register temp1, Register temp2,
-                               Register temp3,
-                               gc::InitialHeap initialStringHeap,
+                               Register temp3, gc::Heap initialStringHeap,
                                Label* failure, CharEncoding encoding) {
   JitSpew(JitSpew_Codegen, "# Emitting ConcatInlineString (encoding=%s)",
           (encoding == CharEncoding::Latin1 ? "Latin-1" : "Two-Byte"));
@@ -10504,8 +11150,6 @@ static void ConcatInlineString(MacroAssembler& masm, Register lhs, Register rhs,
 
   // Copy rhs chars. Clobbers the rhs register.
   copyChars(rhs);
-
-  masm.ret();
 }
 
 void CodeGenerator::visitSubstr(LSubstr* lir) {
@@ -10528,7 +11172,7 @@ void CodeGenerator::visitSubstr(LSubstr* lir) {
   // newGCFatInlineString. To squeeze out even more performance those failures
   // can be handled by allocate in ool code and returning to jit code to fill
   // in all data.
-  using Fn = JSString* (*)(JSContext * cx, HandleString str, int32_t begin,
+  using Fn = JSString* (*)(JSContext* cx, HandleString str, int32_t begin,
                            int32_t len);
   OutOfLineCode* ool = oolCallVM<Fn, SubstringKernel>(
       lir, ArgList(string, begin, length), StoreRegisterTo(output));
@@ -10677,6 +11321,9 @@ JitCode* JitRealm::generateStringConcatStub(JSContext* cx) {
 #ifdef JS_USE_LINK_REGISTER
   masm.pushReturnAddress();
 #endif
+  masm.Push(FramePointer);
+  masm.moveStackPtrTo(FramePointer);
+
   // If lhs is empty, return rhs.
   Label leftEmpty;
   masm.loadStringLength(lhs, temp1);
@@ -10717,7 +11364,7 @@ JitCode* JitRealm::generateStringConcatStub(JSContext* cx) {
   masm.branch32(Assembler::Above, temp2, Imm32(JSString::MAX_LENGTH), &failure);
 
   // Allocate a new rope, guaranteed to be in the nursery if initialStringHeap
-  // == gc::DefaultHeap. (As a result, no post barriers are needed below.)
+  // == gc::Heap::Default. (As a result, no post barriers are needed below.)
   masm.newGCString(output, temp3, initialStringHeap, &failure);
 
   // Store rope length and flags. temp1 still holds the result of AND'ing the
@@ -10731,29 +11378,37 @@ JitCode* JitRealm::generateStringConcatStub(JSContext* cx) {
 
   // Store left and right nodes.
   masm.storeRopeChildren(lhs, rhs, output);
+  masm.pop(FramePointer);
   masm.ret();
 
   masm.bind(&leftEmpty);
   masm.mov(rhs, output);
+  masm.pop(FramePointer);
   masm.ret();
 
   masm.bind(&rightEmpty);
   masm.mov(lhs, output);
+  masm.pop(FramePointer);
   masm.ret();
 
   masm.bind(&isInlineTwoByte);
   ConcatInlineString(masm, lhs, rhs, output, temp1, temp2, temp3,
                      initialStringHeap, &failure, CharEncoding::TwoByte);
+  masm.pop(FramePointer);
+  masm.ret();
 
   masm.bind(&isInlineLatin1);
   ConcatInlineString(masm, lhs, rhs, output, temp1, temp2, temp3,
                      initialStringHeap, &failure, CharEncoding::Latin1);
+  masm.pop(FramePointer);
+  masm.ret();
 
   masm.pop(temp2);
   masm.pop(temp1);
 
   masm.bind(&failure);
   masm.movePtr(ImmPtr(nullptr), output);
+  masm.pop(FramePointer);
   masm.ret();
 
   Linker linker(masm);
@@ -10805,6 +11460,7 @@ void JitRuntime::generateLazyLinkStub(MacroAssembler& masm) {
   masm.pushReturnAddress();
 #endif
   masm.Push(FramePointer);
+  masm.moveStackPtrTo(FramePointer);
 
   AllocatableGeneralRegisterSet regs(GeneralRegisterSet::Volatile());
   Register temp0 = regs.takeAny();
@@ -10815,15 +11471,16 @@ void JitRuntime::generateLazyLinkStub(MacroAssembler& masm) {
   masm.enterFakeExitFrame(temp0, temp2, ExitFrameType::LazyLink);
   masm.moveStackPtrTo(temp1);
 
-  using Fn = uint8_t* (*)(JSContext * cx, LazyLinkExitFrameLayout * frame);
+  using Fn = uint8_t* (*)(JSContext* cx, LazyLinkExitFrameLayout* frame);
   masm.setupUnalignedABICall(temp2);
   masm.passABIArg(temp0);
   masm.passABIArg(temp1);
   masm.callWithABI<Fn, LazyLinkTopActivation>(
       MoveOp::GENERAL, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
 
-  // Discard exit frame and frame pointer.
-  masm.leaveExitFrame(sizeof(void*));
+  // Discard exit frame and restore frame pointer.
+  masm.leaveExitFrame(0);
+  masm.pop(FramePointer);
 
 #ifdef JS_USE_LINK_REGISTER
   // Restore the return address such that the emitPrologue function of the
@@ -10842,6 +11499,7 @@ void JitRuntime::generateInterpreterStub(MacroAssembler& masm) {
   masm.pushReturnAddress();
 #endif
   masm.Push(FramePointer);
+  masm.moveStackPtrTo(FramePointer);
 
   AllocatableGeneralRegisterSet regs(GeneralRegisterSet::Volatile());
   Register temp0 = regs.takeAny();
@@ -10852,7 +11510,7 @@ void JitRuntime::generateInterpreterStub(MacroAssembler& masm) {
   masm.enterFakeExitFrame(temp0, temp2, ExitFrameType::InterpreterStub);
   masm.moveStackPtrTo(temp1);
 
-  using Fn = bool (*)(JSContext * cx, InterpreterStubExitFrameLayout * frame);
+  using Fn = bool (*)(JSContext* cx, InterpreterStubExitFrameLayout* frame);
   masm.setupUnalignedABICall(temp2);
   masm.passABIArg(temp0);
   masm.passABIArg(temp1);
@@ -10861,8 +11519,9 @@ void JitRuntime::generateInterpreterStub(MacroAssembler& masm) {
 
   masm.branchIfFalseBool(ReturnReg, masm.failureLabel());
 
-  // Discard exit frame and frame pointer.
-  masm.leaveExitFrame(sizeof(void*));
+  // Discard exit frame and restore frame pointer.
+  masm.leaveExitFrame(0);
+  masm.pop(FramePointer);
 
   // InvokeFromInterpreterStub stores the return value in argv[0], where the
   // caller stored |this|. Subtract |sizeof(void*)| for the frame pointer we
@@ -10889,6 +11548,21 @@ void JitRuntime::generateDoubleToInt32ValueStub(MacroAssembler& masm) {
   masm.abiret();
 }
 
+void CodeGenerator::visitLinearizeForCharAccess(LLinearizeForCharAccess* lir) {
+  Register str = ToRegister(lir->str());
+  Register index = ToRegister(lir->index());
+  Register output = ToRegister(lir->output());
+
+  using Fn = JSLinearString* (*)(JSContext*, JSString*);
+  auto* ool = oolCallVM<Fn, jit::LinearizeForCharAccess>(
+      lir, ArgList(str), StoreRegisterTo(output));
+
+  masm.branchIfNotCanLoadStringChar(str, index, output, ool->entry());
+
+  masm.movePtr(str, output);
+  masm.bind(ool->rejoin());
+}
+
 void CodeGenerator::visitCharCodeAt(LCharCodeAt* lir) {
   Register str = ToRegister(lir->str());
   Register index = ToRegister(lir->index());
@@ -10901,6 +11575,69 @@ void CodeGenerator::visitCharCodeAt(LCharCodeAt* lir) {
                                                       StoreRegisterTo(output));
   masm.loadStringChar(str, index, output, temp0, temp1, ool->entry());
   masm.bind(ool->rejoin());
+}
+
+void CodeGenerator::visitCharCodeAtMaybeOutOfBounds(
+    LCharCodeAtMaybeOutOfBounds* lir) {
+  Register str = ToRegister(lir->str());
+  Register index = ToRegister(lir->index());
+  ValueOperand output = ToOutValue(lir);
+  Register temp0 = ToRegister(lir->temp0());
+  Register temp1 = ToRegister(lir->temp1());
+
+  using Fn = bool (*)(JSContext*, HandleString, int32_t, uint32_t*);
+  auto* ool = oolCallVM<Fn, jit::CharCodeAt>(
+      lir, ArgList(str, index), StoreRegisterTo(output.scratchReg()));
+
+  // Return NaN for out-of-bounds access.
+  Label done;
+  masm.moveValue(JS::NaNValue(), output);
+
+  masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                            temp0, &done);
+
+  masm.loadStringChar(str, index, output.scratchReg(), temp0, temp1,
+                      ool->entry());
+  masm.bind(ool->rejoin());
+
+  masm.tagValue(JSVAL_TYPE_INT32, output.scratchReg(), output);
+
+  masm.bind(&done);
+}
+
+void CodeGenerator::visitCharAtMaybeOutOfBounds(LCharAtMaybeOutOfBounds* lir) {
+  Register str = ToRegister(lir->str());
+  Register index = ToRegister(lir->index());
+  Register output = ToRegister(lir->output());
+  Register temp0 = ToRegister(lir->temp0());
+  Register temp1 = ToRegister(lir->temp1());
+
+  using Fn1 = bool (*)(JSContext*, HandleString, int32_t, uint32_t*);
+  auto* oolLoadChar = oolCallVM<Fn1, jit::CharCodeAt>(lir, ArgList(str, index),
+                                                      StoreRegisterTo(output));
+
+  using Fn2 = JSLinearString* (*)(JSContext*, int32_t);
+  auto* oolFromCharCode = oolCallVM<Fn2, jit::StringFromCharCode>(
+      lir, ArgList(output), StoreRegisterTo(output));
+
+  // Return the empty string for out-of-bounds access.
+  const JSAtomState& names = gen->runtime->names();
+  masm.movePtr(ImmGCPtr(names.empty), output);
+
+  masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                            temp0, oolFromCharCode->rejoin());
+
+  masm.loadStringChar(str, index, output, temp0, temp1, oolLoadChar->entry());
+  masm.bind(oolLoadChar->rejoin());
+
+  // OOL path if code >= UNIT_STATIC_LIMIT.
+  masm.boundsCheck32PowerOfTwo(output, StaticStrings::UNIT_STATIC_LIMIT,
+                               oolFromCharCode->entry());
+
+  masm.movePtr(ImmPtr(&gen->runtime->staticStrings().unitStaticTable), temp0);
+  masm.loadPtr(BaseIndex(temp0, output, ScalePointer), output);
+
+  masm.bind(oolFromCharCode->rejoin());
 }
 
 void CodeGenerator::visitFromCharCode(LFromCharCode* lir) {
@@ -11589,7 +12326,6 @@ void CodeGenerator::visitSpectreMaskIndex(LSpectreMaskIndex* lir) {
 
 class OutOfLineStoreElementHole : public OutOfLineCodeBase<CodeGenerator> {
   LInstruction* ins_;
-  Label rejoinStore_;
 
  public:
   explicit OutOfLineStoreElementHole(LInstruction* ins) : ins_(ins) {
@@ -11605,7 +12341,6 @@ class OutOfLineStoreElementHole : public OutOfLineCodeBase<CodeGenerator> {
                                        : ins_->toStoreElementHoleT()->mir();
   }
   LInstruction* ins() const { return ins_; }
-  Label* rejoinStore() { return &rejoinStore_; }
 };
 
 void CodeGenerator::emitStoreHoleCheck(Register elements,
@@ -11689,6 +12424,7 @@ void CodeGenerator::visitStoreElementHoleT(LStoreElementHoleT* lir) {
   auto* ool = new (alloc()) OutOfLineStoreElementHole(lir);
   addOutOfLineCode(ool, lir->mir());
 
+  Register obj = ToRegister(lir->object());
   Register elements = ToRegister(lir->elements());
   Register index = ToRegister(lir->index());
   Register temp = ToRegister(lir->temp0());
@@ -11698,17 +12434,23 @@ void CodeGenerator::visitStoreElementHoleT(LStoreElementHoleT* lir) {
 
   emitPreBarrier(elements, lir->index());
 
-  masm.bind(ool->rejoinStore());
+  masm.bind(ool->rejoin());
   emitStoreElementTyped(lir->value(), lir->mir()->value()->type(), elements,
                         lir->index());
 
-  masm.bind(ool->rejoin());
+  if (ValueNeedsPostBarrier(lir->mir()->value())) {
+    LiveRegisterSet regs = liveVolatileRegs(lir);
+    ConstantOrRegister val =
+        ToConstantOrRegister(lir->value(), lir->mir()->value()->type());
+    emitElementPostWriteBarrier(lir->mir(), regs, obj, lir->index(), temp, val);
+  }
 }
 
 void CodeGenerator::visitStoreElementHoleV(LStoreElementHoleV* lir) {
   auto* ool = new (alloc()) OutOfLineStoreElementHole(lir);
   addOutOfLineCode(ool, lir->mir());
 
+  Register obj = ToRegister(lir->object());
   Register elements = ToRegister(lir->elements());
   Register index = ToRegister(lir->index());
   const ValueOperand value = ToValue(lir, LStoreElementHoleV::ValueIndex);
@@ -11719,10 +12461,14 @@ void CodeGenerator::visitStoreElementHoleV(LStoreElementHoleV* lir) {
 
   emitPreBarrier(elements, lir->index());
 
-  masm.bind(ool->rejoinStore());
+  masm.bind(ool->rejoin());
   masm.storeValue(value, BaseObjectElementIndex(elements, index));
 
-  masm.bind(ool->rejoin());
+  if (ValueNeedsPostBarrier(lir->mir()->value())) {
+    LiveRegisterSet regs = liveVolatileRegs(lir);
+    emitElementPostWriteBarrier(lir->mir(), regs, obj, lir->index(), temp,
+                                ConstantOrRegister(value));
+  }
 }
 
 void CodeGenerator::visitOutOfLineStoreElementHole(
@@ -11756,84 +12502,65 @@ void CodeGenerator::visitOutOfLineStoreElementHole(
     temp = ToRegister(store->temp0());
   }
 
-  // If index == initializedLength, try to bump the initialized length inline.
-  // If index > initializedLength, call a stub. Note that this relies on the
+  Address initLength(elements, ObjectElements::offsetOfInitializedLength());
+
+  // We're out-of-bounds. We only handle the index == initlength case.
+  // If index > initializedLength, bail out. Note that this relies on the
   // condition flags sticking from the incoming branch.
   // Also note: this branch does not need Spectre mitigations, doing that for
   // the capacity check below is sufficient.
-  Label callStub;
+  Label allocElement, addNewElement;
 #if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_LOONG64)
+    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
   // Had to reimplement for MIPS because there are no flags.
-  Address initLength(elements, ObjectElements::offsetOfInitializedLength());
-  masm.branch32(Assembler::NotEqual, initLength, index, &callStub);
+  bailoutCmp32(Assembler::NotEqual, initLength, index, ins->snapshot());
 #else
-  masm.j(Assembler::NotEqual, &callStub);
+  bailoutIf(Assembler::NotEqual, ins->snapshot());
 #endif
 
-  // Check array capacity.
+  // If index < capacity, we can add a dense element inline. If not, we need
+  // to allocate more elements first.
   masm.spectreBoundsCheck32(
       index, Address(elements, ObjectElements::offsetOfCapacity()), temp,
-      &callStub);
+      &allocElement);
+  masm.jump(&addNewElement);
 
-  // Update initialized length. The capacity guard above ensures this won't
-  // overflow, due to MAX_DENSE_ELEMENTS_COUNT.
-  masm.add32(Imm32(1), index);
-  masm.store32(index,
-               Address(elements, ObjectElements::offsetOfInitializedLength()));
+  masm.bind(&allocElement);
 
-  // Update length if length < initializedLength.
-  Label dontUpdate;
-  masm.branch32(Assembler::AboveOrEqual,
-                Address(elements, ObjectElements::offsetOfLength()), index,
-                &dontUpdate);
-  masm.store32(index, Address(elements, ObjectElements::offsetOfLength()));
-  masm.bind(&dontUpdate);
-
-  masm.sub32(Imm32(1), index);
-
-  // Jump to the inline path where we will store the value.
-  masm.jump(ool->rejoinStore());
-
-  masm.bind(&callStub);
-
-  if (ool->mir()->needsNegativeIntCheck()) {
-    bailoutCmp32(Assembler::LessThan, index, Imm32(0), ins->snapshot());
-  }
-
-  // There aren't enough registers on x86, so reuse the |elements| register as
-  // an additional temporary.
-  Register valueTemp = elements;
-
-  // Save all live volatile registers, except |temp|. Additionally save
-  // |elements|, because it's used as an additional temporary register.
+  // Save all live volatile registers, except |temp|.
   LiveRegisterSet liveRegs = liveVolatileRegs(ins);
   liveRegs.takeUnchecked(temp);
-  liveRegs.addUnchecked(elements);
-
   masm.PushRegsInMask(liveRegs);
-
-  masm.Push(value.ref());
-  masm.moveStackPtrTo(valueTemp);
 
   masm.setupAlignedABICall();
   masm.loadJSContext(temp);
   masm.passABIArg(temp);
   masm.passABIArg(object);
-  masm.passABIArg(index);
-  masm.passABIArg(valueTemp);
 
-  using Fn = bool (*)(JSContext*, NativeObject*, int32_t, Value*);
-  masm.callWithABI<Fn, jit::SetDenseElementPure>();
+  using Fn = bool (*)(JSContext*, NativeObject*);
+  masm.callWithABI<Fn, NativeObject::addDenseElementPure>();
   masm.storeCallPointerResult(temp);
 
-  masm.freeStack(sizeof(Value));  // Discard pushed Value.
-
-  MOZ_ASSERT(!liveRegs.has(temp));
   masm.PopRegsInMask(liveRegs);
-
   bailoutIfFalseBool(temp, ins->snapshot());
 
+  // Load the reallocated elements pointer.
+  masm.loadPtr(Address(object, NativeObject::offsetOfElements()), elements);
+
+  masm.bind(&addNewElement);
+
+  // Increment initLength
+  masm.add32(Imm32(1), initLength);
+
+  // If length is now <= index, increment length too.
+  Label skipIncrementLength;
+  Address length(elements, ObjectElements::offsetOfLength());
+  masm.branch32(Assembler::Above, length, index, &skipIncrementLength);
+  masm.add32(Imm32(1), length);
+  masm.bind(&skipIncrementLength);
+
+  // Jump to the inline path where we will store the value.
+  // We rejoin after the prebarrier, because the memory is uninitialized.
   masm.jump(ool->rejoin());
 }
 
@@ -12562,12 +13289,36 @@ void CodeGenerator::visitGetFrameArgument(LGetFrameArgument* lir) {
   const LAllocation* index = lir->index();
   size_t argvOffset = JitFrameLayout::offsetOfActualArgs();
 
+  // This instruction is used to access actual arguments and formal arguments.
+  // The number of Values on the stack is |max(numFormals, numActuals)|, so we
+  // assert |index < numFormals || index < numActuals| in debug builds.
+  DebugOnly<size_t> numFormals = gen->outerInfo().script()->function()->nargs();
+
   if (index->isConstant()) {
     int32_t i = index->toConstant()->toInt32();
+#ifdef DEBUG
+    if (uint32_t(i) >= numFormals) {
+      Label ok;
+      Register argc = result.scratchReg();
+      masm.loadNumActualArgs(FramePointer, argc);
+      masm.branch32(Assembler::Above, argc, Imm32(i), &ok);
+      masm.assumeUnreachable("Invalid argument index");
+      masm.bind(&ok);
+    }
+#endif
     Address argPtr(FramePointer, sizeof(Value) * i + argvOffset);
     masm.loadValue(argPtr, result);
   } else {
     Register i = ToRegister(index);
+#ifdef DEBUG
+    Label ok;
+    Register argc = result.scratchReg();
+    masm.branch32(Assembler::Below, i, Imm32(numFormals), &ok);
+    masm.loadNumActualArgs(FramePointer, argc);
+    masm.branch32(Assembler::Above, argc, i, &ok);
+    masm.assumeUnreachable("Invalid argument index");
+    masm.bind(&ok);
+#endif
     BaseValueIndex argPtr(FramePointer, i, argvOffset);
     masm.loadValue(argPtr, result);
   }
@@ -12613,8 +13364,8 @@ void CodeGenerator::visitRest(LRest* lir) {
     Label joinAlloc, failAlloc;
     masm.movePtr(ImmGCPtr(shape), temp0);
     masm.createArrayWithFixedElements(temp2, temp0, temp1, arrayLength,
-                                      arrayCapacity, allocKind, gc::DefaultHeap,
-                                      &failAlloc);
+                                      arrayCapacity, allocKind,
+                                      gc::Heap::Default, &failAlloc);
     masm.jump(&joinAlloc);
     {
       masm.bind(&failAlloc);
@@ -12814,7 +13565,7 @@ static bool CreateStackMapFromLSafepoint(LSafepoint& safepoint,
 }
 
 bool CodeGenerator::generateWasm(
-    wasm::TypeIdDesc funcTypeId, wasm::BytecodeOffset trapOffset,
+    wasm::CallIndirectId callIndirectId, wasm::BytecodeOffset trapOffset,
     const wasm::ArgTypeVector& argTypes, const RegisterOffsets& trapExitLayout,
     size_t trapExitLayoutNumWords, wasm::FuncOffsets* offsets,
     wasm::StackMaps* stackMaps, wasm::Decoder* decoder) {
@@ -12824,7 +13575,8 @@ bool CodeGenerator::generateWasm(
 
   size_t nInboundStackArgBytes = StackArgAreaSizeUnaligned(argTypes);
 
-  wasm::GenerateFunctionPrologue(masm, funcTypeId, mozilla::Nothing(), offsets);
+  wasm::GenerateFunctionPrologue(masm, callIndirectId, mozilla::Nothing(),
+                                 offsets);
 
   MOZ_ASSERT(masm.framePushed() == 0);
 
@@ -12937,6 +13689,7 @@ bool CodeGenerator::generate() {
     return false;
   }
 
+  perfSpewer_.recordOffset(masm, "Prologue");
   if (!generatePrologue()) {
     return false;
   }
@@ -12955,6 +13708,7 @@ bool CodeGenerator::generate() {
     return false;
   }
 
+  perfSpewer_.recordOffset(masm, "Epilogue");
   if (!generateEpilogue()) {
     return false;
   }
@@ -12964,10 +13718,12 @@ bool CodeGenerator::generate() {
     return false;
   }
 
+  perfSpewer_.recordOffset(masm, "InvalidateEpilogue");
   generateInvalidateEpilogue();
 
   // native => bytecode entries for OOL code will be added
   // by CodeGeneratorShared::generateOutOfLineCode
+  perfSpewer_.recordOffset(masm, "OOLCode");
   if (!generateOutOfLineCode()) {
     return false;
   }
@@ -13039,10 +13795,6 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
     return false;
   }
 
-  // Check to make sure we didn't have a mid-build invalidation. If so, we
-  // will trickle to jit::Compile() and return Method_Skipped.
-  uint32_t warmUpCount = script->getWarmUpCount();
-
   IonCompilationId compilationId =
       cx->runtime()->jitRuntime()->nextCompilationId();
   JitZone* jitZone = cx->zone()->jitZone();
@@ -13062,14 +13814,6 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
   }
   if (!isValid) {
     return true;
-  }
-
-  // IonMonkey could have inferred better type information during
-  // compilation. Since adding the new information to the actual type
-  // information can reset the usecount, increase it back to what it was
-  // before.
-  if (warmUpCount > script->getWarmUpCount()) {
-    script->incWarmUpCounter(warmUpCount - script->getWarmUpCount());
   }
 
   uint32_t argumentSlots = (gen->outerInfo().nargs() + 1) * sizeof(Value);
@@ -13109,32 +13853,27 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
   // Encode native to bytecode map if profiling is enabled.
   if (isProfilerInstrumentationEnabled()) {
     // Generate native-to-bytecode main table.
-    if (!generateCompactNativeToBytecodeMap(cx, code)) {
+    IonEntry::ScriptList scriptList;
+    if (!generateCompactNativeToBytecodeMap(cx, code, scriptList)) {
       return false;
     }
 
     uint8_t* ionTableAddr =
-        ((uint8_t*)nativeToBytecodeMap_) + nativeToBytecodeTableOffset_;
+        ((uint8_t*)nativeToBytecodeMap_.get()) + nativeToBytecodeTableOffset_;
     JitcodeIonTable* ionTable = (JitcodeIonTable*)ionTableAddr;
 
     // Construct the IonEntry that will go into the global table.
-    JitcodeGlobalEntry::IonEntry entry;
-    if (!ionTable->makeIonEntry(cx, code, nativeToBytecodeScriptListLength_,
-                                nativeToBytecodeScriptList_, entry)) {
-      js_free(nativeToBytecodeScriptList_);
-      js_free(nativeToBytecodeMap_);
+    auto entry = MakeJitcodeGlobalEntry<IonEntry>(
+        cx, code, code->raw(), code->rawEnd(), std::move(scriptList), ionTable);
+    if (!entry) {
       return false;
     }
-
-    // nativeToBytecodeScriptList_ is no longer needed.
-    js_free(nativeToBytecodeScriptList_);
+    (void)nativeToBytecodeMap_.release();  // Table is now owned by |entry|.
 
     // Add entry to the global table.
     JitcodeGlobalTable* globalTable =
         cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
-    if (!globalTable->addEntry(entry)) {
-      // Memory may have been allocated for the entry.
-      entry.destroy();
+    if (!globalTable->addEntry(std::move(entry))) {
       return false;
     }
 
@@ -13142,15 +13881,16 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
     code->setHasBytecodeMap();
   } else {
     // Add a dumy jitcodeGlobalTable entry.
-    JitcodeGlobalEntry::DummyEntry entry;
-    entry.init(code, code->raw(), code->rawEnd());
+    auto entry = MakeJitcodeGlobalEntry<DummyEntry>(cx, code, code->raw(),
+                                                    code->rawEnd());
+    if (!entry) {
+      return false;
+    }
 
     // Add entry to the global table.
     JitcodeGlobalTable* globalTable =
         cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
-    if (!globalTable->addEntry(entry)) {
-      // Memory may have been allocated for the entry.
-      entry.destroy();
+    if (!globalTable->addEntry(std::move(entry))) {
       return false;
     }
 
@@ -13210,9 +13950,7 @@ bool CodeGenerator::link(JSContext* cx, const WarpSnapshot* snapshot) {
   }
   ionScript->setInvalidationEpilogueOffset(invalidate_.offset());
 
-  if (PerfEnabled()) {
-    perfSpewer_.saveProfile(script, code);
-  }
+  perfSpewer_.saveProfile(cx, script, code);
 
 #ifdef MOZ_VTUNE
   vtune::MarkScript(code, script, "ion");
@@ -13334,15 +14072,52 @@ void CodeGenerator::visitCallBindVar(LCallBindVar* lir) {
 
 void CodeGenerator::visitMegamorphicSetElement(LMegamorphicSetElement* lir) {
   Register obj = ToRegister(lir->getOperand(0));
+  ValueOperand idVal = ToValue(lir, LMegamorphicSetElement::IndexIndex);
+  ValueOperand value = ToValue(lir, LMegamorphicSetElement::ValueIndex);
+
+  Register temp0 = ToRegister(lir->temp0());
+  // See comment in LIROps.yaml (x86 is short on registers)
+#ifndef JS_CODEGEN_X86
+  Register temp1 = ToRegister(lir->temp1());
+  Register temp2 = ToRegister(lir->temp2());
+#endif
+
+  Label cacheHit, done;
+  if (JitOptions.enableWatchtowerMegamorphic) {
+#ifdef JS_CODEGEN_X86
+    masm.emitMegamorphicCachedSetSlot(
+        idVal, obj, temp0, value, &cacheHit,
+        [](MacroAssembler& masm, const Address& addr, MIRType mirType) {
+          EmitPreBarrier(masm, addr, mirType);
+        });
+#else
+    masm.emitMegamorphicCachedSetSlot(
+        idVal, obj, temp0, temp1, temp2, value, &cacheHit,
+        [](MacroAssembler& masm, const Address& addr, MIRType mirType) {
+          EmitPreBarrier(masm, addr, mirType);
+        });
+#endif
+  }
+
   pushArg(Imm32(lir->mir()->strict()));
-  pushArg(TypedOrValueRegister(MIRType::Object, AnyRegister(obj)));
   pushArg(ToValue(lir, LMegamorphicSetElement::ValueIndex));
   pushArg(ToValue(lir, LMegamorphicSetElement::IndexIndex));
   pushArg(obj);
 
-  using Fn = bool (*)(JSContext*, HandleObject, HandleValue, HandleValue,
-                      HandleValue, bool);
-  callVM<Fn, js::jit::SetElementMegamorphic>(lir);
+  using Fn = bool (*)(JSContext*, HandleObject, HandleValue, HandleValue, bool);
+  callVM<Fn, js::jit::SetElementMegamorphic<true>>(lir);
+
+  masm.jump(&done);
+  masm.bind(&cacheHit);
+
+  masm.branchPtrInNurseryChunk(Assembler::Equal, obj, temp0, &done);
+  masm.branchValueIsNurseryCell(Assembler::NotEqual, value, temp0, &done);
+
+  saveVolatile(temp0);
+  emitPostWriteBarrier(obj);
+  restoreVolatile(temp0);
+
+  masm.bind(&done);
 }
 
 void CodeGenerator::visitLoadFixedSlotV(LLoadFixedSlotV* ins) {
@@ -13487,7 +14262,7 @@ void CodeGenerator::visitAllocateAndStoreSlot(LAllocateAndStoreSlot* ins) {
   masm.Push(obj);
   masm.Push(value);
 
-  using Fn = bool (*)(JSContext * cx, NativeObject * obj, uint32_t newCount);
+  using Fn = bool (*)(JSContext* cx, NativeObject* obj, uint32_t newCount);
   masm.setupAlignedABICall();
   masm.loadJSContext(temp0);
   masm.passABIArg(temp0);
@@ -13726,11 +14501,210 @@ void CodeGenerator::visitCallDeleteElement(LCallDeleteElement* lir) {
   }
 }
 
+void CodeGenerator::visitObjectToIterator(LObjectToIterator* lir) {
+  Register obj = ToRegister(lir->object());
+  Register iterObj = ToRegister(lir->output());
+  Register temp = ToRegister(lir->temp0());
+  Register temp2 = ToRegister(lir->temp1());
+  Register temp3 = ToRegister(lir->temp2());
+
+  using Fn = PropertyIteratorObject* (*)(JSContext*, HandleObject);
+  OutOfLineCode* ool = (lir->mir()->wantsIndices())
+                           ? oolCallVM<Fn, GetIteratorWithIndices>(
+                                 lir, ArgList(obj), StoreRegisterTo(iterObj))
+                           : oolCallVM<Fn, GetIterator>(
+                                 lir, ArgList(obj), StoreRegisterTo(iterObj));
+
+  masm.maybeLoadIteratorFromShape(obj, iterObj, temp, temp2, temp3,
+                                  ool->entry());
+
+  Register nativeIter = temp;
+  masm.loadPrivate(
+      Address(iterObj, PropertyIteratorObject::offsetOfIteratorSlot()),
+      nativeIter);
+
+  if (lir->mir()->wantsIndices()) {
+    // At least one consumer of the output of this iterator has been optimized
+    // to use iterator indices. If the cached iterator doesn't include indices,
+    // but it was marked to indicate that we can create them if needed, then we
+    // do a VM call to replace the cached iterator with a fresh iterator
+    // including indices.
+    masm.branchNativeIteratorIndices(Assembler::Equal, nativeIter, temp2,
+                                     NativeIteratorIndices::AvailableOnRequest,
+                                     ool->entry());
+  }
+
+  Address iterFlagsAddr(nativeIter, NativeIterator::offsetOfFlagsAndCount());
+  masm.storePtr(
+      obj, Address(nativeIter, NativeIterator::offsetOfObjectBeingIterated()));
+  masm.or32(Imm32(NativeIterator::Flags::Active), iterFlagsAddr);
+
+  Register enumeratorsAddr = temp2;
+  masm.movePtr(ImmPtr(lir->mir()->enumeratorsAddr()), enumeratorsAddr);
+  masm.registerIterator(enumeratorsAddr, nativeIter, temp3);
+
+  // Generate post-write barrier for storing to |iterObj->objectBeingIterated_|.
+  // We already know that |iterObj| is tenured, so we only have to check |obj|.
+  Label skipBarrier;
+  masm.branchPtrInNurseryChunk(Assembler::NotEqual, obj, temp2, &skipBarrier);
+  {
+    LiveRegisterSet save = liveVolatileRegs(lir);
+    save.takeUnchecked(temp);
+    save.takeUnchecked(temp2);
+    save.takeUnchecked(temp3);
+    if (iterObj.volatile_()) {
+      save.addUnchecked(iterObj);
+    }
+
+    masm.PushRegsInMask(save);
+    emitPostWriteBarrier(iterObj);
+    masm.PopRegsInMask(save);
+  }
+  masm.bind(&skipBarrier);
+
+  masm.bind(ool->rejoin());
+}
+
 void CodeGenerator::visitValueToIterator(LValueToIterator* lir) {
   pushArg(ToValue(lir, LValueToIterator::ValueIndex));
 
-  using Fn = JSObject* (*)(JSContext*, HandleValue);
+  using Fn = PropertyIteratorObject* (*)(JSContext*, HandleValue);
   callVM<Fn, ValueToIterator>(lir);
+}
+
+void CodeGenerator::visitIteratorHasIndicesAndBranch(
+    LIteratorHasIndicesAndBranch* lir) {
+  Register iterator = ToRegister(lir->iterator());
+  Register object = ToRegister(lir->object());
+  Register temp = ToRegister(lir->temp());
+  Register temp2 = ToRegister(lir->temp2());
+  Label* ifTrue = getJumpLabelForBranch(lir->ifTrue());
+  Label* ifFalse = getJumpLabelForBranch(lir->ifFalse());
+
+  // Check that the iterator has indices available.
+  Address nativeIterAddr(iterator,
+                         PropertyIteratorObject::offsetOfIteratorSlot());
+  masm.loadPrivate(nativeIterAddr, temp);
+  masm.branchNativeIteratorIndices(Assembler::NotEqual, temp, temp2,
+                                   NativeIteratorIndices::Valid, ifFalse);
+
+  // Guard that the first shape stored in the iterator matches the current
+  // shape of the iterated object.
+  Address firstShapeAddr(temp, NativeIterator::offsetOfFirstShape());
+  masm.loadPtr(firstShapeAddr, temp);
+  masm.branchTestObjShape(Assembler::NotEqual, object, temp, temp2, object,
+                          ifFalse);
+
+  if (!isNextBlock(lir->ifTrue()->lir())) {
+    masm.jump(ifTrue);
+  }
+}
+
+void CodeGenerator::visitLoadSlotByIteratorIndex(
+    LLoadSlotByIteratorIndex* lir) {
+  Register object = ToRegister(lir->object());
+  Register iterator = ToRegister(lir->iterator());
+  Register temp = ToRegister(lir->temp0());
+  Register temp2 = ToRegister(lir->temp1());
+  ValueOperand result = ToOutValue(lir);
+
+  masm.extractCurrentIndexAndKindFromIterator(iterator, temp, temp2);
+
+  Label notDynamicSlot, notFixedSlot, done;
+  masm.branch32(Assembler::NotEqual, temp2,
+                Imm32(uint32_t(PropertyIndex::Kind::DynamicSlot)),
+                &notDynamicSlot);
+  masm.loadPtr(Address(object, NativeObject::offsetOfSlots()), temp2);
+  masm.loadValue(BaseValueIndex(temp2, temp), result);
+  masm.jump(&done);
+
+  masm.bind(&notDynamicSlot);
+  masm.branch32(Assembler::NotEqual, temp2,
+                Imm32(uint32_t(PropertyIndex::Kind::FixedSlot)), &notFixedSlot);
+  // Fixed slot
+  masm.loadValue(BaseValueIndex(object, temp, sizeof(NativeObject)), result);
+  masm.jump(&done);
+  masm.bind(&notFixedSlot);
+
+#ifdef DEBUG
+  Label kindOkay;
+  masm.branch32(Assembler::Equal, temp2,
+                Imm32(uint32_t(PropertyIndex::Kind::Element)), &kindOkay);
+  masm.assumeUnreachable("Invalid PropertyIndex::Kind");
+  masm.bind(&kindOkay);
+#endif
+
+  // Dense element
+  masm.loadPtr(Address(object, NativeObject::offsetOfElements()), temp2);
+  Label indexOkay;
+  Address initLength(temp2, ObjectElements::offsetOfInitializedLength());
+  masm.branch32(Assembler::Above, initLength, temp, &indexOkay);
+  masm.assumeUnreachable("Dense element out of bounds");
+  masm.bind(&indexOkay);
+
+  masm.loadValue(BaseObjectElementIndex(temp2, temp), result);
+  masm.bind(&done);
+}
+
+void CodeGenerator::visitStoreSlotByIteratorIndex(
+    LStoreSlotByIteratorIndex* lir) {
+  Register object = ToRegister(lir->object());
+  Register iterator = ToRegister(lir->iterator());
+  ValueOperand value = ToValue(lir, LStoreSlotByIteratorIndex::ValueIndex);
+  Register temp = ToRegister(lir->temp0());
+  Register temp2 = ToRegister(lir->temp1());
+
+  masm.extractCurrentIndexAndKindFromIterator(iterator, temp, temp2);
+
+  Label notDynamicSlot, notFixedSlot, done, doStore;
+  masm.branch32(Assembler::NotEqual, temp2,
+                Imm32(uint32_t(PropertyIndex::Kind::DynamicSlot)),
+                &notDynamicSlot);
+  masm.loadPtr(Address(object, NativeObject::offsetOfSlots()), temp2);
+  masm.computeEffectiveAddress(BaseValueIndex(temp2, temp), temp);
+  masm.jump(&doStore);
+
+  masm.bind(&notDynamicSlot);
+  masm.branch32(Assembler::NotEqual, temp2,
+                Imm32(uint32_t(PropertyIndex::Kind::FixedSlot)), &notFixedSlot);
+  // Fixed slot
+  masm.computeEffectiveAddress(
+      BaseValueIndex(object, temp, sizeof(NativeObject)), temp);
+  masm.jump(&doStore);
+  masm.bind(&notFixedSlot);
+
+#ifdef DEBUG
+  Label kindOkay;
+  masm.branch32(Assembler::Equal, temp2,
+                Imm32(uint32_t(PropertyIndex::Kind::Element)), &kindOkay);
+  masm.assumeUnreachable("Invalid PropertyIndex::Kind");
+  masm.bind(&kindOkay);
+#endif
+
+  // Dense element
+  masm.loadPtr(Address(object, NativeObject::offsetOfElements()), temp2);
+  Label indexOkay;
+  Address initLength(temp2, ObjectElements::offsetOfInitializedLength());
+  masm.branch32(Assembler::Above, initLength, temp, &indexOkay);
+  masm.assumeUnreachable("Dense element out of bounds");
+  masm.bind(&indexOkay);
+
+  BaseObjectElementIndex elementAddress(temp2, temp);
+  masm.computeEffectiveAddress(elementAddress, temp);
+
+  masm.bind(&doStore);
+  Address storeAddress(temp, 0);
+  emitPreBarrier(storeAddress);
+  masm.storeValue(value, storeAddress);
+
+  masm.branchPtrInNurseryChunk(Assembler::Equal, object, temp2, &done);
+  masm.branchValueIsNurseryCell(Assembler::NotEqual, value, temp2, &done);
+
+  saveVolatile(temp2);
+  emitPostWriteBarrier(object);
+  restoreVolatile(temp2);
+
+  masm.bind(&done);
 }
 
 void CodeGenerator::visitSetPropertyCache(LSetPropertyCache* ins) {
@@ -15140,6 +16114,7 @@ void CodeGenerator::visitGetDOMProperty(LGetDOMProperty* ins) {
   masm.passABIArg(ObjectReg);
   masm.passABIArg(PrivateReg);
   masm.passABIArg(ValueReg);
+  ensureOsiSpace();
   masm.callWithABI(DynamicFunction<JSJitGetterOp>(ins->mir()->fun()),
                    MoveOp::GENERAL,
                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
@@ -15260,6 +16235,7 @@ void CodeGenerator::visitSetDOMProperty(LSetDOMProperty* ins) {
   masm.passABIArg(ObjectReg);
   masm.passABIArg(PrivateReg);
   masm.passABIArg(ValueReg);
+  ensureOsiSpace();
   masm.callWithABI(DynamicFunction<JSJitSetterOp>(ins->mir()->fun()),
                    MoveOp::GENERAL,
                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
@@ -15392,7 +16368,7 @@ void CodeGenerator::visitOutOfLineIsCallable(OutOfLineIsCallable* ool) {
   Register output = ool->output();
 
   saveVolatile(output);
-  using Fn = bool (*)(JSObject * obj);
+  using Fn = bool (*)(JSObject* obj);
   masm.setupAlignedABICall();
   masm.passABIArg(object);
   masm.callWithABI<Fn, ObjectIsCallable>();
@@ -15431,7 +16407,7 @@ void CodeGenerator::visitOutOfLineIsConstructor(OutOfLineIsConstructor* ool) {
   Register output = ToRegister(ins->output());
 
   saveVolatile(output);
-  using Fn = bool (*)(JSObject * obj);
+  using Fn = bool (*)(JSObject* obj);
   masm.setupAlignedABICall();
   masm.passABIArg(object);
   masm.callWithABI<Fn, ObjectIsConstructor>();
@@ -15949,6 +16925,95 @@ void CodeGenerator::visitWasmTrap(LWasmTrap* lir) {
   masm.wasmTrap(mir->trap(), mir->bytecodeOffset());
 }
 
+void CodeGenerator::visitWasmTrapIfNull(LWasmTrapIfNull* lir) {
+  MOZ_ASSERT(gen->compilingWasm());
+  const MWasmTrapIfNull* mir = lir->mir();
+  Label nonNull;
+  Register input = ToRegister(lir->object());
+
+  masm.branchTestPtr(Assembler::NonZero, input, input, &nonNull);
+  masm.wasmTrap(mir->trap(), mir->bytecodeOffset());
+  masm.bind(&nonNull);
+}
+
+void CodeGenerator::visitWasmGcObjectIsSubtypeOfAbstract(
+    LWasmGcObjectIsSubtypeOfAbstract* ins) {
+  MOZ_ASSERT(gen->compilingWasm());
+
+  const MWasmGcObjectIsSubtypeOfAbstract* mir = ins->mir();
+  MOZ_ASSERT(!mir->destType().isTypeRef());
+
+  Register object = ToRegister(ins->object());
+  Register superSuperTypeVector = Register::Invalid();
+  Register scratch1 = ToTempRegisterOrInvalid(ins->temp0());
+  Register scratch2 = Register::Invalid();
+  Register result = ToRegister(ins->output());
+  Label onSuccess;
+  Label onFail;
+  Label join;
+  masm.branchWasmGcObjectIsRefType(
+      object, mir->sourceType(), mir->destType(), &onSuccess,
+      /*onSuccess=*/true, superSuperTypeVector, scratch1, scratch2);
+  masm.bind(&onFail);
+  masm.xor32(result, result);
+  masm.jump(&join);
+  masm.bind(&onSuccess);
+  masm.move32(Imm32(1), result);
+  masm.bind(&join);
+}
+
+void CodeGenerator::visitWasmGcObjectIsSubtypeOfConcrete(
+    LWasmGcObjectIsSubtypeOfConcrete* ins) {
+  MOZ_ASSERT(gen->compilingWasm());
+
+  const MWasmGcObjectIsSubtypeOfConcrete* mir = ins->mir();
+  MOZ_ASSERT(mir->destType().isTypeRef());
+
+  Register object = ToRegister(ins->object());
+  Register superSuperTypeVector = ToRegister(ins->superSuperTypeVector());
+  Register scratch1 = ToRegister(ins->temp0());
+  Register scratch2 = ToTempRegisterOrInvalid(ins->temp1());
+  Register result = ToRegister(ins->output());
+  Label onSuccess;
+  Label join;
+  masm.branchWasmGcObjectIsRefType(
+      object, mir->sourceType(), mir->destType(), &onSuccess,
+      /*onSuccess=*/true, superSuperTypeVector, scratch1, scratch2);
+  masm.move32(Imm32(0), result);
+  masm.jump(&join);
+  masm.bind(&onSuccess);
+  masm.move32(Imm32(1), result);
+  masm.bind(&join);
+}
+
+void CodeGenerator::visitWasmGcObjectIsSubtypeOfAbstractAndBranch(
+    LWasmGcObjectIsSubtypeOfAbstractAndBranch* ins) {
+  MOZ_ASSERT(gen->compilingWasm());
+  Register object = ToRegister(ins->object());
+  Register scratch1 = ToTempRegisterOrInvalid(ins->temp0());
+  Label* onSuccess = getJumpLabelForBranch(ins->ifTrue());
+  Label* onFail = getJumpLabelForBranch(ins->ifFalse());
+  masm.branchWasmGcObjectIsRefType(
+      object, ins->sourceType(), ins->destType(), onSuccess,
+      /*onSuccess=*/true, Register::Invalid(), scratch1, Register::Invalid());
+  masm.jump(onFail);
+}
+
+void CodeGenerator::visitWasmGcObjectIsSubtypeOfConcreteAndBranch(
+    LWasmGcObjectIsSubtypeOfConcreteAndBranch* ins) {
+  MOZ_ASSERT(gen->compilingWasm());
+  Register object = ToRegister(ins->object());
+  Register superSuperTypeVector = ToRegister(ins->superSuperTypeVector());
+  Register scratch1 = ToRegister(ins->temp0());
+  Register scratch2 = ToTempRegisterOrInvalid(ins->temp1());
+  Label* onSuccess = getJumpLabelForBranch(ins->ifTrue());
+  Label* onFail = getJumpLabelForBranch(ins->ifFalse());
+  masm.branchWasmGcObjectIsRefType(
+      object, ins->sourceType(), ins->destType(), onSuccess,
+      /*onSuccess=*/true, superSuperTypeVector, scratch1, scratch2);
+  masm.jump(onFail);
+}
+
 void CodeGenerator::visitWasmBoundsCheck(LWasmBoundsCheck* ins) {
   const MWasmBoundsCheck* mir = ins->mir();
   Register ptr = ToRegister(ins->ptr());
@@ -16099,7 +17164,7 @@ void CodeGenerator::visitDebugger(LDebugger* ins) {
   Register cx = ToRegister(ins->temp0());
 
   masm.loadJSContext(cx);
-  using Fn = bool (*)(JSContext * cx);
+  using Fn = bool (*)(JSContext* cx);
   masm.setupAlignedABICall();
   masm.passABIArg(cx);
   masm.callWithABI<Fn, GlobalHasLiveOnDebuggerStatement>();
@@ -16239,7 +17304,7 @@ void CodeGenerator::visitGenerator(LGenerator* lir) {
   pushArg(ImmGCPtr(current->mir()->info().script()));
   pushArg(callee);
 
-  using Fn = JSObject* (*)(JSContext * cx, HandleFunction, HandleScript,
+  using Fn = JSObject* (*)(JSContext* cx, HandleFunction, HandleScript,
                            HandleObject, HandleObject);
   callVM<Fn, CreateGenerator>(lir);
 }
@@ -16265,9 +17330,9 @@ void CodeGenerator::visitAsyncAwait(LAsyncAwait* lir) {
   pushArg(value);
   pushArg(generator);
 
-  using Fn = JSObject* (*)(JSContext * cx,
-                           Handle<AsyncFunctionGeneratorObject*> genObj,
-                           HandleValue value);
+  using Fn =
+      JSObject* (*)(JSContext* cx, Handle<AsyncFunctionGeneratorObject*> genObj,
+                    HandleValue value);
   callVM<Fn, js::AsyncFunctionAwait>(lir);
 }
 
@@ -16320,6 +17385,9 @@ void CodeGenerator::visitRandom(LRandom* ins) {
   masm.movePtr(ImmPtr(rng), rngReg);
 
   masm.randomDouble(rngReg, output, temp1, temp2);
+  if (js::SupportDifferentialTesting()) {
+    masm.loadConstantDouble(0.0, output);
+  }
 }
 
 void CodeGenerator::visitSignExtendInt32(LSignExtendInt32* ins) {
@@ -16391,138 +17459,6 @@ void CodeGenerator::visitNaNToZero(LNaNToZero* lir) {
     masm.branchDouble(Assembler::DoubleEqualOrUnordered, input, scratch,
                       ool->entry());
   }
-  masm.bind(ool->rejoin());
-}
-
-static void BoundFunctionLength(MacroAssembler& masm, Register target,
-                                Register targetFlagsAndArgCount,
-                                Register argCount, Register output,
-                                Label* slowPath) {
-  masm.loadFunctionLength(target, targetFlagsAndArgCount, output, slowPath);
-
-  // Compute the bound function length: Max(0, target.length - argCount).
-  Label nonNegative;
-  masm.sub32(argCount, output);
-  masm.branch32(Assembler::GreaterThanOrEqual, output, Imm32(0), &nonNegative);
-  masm.move32(Imm32(0), output);
-  masm.bind(&nonNegative);
-}
-
-static void BoundFunctionName(MacroAssembler& masm, Register target,
-                              Register targetFlags, Register output,
-                              const JSAtomState& names, Label* slowPath) {
-  Label notBoundTarget, loadName;
-  masm.branchTest32(Assembler::Zero, targetFlags,
-                    Imm32(FunctionFlags::BOUND_FUN), &notBoundTarget);
-  {
-    // Call into the VM if the target's name atom contains the bound
-    // function prefix.
-    masm.branchTest32(Assembler::NonZero, targetFlags,
-                      Imm32(FunctionFlags::HAS_BOUND_FUNCTION_NAME_PREFIX),
-                      slowPath);
-
-    // Bound functions reuse HAS_GUESSED_ATOM for
-    // HAS_BOUND_FUNCTION_NAME_PREFIX, so skip the guessed atom check below.
-    static_assert(
-        FunctionFlags::HAS_BOUND_FUNCTION_NAME_PREFIX ==
-            FunctionFlags::HAS_GUESSED_ATOM,
-        "HAS_BOUND_FUNCTION_NAME_PREFIX is shared with HAS_GUESSED_ATOM");
-    masm.jump(&loadName);
-  }
-  masm.bind(&notBoundTarget);
-
-  Label guessed, hasName;
-  masm.branchTest32(Assembler::NonZero, targetFlags,
-                    Imm32(FunctionFlags::HAS_GUESSED_ATOM), &guessed);
-
-  masm.bind(&loadName);
-  Address atom(Address(target, JSFunction::offsetOfAtom()));
-  masm.branchTestUndefined(Assembler::Equal, atom, &guessed);
-  masm.unboxString(atom, output);
-  masm.jump(&hasName);
-
-  {
-    masm.bind(&guessed);
-
-    // An absent name property defaults to the empty string.
-    masm.movePtr(ImmGCPtr(names.empty), output);
-  }
-  masm.bind(&hasName);
-}
-
-static void BoundFunctionFlagsAndArgCount(MacroAssembler& masm,
-                                          Register targetFlags, Register bound,
-                                          Register output) {
-  // Set the BOUND_FN flag and, if the target is a constructor, the
-  // CONSTRUCTOR flag.
-  Label isConstructor, boundFlagsComputed;
-  masm.load32(Address(bound, JSFunction::offsetOfFlagsAndArgCount()), output);
-  masm.branchTest32(Assembler::NonZero, targetFlags,
-                    Imm32(FunctionFlags::CONSTRUCTOR), &isConstructor);
-  {
-    masm.or32(Imm32(FunctionFlags::BOUND_FUN), output);
-    masm.jump(&boundFlagsComputed);
-  }
-  masm.bind(&isConstructor);
-  {
-    masm.or32(Imm32(FunctionFlags::BOUND_FUN | FunctionFlags::CONSTRUCTOR),
-              output);
-  }
-  masm.bind(&boundFlagsComputed);
-}
-
-void CodeGenerator::visitFinishBoundFunctionInit(
-    LFinishBoundFunctionInit* lir) {
-  Register bound = ToRegister(lir->bound());
-  Register target = ToRegister(lir->target());
-  Register argCount = ToRegister(lir->argCount());
-  Register temp0 = ToRegister(lir->temp0());
-  Register temp1 = ToRegister(lir->temp1());
-
-  using Fn = bool (*)(JSContext * cx, HandleFunction bound, HandleObject target,
-                      int32_t argCount);
-  OutOfLineCode* ool = oolCallVM<Fn, JSFunction::finishBoundFunctionInit>(
-      lir, ArgList(bound, target, argCount), StoreNothing());
-  Label* slowPath = ool->entry();
-
-  const size_t boundLengthOffset =
-      FunctionExtended::offsetOfBoundFunctionLengthSlot();
-
-  // Take the slow path if the target is not a JSFunction.
-  masm.branchTestObjIsFunction(Assembler::NotEqual, target, temp0, target,
-                               slowPath);
-
-  // Take the slow path if we'd need to adjust the [[Prototype]].
-  masm.loadObjProto(bound, temp0);
-  masm.loadObjProto(target, temp1);
-  masm.branchPtr(Assembler::NotEqual, temp0, temp1, slowPath);
-
-  // Get the function flags and arg count.
-  masm.load32(Address(target, JSFunction::offsetOfFlagsAndArgCount()), temp0);
-
-  // Functions with a SelfHostedLazyScript must be compiled with the slow-path
-  // before the function length is known. If the length or name property is
-  // resolved, it might be shadowed.
-  masm.branchTest32(
-      Assembler::NonZero, temp0,
-      Imm32(FunctionFlags::SELFHOSTLAZY | FunctionFlags::RESOLVED_NAME |
-            FunctionFlags::RESOLVED_LENGTH),
-      slowPath);
-
-  // Store the bound function's length into the extended slot.
-  BoundFunctionLength(masm, target, temp0, argCount, temp1, slowPath);
-  masm.storeValue(JSVAL_TYPE_INT32, temp1, Address(bound, boundLengthOffset));
-
-  // Store the target's name atom in the bound function as is.
-  BoundFunctionName(masm, target, temp0, temp1, gen->runtime->names(),
-                    slowPath);
-  masm.storeValue(JSVAL_TYPE_STRING, temp1,
-                  Address(bound, JSFunction::offsetOfAtom()));
-
-  // Update the bound function's flags.
-  BoundFunctionFlagsAndArgCount(masm, temp0, bound, temp1);
-  masm.store32(temp1, Address(bound, JSFunction::offsetOfFlagsAndArgCount()));
-
   masm.bind(ool->rejoin());
 }
 
@@ -16708,8 +17644,8 @@ void CodeGenerator::visitGuardHasGetterSetter(LGuardHasGetterSetter* lir) {
   masm.movePropertyKey(lir->mir()->propId(), temp1);
   masm.movePtr(ImmGCPtr(lir->mir()->getterSetter()), temp2);
 
-  using Fn = bool (*)(JSContext * cx, JSObject * obj, jsid id,
-                      GetterSetter * getterSetter);
+  using Fn = bool (*)(JSContext* cx, JSObject* obj, jsid id,
+                      GetterSetter* getterSetter);
   masm.setupAlignedABICall();
   masm.loadJSContext(temp0);
   masm.passABIArg(temp0);
@@ -16735,6 +17671,15 @@ void CodeGenerator::visitGuardInt32IsNonNegative(
   Register index = ToRegister(lir->index());
 
   bailoutCmp32(Assembler::LessThan, index, Imm32(0), lir->snapshot());
+}
+
+void CodeGenerator::visitGuardInt32Range(LGuardInt32Range* lir) {
+  Register input = ToRegister(lir->input());
+
+  bailoutCmp32(Assembler::LessThan, input, Imm32(lir->mir()->minimum()),
+               lir->snapshot());
+  bailoutCmp32(Assembler::GreaterThan, input, Imm32(lir->mir()->maximum()),
+               lir->snapshot());
 }
 
 void CodeGenerator::visitGuardIndexIsNotDenseElement(
@@ -17181,6 +18126,13 @@ void CodeGenerator::visitSetObjectHasValueVMCall(
   callVM<Fn, jit::SetObjectHas>(ins);
 }
 
+void CodeGenerator::visitSetObjectSize(LSetObjectSize* ins) {
+  Register setObj = ToRegister(ins->setObject());
+  Register output = ToRegister(ins->output());
+
+  masm.loadSetObjectSize(setObj, output);
+}
+
 void CodeGenerator::visitMapObjectHasNonBigInt(LMapObjectHasNonBigInt* ins) {
   Register mapObj = ToRegister(ins->mapObject());
   ValueOperand input = ToValue(ins, LMapObjectHasNonBigInt::InputIndex);
@@ -17279,6 +18231,13 @@ void CodeGenerator::visitMapObjectGetValueVMCall(
   callVM<Fn, jit::MapObjectGet>(ins);
 }
 
+void CodeGenerator::visitMapObjectSize(LMapObjectSize* ins) {
+  Register mapObj = ToRegister(ins->mapObject());
+  Register output = ToRegister(ins->output());
+
+  masm.loadMapObjectSize(mapObj, output);
+}
+
 template <size_t NumDefs>
 void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
   wasm::JitCallStackArgVector stackArgs;
@@ -17300,21 +18259,16 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
       case wasm::ValType::I64:
       case wasm::ValType::F32:
       case wasm::ValType::F64:
-        argMir = ToMIRType(sig.args()[i]);
+        argMir = sig.args()[i].toMIRType();
         break;
       case wasm::ValType::V128:
         MOZ_CRASH("unexpected argument type when calling from ion to wasm");
       case wasm::ValType::Ref:
-        switch (sig.args()[i].refTypeKind()) {
-          case wasm::RefType::Extern:
-            // AnyRef is boxed on the JS side, so passed as a pointer here.
-            argMir = ToMIRType(sig.args()[i]);
-            break;
-          case wasm::RefType::Func:
-          case wasm::RefType::Eq:
-          case wasm::RefType::TypeIndex:
-            MOZ_CRASH("unexpected argument type when calling from ion to wasm");
-        }
+        // temporarilyUnsupportedReftypeForEntry() restricts args to externref
+        MOZ_RELEASE_ASSERT(sig.args()[i].refType().isExtern());
+        // Argument is boxed on the JS side to an anyref, so passed as a
+        // pointer here.
+        argMir = sig.args()[i].toMIRType();
         break;
     }
 
@@ -17379,19 +18333,11 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
       case wasm::ValType::V128:
         MOZ_CRASH("unexpected return type when calling from ion to wasm");
       case wasm::ValType::Ref:
-        switch (results[0].refTypeKind()) {
-          case wasm::RefType::Func:
-          case wasm::RefType::Extern:
-          case wasm::RefType::Eq:
-            // The wasm stubs layer unboxes anything that needs to be unboxed
-            // and leaves it in a Value.  A FuncRef/EqRef we could in principle
-            // leave it as a raw object pointer but for now it complicates the
-            // API to do so.
-            MOZ_ASSERT(lir->mir()->type() == MIRType::Value);
-            break;
-          case wasm::RefType::TypeIndex:
-            MOZ_CRASH("unexpected return type when calling from ion to wasm");
-        }
+        // The wasm stubs layer unboxes anything that needs to be unboxed
+        // and leaves it in a Value.  A FuncRef/EqRef we could in principle
+        // leave it as a raw object pointer but for now it complicates the
+        // API to do so.
+        MOZ_ASSERT(lir->mir()->type() == MIRType::Value);
         break;
     }
   }
@@ -17401,6 +18347,7 @@ void CodeGenerator::emitIonToWasmCallBase(LIonToWasmCallBase<NumDefs>* lir) {
   Register scratch = ToRegister(lir->temp());
 
   uint32_t callOffset;
+  ensureOsiSpace();
   GenerateDirectCallFromJit(masm, funcExport, instObj->instance(), stackArgs,
                             scratch, &callOffset);
 
@@ -17472,6 +18419,210 @@ void CodeGenerator::visitWasmAnyRefFromJSObject(LWasmAnyRefFromJSObject* lir) {
     masm.movePtr(input, output);
   }
 }
+
+#ifdef FUZZING_JS_FUZZILLI
+void CodeGenerator::emitFuzzilliHashDouble(FloatRegister floatDouble,
+                                           Register scratch, Register output) {
+#  ifdef JS_PUNBOX64
+  Register64 reg64_1(scratch);
+  Register64 reg64_2(output);
+  masm.moveDoubleToGPR64(floatDouble, reg64_1);
+  masm.move64(reg64_1, reg64_2);
+  masm.rshift64(Imm32(32), reg64_2);
+  masm.add32(scratch, output);
+#  else
+  Register64 reg64(scratch, output);
+  masm.moveDoubleToGPR64(floatDouble, reg64);
+  masm.add32(scratch, output);
+#  endif
+}
+
+void CodeGenerator::emitFuzzilliHashObject(LInstruction* lir, Register obj,
+                                           Register output) {
+  using Fn = void (*)(JSContext* cx, JSObject* obj, uint32_t* out);
+  OutOfLineCode* ool = oolCallVM<Fn, FuzzilliHashObjectInl>(
+      lir, ArgList(obj), StoreRegisterTo(output));
+
+  masm.jump(ool->entry());
+  masm.bind(ool->rejoin());
+}
+
+void CodeGenerator::emitFuzzilliHashBigInt(Register bigInt, Register output) {
+  LiveRegisterSet volatileRegs(GeneralRegisterSet::All(),
+                               FloatRegisterSet::All());
+  volatileRegs.takeUnchecked(output);
+  masm.PushRegsInMask(volatileRegs);
+
+  using Fn = uint32_t (*)(BigInt* bigInt);
+  masm.setupUnalignedABICall(output);
+  masm.passABIArg(bigInt);
+  masm.callWithABI<Fn, js::FuzzilliHashBigInt>();
+  masm.storeCallInt32Result(output);
+
+  masm.PopRegsInMask(volatileRegs);
+}
+
+void CodeGenerator::visitFuzzilliHashV(LFuzzilliHashV* ins) {
+  MOZ_ASSERT(ins->mir()->getOperand(0)->type() == MIRType::Value);
+
+  ValueOperand value = ToValue(ins, 0);
+
+  Label isDouble, isObject, isBigInt, done;
+
+  FloatRegister scratchFloat = ToFloatRegister(ins->getTemp(1));
+  Register scratch = ToRegister(ins->getTemp(0));
+  Register output = ToRegister(ins->output());
+  MOZ_ASSERT(scratch != output);
+
+#  ifdef JS_PUNBOX64
+  Register tagReg = ToRegister(ins->getTemp(0));
+  masm.splitTag(value, tagReg);
+#  else
+  Register tagReg = value.typeReg();
+#  endif
+
+  Label noBigInt;
+  masm.branchTestBigInt(Assembler::NotEqual, tagReg, &noBigInt);
+  masm.unboxBigInt(value, scratch);
+  masm.jump(&isBigInt);
+  masm.bind(&noBigInt);
+
+  Label noObject;
+  masm.branchTestObject(Assembler::NotEqual, tagReg, &noObject);
+  masm.unboxObject(value, scratch);
+  masm.jump(&isObject);
+  masm.bind(&noObject);
+
+  Label noInt32;
+  masm.branchTestInt32(Assembler::NotEqual, tagReg, &noInt32);
+  masm.unboxInt32(value, scratch);
+  masm.convertInt32ToDouble(scratch, scratchFloat);
+  masm.jump(&isDouble);
+  masm.bind(&noInt32);
+
+  Label noNull;
+  masm.branchTestNull(Assembler::NotEqual, tagReg, &noNull);
+  masm.move32(Imm32(1), scratch);
+  masm.convertInt32ToDouble(scratch, scratchFloat);
+  masm.jump(&isDouble);
+  masm.bind(&noNull);
+
+  Label noUndefined;
+  masm.branchTestUndefined(Assembler::NotEqual, tagReg, &noUndefined);
+  masm.move32(Imm32(2), scratch);
+  masm.convertInt32ToDouble(scratch, scratchFloat);
+  masm.jump(&isDouble);
+  masm.bind(&noUndefined);
+
+  Label noBoolean;
+  masm.branchTestBoolean(Assembler::NotEqual, tagReg, &noBoolean);
+  masm.unboxBoolean(value, scratch);
+  masm.add32(Imm32(3), scratch);
+  masm.convertInt32ToDouble(scratch, scratchFloat);
+  masm.jump(&isDouble);
+  masm.bind(&noBoolean);
+
+  Label noDouble;
+  masm.branchTestDouble(Assembler::NotEqual, tagReg, &noDouble);
+  masm.unboxDouble(value, scratchFloat);
+  masm.canonicalizeDoubleIfDeterministic(scratchFloat);
+
+  masm.jump(&isDouble);
+  masm.bind(&noDouble);
+  masm.move32(Imm32(0), output);
+  masm.jump(&done);
+
+  masm.bind(&isBigInt);
+  emitFuzzilliHashBigInt(scratch, output);
+  masm.jump(&done);
+
+  masm.bind(&isObject);
+  emitFuzzilliHashObject(ins, scratch, output);
+  masm.jump(&done);
+
+  masm.bind(&isDouble);
+  emitFuzzilliHashDouble(scratchFloat, scratch, output);
+
+  masm.bind(&done);
+}
+
+void CodeGenerator::visitFuzzilliHashT(LFuzzilliHashT* ins) {
+  const LAllocation* value = ins->value();
+  MIRType mirType = ins->mir()->getOperand(0)->type();
+
+  FloatRegister scratchFloat = ToFloatRegister(ins->getTemp(1));
+  Register scratch = ToRegister(ins->getTemp(0));
+  Register output = ToRegister(ins->output());
+  MOZ_ASSERT(scratch != output);
+
+  if (mirType == MIRType::Object) {
+    MOZ_ASSERT(value->isGeneralReg());
+    masm.mov(value->toGeneralReg()->reg(), scratch);
+    emitFuzzilliHashObject(ins, scratch, output);
+  } else if (mirType == MIRType::BigInt) {
+    MOZ_ASSERT(value->isGeneralReg());
+    masm.mov(value->toGeneralReg()->reg(), scratch);
+    emitFuzzilliHashBigInt(scratch, output);
+  } else if (mirType == MIRType::Double) {
+    MOZ_ASSERT(value->isFloatReg());
+    masm.moveDouble(value->toFloatReg()->reg(), scratchFloat);
+    masm.canonicalizeDoubleIfDeterministic(scratchFloat);
+    emitFuzzilliHashDouble(scratchFloat, scratch, output);
+  } else if (mirType == MIRType::Float32) {
+    MOZ_ASSERT(value->isFloatReg());
+    masm.convertFloat32ToDouble(value->toFloatReg()->reg(), scratchFloat);
+    masm.canonicalizeDoubleIfDeterministic(scratchFloat);
+    emitFuzzilliHashDouble(scratchFloat, scratch, output);
+  } else if (mirType == MIRType::Int32) {
+    MOZ_ASSERT(value->isGeneralReg());
+    masm.mov(value->toGeneralReg()->reg(), scratch);
+    masm.convertInt32ToDouble(scratch, scratchFloat);
+    emitFuzzilliHashDouble(scratchFloat, scratch, output);
+  } else if (mirType == MIRType::Null) {
+    MOZ_ASSERT(value->isBogus());
+    masm.move32(Imm32(1), scratch);
+    masm.convertInt32ToDouble(scratch, scratchFloat);
+    emitFuzzilliHashDouble(scratchFloat, scratch, output);
+  } else if (mirType == MIRType::Undefined) {
+    MOZ_ASSERT(value->isBogus());
+    masm.move32(Imm32(2), scratch);
+    masm.convertInt32ToDouble(scratch, scratchFloat);
+    emitFuzzilliHashDouble(scratchFloat, scratch, output);
+  } else if (mirType == MIRType::Boolean) {
+    MOZ_ASSERT(value->isGeneralReg());
+    masm.mov(value->toGeneralReg()->reg(), scratch);
+    masm.add32(Imm32(3), scratch);
+    masm.convertInt32ToDouble(scratch, scratchFloat);
+    emitFuzzilliHashDouble(scratchFloat, scratch, output);
+  } else {
+    MOZ_CRASH("unexpected type");
+  }
+}
+
+void CodeGenerator::visitFuzzilliHashStore(LFuzzilliHashStore* ins) {
+  const LAllocation* value = ins->value();
+  MOZ_ASSERT(ins->mir()->getOperand(0)->type() == MIRType::Int32);
+  MOZ_ASSERT(value->isGeneralReg());
+
+  Register scratchJSContext = ToRegister(ins->getTemp(0));
+  Register scratch = ToRegister(ins->getTemp(1));
+
+  masm.loadJSContext(scratchJSContext);
+
+  // stats
+  Address addrExecHashInputs(scratchJSContext,
+                             offsetof(JSContext, executionHashInputs));
+  masm.load32(addrExecHashInputs, scratch);
+  masm.add32(Imm32(1), scratch);
+  masm.store32(scratch, addrExecHashInputs);
+
+  Address addrExecHash(scratchJSContext, offsetof(JSContext, executionHash));
+  masm.load32(addrExecHash, scratch);
+  masm.add32(value->toGeneralReg()->reg(), scratch);
+  masm.rotateLeft(Imm32(1), scratch, scratch);
+  masm.store32(scratch, addrExecHash);
+}
+#endif
 
 static_assert(!std::is_polymorphic_v<CodeGenerator>,
               "CodeGenerator should not have any virtual methods");

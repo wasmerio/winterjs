@@ -15,6 +15,7 @@
 
 #include "ds/BitArray.h"
 #include "ds/LifoAlloc.h"
+#include "gc/Cell.h"
 #include "gc/Nursery.h"
 #include "gc/TraceKind.h"
 #include "js/AllocPolicy.h"
@@ -26,6 +27,8 @@ struct GCSizes;
 }
 
 namespace js {
+
+class NativeObject;
 
 #ifdef DEBUG
 extern bool CurrentThreadIsGCMarking();
@@ -154,15 +157,12 @@ class StoreBuffer {
 
   struct WholeCellBuffer {
     UniquePtr<LifoAlloc> storage_;
-    ArenaCellSet* stringHead_;
-    ArenaCellSet* nonStringHead_;
+    ArenaCellSet* stringHead_ = nullptr;
+    ArenaCellSet* nonStringHead_ = nullptr;
+    const Cell* last_ = nullptr;
     StoreBuffer* owner_;
 
-    explicit WholeCellBuffer(StoreBuffer* owner)
-        : storage_(nullptr),
-          stringHead_(nullptr),
-          nonStringHead_(nullptr),
-          owner_(owner) {}
+    explicit WholeCellBuffer(StoreBuffer* owner) : owner_(owner) {}
 
     [[nodiscard]] bool init();
 
@@ -176,6 +176,7 @@ class StoreBuffer {
     void trace(TenuringTracer& mover);
 
     inline void put(const Cell* cell);
+    inline void putDontCheckLast(const Cell* cell);
 
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
       return storage_ ? storage_->sizeOfIncludingThis(mallocSizeOf) : 0;
@@ -186,6 +187,8 @@ class StoreBuffer {
                     !storage_ || storage_->isEmpty());
       return !stringHead_ && !nonStringHead_;
     }
+
+    const Cell** lastBufferedPtr() { return &last_; }
 
    private:
     ArenaCellSet* allocateCellSet(Arena* arena);
@@ -495,6 +498,10 @@ class StoreBuffer {
   }
 
   inline void putWholeCell(Cell* cell);
+  inline void putWholeCellDontCheckLast(Cell* cell);
+  const void* addressOfLastBufferedWholeCell() {
+    return bufferWholeCell.lastBufferedPtr();
+  }
 
   /* Insert an entry into the generic buffer. */
   template <typename T>
@@ -637,7 +644,7 @@ MOZ_ALWAYS_INLINE void PostWriteBarrier(T** vp, T* prev, T* next) {
   static_assert(std::is_base_of_v<Cell, T>);
   static_assert(!std::is_same_v<Cell, T> && !std::is_same_v<TenuredCell, T>);
 
-  if constexpr (!std::is_base_of_v<TenuredCell, T>) {
+  if constexpr (!GCTypeIsTenured<T>()) {
     using BaseT = typename BaseGCType<T>::type;
     PostWriteBarrierImpl<BaseT>(vp, prev, next);
     return;

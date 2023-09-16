@@ -321,14 +321,15 @@ struct MinorSweepingTracer final
   friend class GenericTracerImpl<MinorSweepingTracer>;
 };
 
-extern void DelayCrossCompartmentGrayMarking(JSObject* src);
+extern void DelayCrossCompartmentGrayMarking(GCMarker* maybeMarker,
+                                             JSObject* src);
 
 inline bool IsOOMReason(JS::GCReason reason) {
   return reason == JS::GCReason::LAST_DITCH ||
          reason == JS::GCReason::MEM_PRESSURE;
 }
 
-TenuredCell* AllocateCellInGC(JS::Zone* zone, AllocKind thingKind);
+void* AllocateCellInGC(JS::Zone* zone, AllocKind thingKind);
 
 void ReadProfileEnv(const char* envName, const char* helpText, bool* enableOut,
                     bool* workersOut, mozilla::TimeDuration* thresholdOut);

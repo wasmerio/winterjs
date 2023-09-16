@@ -2,25 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import argparse
 import logging
 import os
-import sys
 import subprocess
+import sys
 
-from mach.decorators import (
-    CommandArgument,
-    Command,
-    SettingsProvider,
-    SubCommand,
-)
-
-from mozbuild.base import (
-    BuildEnvironmentNotFoundException,
-    MachCommandConditions as conditions,
-)
+import requests
+from mach.decorators import Command, CommandArgument, SettingsProvider, SubCommand
+from mozbuild.base import BuildEnvironmentNotFoundException
+from mozbuild.base import MachCommandConditions as conditions
 
 UNKNOWN_TEST = """
 I was unable to find tests from the given argument(s).
@@ -173,8 +164,9 @@ def addtest(
     editor=MISSING_ARG,
     **kwargs,
 ):
-    import addtest
     import io
+
+    import addtest
     from moztest.resolve import TEST_SUITES
 
     if not suite and not test:
@@ -381,10 +373,13 @@ def test(command_context, what, extra_args, **log_args):
     Do not forget the - (minus sign) after --log-grouped!
 
     `./mach test --log-grouped - devtools/client/shared/redux/middleware/xpcshell/`
+
+    To learn more about arguments for each test type/flavor/harness, please run
+    `./mach <test-harness> --help`. For example, `./mach mochitest --help`.
     """
     from mozlog.commandline import setup_logging
     from mozlog.handlers import StreamHandler
-    from moztest.resolve import get_suite_definition, TestResolver, TEST_SUITES
+    from moztest.resolve import TEST_SUITES, TestResolver, get_suite_definition
 
     resolver = command_context._spawn(TestResolver)
     run_suites, run_tests = resolver.resolve_metadata(what)
@@ -505,8 +500,8 @@ def run_cppunit_test(command_context, **params):
 
     if conditions.is_android(command_context):
         from mozrunner.devices.android_device import (
-            verify_android_device,
             InstallIntent,
+            verify_android_device,
         )
 
         verify_android_device(command_context, install=InstallIntent.NO)
@@ -543,7 +538,7 @@ def run_desktop_test(
 
 
 def run_android_test(command_context, tests, symbols_path, manifest_path, log):
-    import remotecppunittests as remotecppunittests
+    import remotecppunittests
     from mozlog import commandline
 
     parser = remotecppunittests.RemoteCPPUnittestOptions()
@@ -646,18 +641,34 @@ def run_jittests(command_context, shell, cgc, params):
 
 @Command("jsapi-tests", category="testing", description="Run SpiderMonkey JSAPI tests.")
 @CommandArgument(
+    "--list",
+    action="store_true",
+    default=False,
+    help="List all tests",
+)
+@CommandArgument(
+    "--frontend-only",
+    action="store_true",
+    default=False,
+    help="Run tests for frontend-only APIs, with light-weight entry point",
+)
+@CommandArgument(
     "test_name",
     nargs="?",
     metavar="N",
     help="Test to run. Can be a prefix or omitted. If "
     "omitted, the entire test suite is executed.",
 )
-def run_jsapitests(command_context, test_name=None):
+def run_jsapitests(command_context, list=False, frontend_only=False, test_name=None):
     import subprocess
 
     jsapi_tests_cmd = [
         os.path.join(command_context.bindir, executable_name("jsapi-tests"))
     ]
+    if list:
+        jsapi_tests_cmd.append("--list")
+    if frontend_only:
+        jsapi_tests_cmd.append("--frontend-only")
     if test_name:
         jsapi_tests_cmd.append(test_name)
 
@@ -849,6 +860,11 @@ def test_info_tests(
     help="Include list of manifest annotation conditions in report.",
 )
 @CommandArgument(
+    "--show-testruns",
+    action="store_true",
+    help="Include total number of runs the test has if there are failures.",
+)
+@CommandArgument(
     "--filter-values",
     help="Comma-separated list of value regular expressions to filter on; "
     "displayed tests contain all specified values.",
@@ -893,6 +909,7 @@ def test_report(
     verbose,
     start,
     end,
+    show_testruns,
 ):
     import testinfo
     from mozbuild import build_commands
@@ -919,6 +936,7 @@ def test_report(
         output_file,
         start,
         end,
+        show_testruns,
     )
 
 
@@ -950,6 +968,30 @@ def test_report_diff(command_context, before, after, output_file, verbose):
 
 @SubCommand(
     "test-info",
+    "testrun-report",
+    description="Generate report of number of runs for each test group (manifest)",
+)
+@CommandArgument("--output-file", help="Path to report file.")
+def test_info_testrun_report(command_context, output_file):
+    import json
+
+    import testinfo
+
+    ti = testinfo.TestInfoReport(verbose=True)
+    runcounts = ti.get_runcounts()
+    if output_file:
+        output_file = os.path.abspath(output_file)
+        output_dir = os.path.dirname(output_file)
+        if not os.path.isdir(output_dir):
+            os.makedirs(output_dir)
+        with open(output_file, "w") as f:
+            json.dump(runcounts, f)
+    else:
+        print(runcounts)
+
+
+@SubCommand(
+    "test-info",
     "failure-report",
     description="Display failure line groupings and frequencies for "
     "single tracking intermittent bugs.",
@@ -973,8 +1015,6 @@ def test_info_failures(
     end,
     bugid,
 ):
-    import requests
-
     # bugid comes in as a string, we need an int:
     try:
         bugid = int(bugid)

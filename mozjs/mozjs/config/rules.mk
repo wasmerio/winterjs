@@ -376,12 +376,7 @@ ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 resfile = $(notdir $1).res
 # We also build .res files for simple programs if a corresponding manifest
 # exists. We'll generate a .rc file that includes the manifest.
-ifdef GNU_CC
-# Skip on mingw builds because of bug 1657863
-resfile_for_manifest =
-else
 resfile_for_manifest = $(if $(wildcard $(srcdir)/$(notdir $1).manifest),$(call resfile,$1))
-endif
 else
 resfile =
 resfile_for_manifest =
@@ -414,7 +409,7 @@ alltags:
 	find $(topsrcdir) -name dist -prune -o \( -name '*.[hc]' -o -name '*.cp' -o -name '*.cpp' -o -name '*.idl' \) -print | $(TAG_PROGRAM)
 
 define EXPAND_CC_OR_CXX
-$(if $(PROG_IS_C_ONLY_$(1)),$(CC),$(CCC))
+$(if $(PROG_IS_C_ONLY_$(notdir $(1))),$(CC),$(CCC))
 endef
 
 #
@@ -487,9 +482,9 @@ ifeq (WINNT_,$(HOST_OS_ARCH)_$(GNU_CC))
 	$(HOST_LINKER) -OUT:$@ -PDB:$(HOST_PDBFILE) $($(notdir $@)_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LINKER_LIBPATHS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
 ifneq (,$(HOST_CPPSRCS)$(USE_HOST_CXX))
-	$(HOST_CXX) $(HOST_OUTOPTION)$@ $(HOST_CXX_LDFLAGS) $($(notdir $@)_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_CXX) $(HOST_OUTOPTION)$@ $(HOST_CXX_LDFLAGS) $(HOST_LDFLAGS) $($(notdir $@)_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
-	$(HOST_CC) $(HOST_OUTOPTION)$@ $(HOST_C_LDFLAGS) $($(notdir $@)_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(HOST_CC) $(HOST_OUTOPTION)$@ $(HOST_C_LDFLAGS) $(HOST_LDFLAGS) $($(notdir $@)_OBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 endif
 endif
 ifndef CROSS_COMPILE
@@ -504,10 +499,7 @@ $(LIBRARY): $(OBJS) $(STATIC_LIBS) $(EXTRA_DEPS) $(GLOBAL_DEPS)
 $(WASM_ARCHIVE): $(CWASMOBJS) $(CPPWASMOBJS) $(STATIC_LIBS) $(EXTRA_DEPS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD_VERBOSE)
 	$(RM) $(WASM_ARCHIVE)
-	$(WASM_CXX) -o $@ -Wl,--export-all -Wl,--stack-first -Wl,-z,stack-size=$(if $(MOZ_OPTIMIZE),262144,1048576) -Wl,--no-entry -Wl,--growable-table $(CWASMOBJS) $(CPPWASMOBJS) -lwasi-emulated-process-clocks
-
-$(addsuffix .c,$(WASM_ARCHIVE)): $(WASM_ARCHIVE) $(DIST)/host/bin/wasm2c$(HOST_BIN_SUFFIX)
-	$(DIST)/host/bin/wasm2c$(HOST_BIN_SUFFIX) -o $@ $<
+	$(WASM_CXX) -o $@ -Wl,--export-all -Wl,--stack-first -Wl,-z,stack-size=$(if $(MOZ_OPTIMIZE),262144,1048576) -Wl,--no-entry -Wl,--growable-table -Wl,--import-memory -Wl,--import-table $(CWASMOBJS) $(CPPWASMOBJS) -lwasi-emulated-process-clocks
 
 ifeq ($(OS_ARCH),WINNT)
 # Import libraries are created by the rules creating shared libraries.
@@ -605,6 +597,12 @@ ifdef WINE
 relativize = $(if $(filter /%,$1),$(DEPTH)$(subst $(space),,$(foreach d,$(subst /, ,$(topobjdir)),/..))$1,$1)
 else
 relativize = $1
+endif
+
+ifdef WINE
+# asmarm64 needs a library that can be found in $PATH but for some reason,
+# wine wants its path in $WINEPATH, so fill that to make it happy.
+$(ASOBJS) $(SOBJS): export WINEPATH=$(subst :,;,$(PATH))
 endif
 
 ifdef ASFILES

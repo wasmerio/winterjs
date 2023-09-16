@@ -31,6 +31,8 @@
 namespace js {
 namespace wasm {
 
+class TypeContext;
+
 // [SMDOC] "Module serialization"
 //
 // A wasm::Module may be serialized to a binary format that allows for quick
@@ -80,7 +82,7 @@ namespace wasm {
 struct OutOfMemory {};
 
 // The result of serialization, either OK or OOM
-typedef mozilla::Result<mozilla::Ok, OutOfMemory> CoderResult;
+using CoderResult = mozilla::Result<mozilla::Ok, OutOfMemory>;
 
 // CoderMode parameterizes the coding functions
 enum CoderMode {
@@ -129,8 +131,13 @@ struct Coder;
 // A Coder<MODE_SIZE> computes the total encoded size of a module
 template <>
 struct Coder<MODE_SIZE> {
-  Coder() : size_(0) {}
+  explicit Coder(const TypeContext* types) : types_(types), size_(0) {}
 
+  // The types of the module that we're going to encode. This is required in
+  // order to encode the original index of types that we encounter.
+  const TypeContext* types_;
+
+  // The current size of buffer required to serialize this module.
   mozilla::CheckedInt<size_t> size_;
 
   // This function shares a signature with MODE_ENCODE to allow functions to be
@@ -142,9 +149,16 @@ struct Coder<MODE_SIZE> {
 // A Coder<MODE_ENCODE> holds the buffer being written to
 template <>
 struct Coder<MODE_ENCODE> {
-  Coder(uint8_t* start, size_t length) : buffer_(start), end_(start + length) {}
+  Coder(const TypeContext* types, uint8_t* start, size_t length)
+      : types_(types), buffer_(start), end_(start + length) {}
 
+  // The types of the module that we're encoding. This is required in
+  // order to encode the original index of types that we encounter.
+  const TypeContext* types_;
+
+  // The current position in the buffer we're writing to.
   uint8_t* buffer_;
+  // The end position in the buffer we're writing to.
   const uint8_t* end_;
 
   CoderResult writeBytes(const void* src, size_t length);
@@ -154,9 +168,15 @@ struct Coder<MODE_ENCODE> {
 template <>
 struct Coder<MODE_DECODE> {
   Coder(const uint8_t* start, size_t length)
-      : buffer_(start), end_(start + length) {}
+      : types_(nullptr), buffer_(start), end_(start + length) {}
 
+  // The types of the module that we're decoding. This is null until the types
+  // of this module are decoded.
+  const TypeContext* types_;
+
+  // The current position in the buffer we're reading from.
   const uint8_t* buffer_;
+  // The end position in the buffer we're reading from.
   const uint8_t* end_;
 
   CoderResult readBytes(void* dest, size_t length);
@@ -224,6 +244,16 @@ struct IsCacheablePod<T[N]>
 
 template <class T>
 inline constexpr bool is_cacheable_pod = IsCacheablePod<T>::value;
+
+// Checks if derrived class will not use the structure alignment for its
+// next field. It used when pod is a base class.
+#define WASM_CHECK_CACHEABLE_POD_PADDING(Type)                \
+  class __CHECK_PADING_##Type : public Type {                 \
+   public:                                                    \
+    char c;                                                   \
+  };                                                          \
+  static_assert(sizeof(__CHECK_PADING_##Type) > sizeof(Type), \
+                #Type " will overlap with next field if inherited");
 
 // Declare the type 'Type' to be cacheable POD. The definition of the type must
 // contain a WASM_CHECK_CACHEABLE_POD[_WITH_PARENT] to ensure all fields of the

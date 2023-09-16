@@ -3,12 +3,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import with_statement
-
-from optparse import OptionParser
 import hashlib
 import logging
 import os
+from optparse import OptionParser
 
 logger = logging.getLogger("checksums.py")
 

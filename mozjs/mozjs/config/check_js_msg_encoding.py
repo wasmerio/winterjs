@@ -9,13 +9,10 @@
 # JSErrorFormatString.format member should be in ASCII encoding.
 # ----------------------------------------------------------------------------
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import os
 import sys
 
 from mozversioncontrol import get_repository_from_env
-
 
 scriptname = os.path.basename(__file__)
 expected_encoding = "ascii"

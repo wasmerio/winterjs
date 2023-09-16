@@ -56,8 +56,8 @@ bool ExtendBufferMapping(void* dataStart, size_t mappedSize,
 // the mapping, and `mappedSize` the size of that mapping.
 void UnmapBufferMemory(wasm::IndexType t, void* dataStart, size_t mappedSize);
 
-// Return the number of currently live mapped buffers.
-int32_t LiveMappedBufferCount();
+// Return the number of bytes currently reserved for WebAssembly memory
+uint64_t WasmReservedBytes();
 
 // The inheritance hierarchy for the various classes relating to typed arrays
 // is as follows.
@@ -182,21 +182,15 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
                 "self-hosted code with burned-in constants must get the "
                 "right flags slot");
 
-  static bool supportLargeBuffers;
-
+  // The length of an ArrayBuffer or SharedArrayBuffer can be at most INT32_MAX
+  // on 32-bit platforms. Allow a larger limit on 64-bit platforms.
   static constexpr size_t MaxByteLengthForSmallBuffer = INT32_MAX;
-
-  // The length of an ArrayBuffer or SharedArrayBuffer can be at most
-  // INT32_MAX. Allow a larger limit on friendly 64-bit platforms if the
-  // experimental large-buffers flag is used.
-  static size_t maxBufferByteLength() {
 #ifdef JS_64BIT
-    if (supportLargeBuffers) {
-      return size_t(8) * 1024 * 1024 * 1024;  // 8 GB.
-    }
+  static constexpr size_t MaxByteLength =
+      size_t(8) * 1024 * 1024 * 1024;  // 8 GB.
+#else
+  static constexpr size_t MaxByteLength = MaxByteLengthForSmallBuffer;
 #endif
-    return MaxByteLengthForSmallBuffer;
-  }
 
   /** The largest number of bytes that can be stored inline. */
   static constexpr size_t MaxInlineBytes =
@@ -470,6 +464,8 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
       wasm::IndexType t, wasm::Pages newPages,
       Handle<ArrayBufferObject*> oldBuf,
       MutableHandle<ArrayBufferObject*> newBuf, JSContext* cx);
+  static void wasmDiscard(Handle<ArrayBufferObject*> buf, uint64_t byteOffset,
+                          uint64_t byteLength);
 
   static void finalize(JS::GCContext* gcx, JSObject* obj);
 
@@ -535,7 +531,7 @@ class InnerViewTable {
   // live. Special support is required in the minor GC, implemented in
   // sweepAfterMinorGC.
   using Map = GCHashMap<UnsafeBarePtr<JSObject*>, ViewVector,
-                        MovableCellHasher<JSObject*>, ZoneAllocPolicy>;
+                        StableCellHasher<JSObject*>, ZoneAllocPolicy>;
 
   // For all objects sharing their storage with some other view, this maps
   // the object to the list of such views. All entries in this map are weak.
@@ -621,6 +617,11 @@ class WasmArrayRawBuffer {
         dataPtr - sizeof(WasmArrayRawBuffer));
   }
 
+  static WasmArrayRawBuffer* fromDataPtr(uint8_t* dataPtr) {
+    return reinterpret_cast<WasmArrayRawBuffer*>(dataPtr -
+                                                 sizeof(WasmArrayRawBuffer));
+  }
+
   wasm::IndexType indexType() const { return indexType_; }
 
   uint8_t* basePointer() { return dataPointer() - gc::SystemPageSize(); }
@@ -644,6 +645,11 @@ class WasmArrayRawBuffer {
   // Try and grow the mapped region of memory. Does not change current size.
   // Does not move memory if no space to grow.
   void tryGrowMaxPagesInPlace(wasm::Pages deltaMaxPages);
+
+  // Discard a region of memory, zeroing the pages and releasing physical memory
+  // back to the operating system. byteOffset and byteLen must be wasm page
+  // aligned and in bounds. A discard of zero bytes will have no effect.
+  void discard(size_t byteOffset, size_t byteLen);
 };
 
 }  // namespace js

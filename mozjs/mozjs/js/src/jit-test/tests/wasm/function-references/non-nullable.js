@@ -78,7 +78,37 @@ wasmValidateText(`(module
     local.tee 5
   )  
 )`);
-
+wasmFailValidateText(`(module
+  (elem declare 0)
+  (func
+    (local (ref func))
+    i32.const 0
+    if
+      ref.func 0
+      local.set 0
+    else
+      local.get 0
+      drop
+    end
+  )
+)`, /local\.get read from unset local/);
+wasmValidateText(`(module
+  (elem declare 0)
+  (func (result funcref)
+    (local (ref func) (ref func))
+    i32.const 0
+    if (result funcref)
+      ref.func 0
+      local.set 0
+      local.get 0
+    else
+      ref.func 0
+      local.tee 1
+      local.get 1
+      drop
+    end
+  )
+)`);
 
 // exported funcs can't take null in non-nullable params
 let {a} = wasmEvalText(`(module
@@ -120,16 +150,19 @@ assertErrorMessage(() => runNull(), TypeError, /cannot pass null to non-nullable
 assertErrorMessage(() => runMultiNullReg(), TypeError, /cannot pass null to non-nullable/);
 assertErrorMessage(() => runMultiNullStack(), TypeError, /cannot pass null to non-nullable/);
 
-// cannot have non-nullable globals
-wasmFailValidateText(`(module
-  (global $a (import "" "") (ref extern))
-  (global (ref extern) global.get $a)
-)`, /non-nullable references not supported in globals/);
+{
+  // can have non-nullable globals
+  wasmEvalText(`(module
+    (func $f)
+    (elem declare $f)
+    (global (ref func) ref.func $f)
+  )`);
+}
 
-// cannot have non-nullable tables
+// cannot have non-nullable tables without initializer
 wasmFailValidateText(`(module
   (table (ref extern) (elem))
-)`, /non-nullable references not supported in tables/);
+)`, /table with non-nullable references requires initializer/);
 
 // Testing internal wasmLosslessInvoke to pass non-nullable as params and arguments.
 let {t} = wasmEvalText(`(module

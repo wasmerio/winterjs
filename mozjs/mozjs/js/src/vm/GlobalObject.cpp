@@ -25,11 +25,6 @@
 #include "builtin/FinalizationRegistryObject.h"
 #include "builtin/MapObject.h"
 #include "builtin/ShadowRealm.h"
-#include "builtin/Stream.h"
-#include "builtin/streams/QueueingStrategies.h"  // js::{ByteLength,Count}QueueingStrategy
-#include "builtin/streams/ReadableStream.h"  // js::ReadableStream
-#include "builtin/streams/ReadableStreamController.h"  // js::Readable{StreamDefault,ByteStream}Controller
-#include "builtin/streams/ReadableStreamReader.h"  // js::ReadableStreamDefaultReader
 #include "builtin/Symbol.h"
 #include "builtin/WeakMapObject.h"
 #include "builtin/WeakRefObject.h"
@@ -99,6 +94,7 @@ bool GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key) {
     case JSProto_Null:
     case JSProto_Object:
     case JSProto_Function:
+    case JSProto_BoundFunction:
     case JSProto_Array:
     case JSProto_Boolean:
     case JSProto_JSON:
@@ -180,15 +176,6 @@ bool GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key) {
     case JSProto_RelativeTimeFormat:
       return false;
 #endif
-#ifdef MOZ_JS_STREAMS
-    case JSProto_ReadableStream:
-    case JSProto_ReadableStreamDefaultReader:
-    case JSProto_ReadableStreamDefaultController:
-    case JSProto_ReadableByteStreamController:
-    case JSProto_ByteLengthQueuingStrategy:
-    case JSProto_CountQueuingStrategy:
-      return !cx->realm()->creationOptions().getStreamsEnabled();
-#endif
 
     // Return true if the given constructor has been disabled at run-time.
     case JSProto_Atomics:
@@ -238,6 +225,8 @@ bool GlobalObject::resolveConstructor(JSContext* cx,
                                       Handle<GlobalObject*> global,
                                       JSProtoKey key, IfClassIsDisabled mode) {
   MOZ_ASSERT(key != JSProto_Null);
+  MOZ_ASSERT(key != JSProto_BoundFunction,
+             "bound functions don't have their own proto object");
   MOZ_ASSERT(!global->isStandardClassResolved(key));
   MOZ_ASSERT(cx->compartment() == global->compartment());
 
@@ -585,6 +574,9 @@ GlobalObject* GlobalObject::createInternal(JSContext* cx,
   if (!JSObject::setQualifiedVarObj(cx, global)) {
     return nullptr;
   }
+  if (!JSObject::setGenerationCountedGlobal(cx, global)) {
+    return nullptr;
+  }
 
   return global;
 }
@@ -621,6 +613,15 @@ GlobalObject* GlobalObject::new_(JSContext* cx, const JSClass* clasp,
       return nullptr;
     }
 
+    // Make transactional initialization of these constructors by discarding the
+    // incompletely initialized global if an error occur. This also ensures the
+    // global's prototype chain is initialized (in FinishObjectClassInit).
+    if (!ensureConstructor(cx, global, JSProto_Object) ||
+        !ensureConstructor(cx, global, JSProto_Function)) {
+      return nullptr;
+    }
+
+    realm->clearInitializingGlobal();
     if (hookOption == JS::FireOnNewGlobalHook) {
       JS_FireOnNewGlobalObject(cx, global);
     }
@@ -631,17 +632,6 @@ GlobalObject* GlobalObject::new_(JSContext* cx, const JSClass* clasp,
 
 GlobalScope& GlobalObject::emptyGlobalScope() const {
   return *data().emptyGlobalScope;
-}
-
-/* static */
-bool GlobalObject::getOrCreateEval(JSContext* cx, Handle<GlobalObject*> global,
-                                   MutableHandleObject eval) {
-  if (!getOrCreateObjectPrototype(cx, global)) {
-    return false;
-  }
-  eval.set(global->data().eval);
-  MOZ_ASSERT(eval);
-  return true;
 }
 
 bool GlobalObject::valueIsEval(const Value& val) {
@@ -666,7 +656,8 @@ bool GlobalObject::initStandardClasses(JSContext* cx,
 
   for (size_t k = 0; k < JSProto_LIMIT; ++k) {
     JSProtoKey key = static_cast<JSProtoKey>(k);
-    if (key != JSProto_Null && !global->isStandardClassResolved(key)) {
+    if (key != JSProto_Null && key != JSProto_BoundFunction &&
+        !global->isStandardClassResolved(key)) {
       if (!resolveConstructor(cx, global, static_cast<JSProtoKey>(k),
                               IfClassIsDisabled::DoNothing)) {
         return false;
@@ -709,11 +700,7 @@ static NativeObject* CreateBlankProto(JSContext* cx, const JSClass* clasp,
 NativeObject* GlobalObject::createBlankPrototype(JSContext* cx,
                                                  Handle<GlobalObject*> global,
                                                  const JSClass* clasp) {
-  RootedObject objectProto(cx, getOrCreateObjectPrototype(cx, global));
-  if (!objectProto) {
-    return nullptr;
-  }
-
+  RootedObject objectProto(cx, &global->getObjectPrototype());
   return CreateBlankProto(cx, clasp, objectProto);
 }
 
@@ -1027,6 +1014,9 @@ void GlobalObjectData::trace(JSTracer* trc, GlobalObject* global) {
                     "global-function-shape");
   TraceNullableEdge(trc, &extendedFunctionShapeWithDefaultProto,
                     "global-ext-function-shape");
+
+  TraceNullableEdge(trc, &boundFunctionShapeWithDefaultProto,
+                    "global-bound-function-shape");
 
   if (regExpStatics) {
     regExpStatics->trace(trc);

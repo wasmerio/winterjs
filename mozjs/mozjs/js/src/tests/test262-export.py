@@ -5,12 +5,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import print_function
-
 import os
 import re
 import shutil
 import sys
+
 import yaml
 
 # Skip all common files used to support tests for jstests

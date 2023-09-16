@@ -2,12 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import os
-import six
 import unittest
 
+import mozpack.path as mozpath
+import six
 from mozunit import main
 
 from mozbuild.frontend.context import ObjDirPath, Path
@@ -47,11 +46,7 @@ from mozbuild.frontend.reader import (
     BuildReaderError,
     SandboxValidationError,
 )
-
 from mozbuild.test.common import MockConfig
-
-import mozpack.path as mozpath
-
 
 data_path = mozpath.abspath(mozpath.dirname(__file__))
 data_path = mozpath.join(data_path, "data")
@@ -1456,17 +1451,22 @@ class TestEmitterBasic(unittest.TestCase):
             self.assertEqual(
                 sources.files, [mozpath.join(reader.config.topsrcdir, f) for f in files]
             )
-            self.assertTrue(sources.have_unified_mapping)
 
-            for f in dict(sources.unified_source_mapping).keys():
-                self.assertIn(
-                    mozpath.join(
-                        reader.config.topobjdir,
-                        "%s.%s"
-                        % (mozpath.splitext(f)[0], reader.config.substs["OBJ_SUFFIX"]),
-                    ),
-                    linkable.objs,
-                )
+            # Unified sources are not required
+            if sources.have_unified_mapping:
+
+                for f in dict(sources.unified_source_mapping).keys():
+                    self.assertIn(
+                        mozpath.join(
+                            reader.config.topobjdir,
+                            "%s.%s"
+                            % (
+                                mozpath.splitext(f)[0],
+                                reader.config.substs["OBJ_SUFFIX"],
+                            ),
+                        ),
+                        linkable.objs,
+                    )
 
     def test_unified_sources_non_unified(self):
         """Test that UNIFIED_SOURCES with FILES_PER_UNIFIED_FILE=1 works properly."""

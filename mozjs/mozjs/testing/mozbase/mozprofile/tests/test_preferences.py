@@ -4,20 +4,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
-import mozfile
 import os
 import shutil
 import tempfile
 
+import mozfile
 import mozunit
 import pytest
-from wptserve import server
-
 from mozprofile.cli import MozProfileCLI
 from mozprofile.prefs import Preferences, PreferencesReadError
 from mozprofile.profile import Profile
+from wptserve import server
 
 here = os.path.dirname(os.path.abspath(__file__))
 
@@ -393,6 +390,15 @@ def test_read_prefs_with_interpolation():
     path = os.path.join(here, "files", "prefs_with_interpolation.js")
     read_prefs = Preferences.read_prefs(path, interpolation=values)
     assert dict(read_prefs) == expected_prefs
+
+
+def test_read_prefs_with_multiline():
+    """test reading preferences from a prefs.js file that contains multiline prefs"""
+
+    path = os.path.join(here, "files", "prefs_with_multiline.js")
+    assert dict(Preferences.read_prefs(path)) == {
+        "browser.long.preference.name.that.causes.the.line.to.wrap": "itislong"
+    }
 
 
 def test_read_prefs_ttw():

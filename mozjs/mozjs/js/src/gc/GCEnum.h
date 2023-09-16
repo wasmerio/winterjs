@@ -49,7 +49,6 @@ enum class State {
   D(CheckHashTablesOnMinorGC, 13)        \
   D(Compact, 14)                         \
   D(CheckHeapAfterGC, 15)                \
-  D(CheckNursery, 16)                    \
   D(YieldBeforeSweepingAtoms, 17)        \
   D(CheckGrayMarking, 18)                \
   D(YieldBeforeSweepingCaches, 19)       \
@@ -103,6 +102,8 @@ enum class GCAbortReason {
   _(PropMapChildren)                       \
   _(PropMapTable)                          \
   _(ModuleBindingMap)                      \
+  _(ModuleCyclicFields)                    \
+  _(ModuleExports)                         \
   _(BaselineScript)                        \
   _(IonScript)                             \
   _(ArgumentsData)                         \
@@ -128,7 +129,6 @@ enum class GCAbortReason {
   _(WasmTableTable)                        \
   _(WasmExceptionData)                     \
   _(WasmTagType)                           \
-  _(WasmRttValueChildren)                  \
   _(FileObjectFile)                        \
   _(Debugger)                              \
   _(DebuggerFrameGeneratorInfo)            \

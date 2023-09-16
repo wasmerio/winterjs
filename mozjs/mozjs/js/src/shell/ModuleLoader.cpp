@@ -62,8 +62,11 @@ bool ModuleLoader::init(JSContext* cx, HandleString loadPath) {
   JS::SetModuleResolveHook(rt, ModuleLoader::ResolveImportedModule);
   JS::SetModuleMetadataHook(rt, ModuleLoader::GetImportMetaProperties);
   JS::SetModuleDynamicImportHook(rt, ModuleLoader::ImportModuleDynamically);
-  JS::SetSupportedAssertionsHook(rt,
-                                 ModuleLoader::GetSupportedImportAssertions);
+
+  JS::ImportAssertionVector assertions;
+  MOZ_ALWAYS_TRUE(assertions.reserve(1));
+  assertions.infallibleAppend(JS::ImportAssertion::Type);
+  JS::SetSupportedImportAssertions(rt, assertions);
 
   return true;
 }
@@ -456,7 +459,7 @@ JSObject* ModuleLoader::loadAndParse(JSContext* cx, HandleString pathArg) {
     return module;
   }
 
-  UniqueChars filename = JS_EncodeStringToLatin1(cx, path);
+  UniqueChars filename = JS_EncodeStringToUTF8(cx, path);
   if (!filename) {
     return nullptr;
   }
@@ -469,15 +472,13 @@ JSObject* ModuleLoader::loadAndParse(JSContext* cx, HandleString pathArg) {
     return nullptr;
   }
 
-  JS::AutoStableStringChars stableChars(cx);
-  if (!stableChars.initTwoByte(cx, source)) {
+  JS::AutoStableStringChars linearChars(cx);
+  if (!linearChars.initTwoByte(cx, source)) {
     return nullptr;
   }
 
-  const char16_t* chars = stableChars.twoByteRange().begin().get();
   JS::SourceText<char16_t> srcBuf;
-  if (!srcBuf.init(cx, chars, source->length(),
-                   JS::SourceOwnership::Borrowed)) {
+  if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
     return nullptr;
   }
 

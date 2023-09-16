@@ -113,8 +113,8 @@ class RegExpMacroAssembler {
   // character. Returns false if the type of special character class does
   // not have custom support.
   // May clobber the current loaded character.
-  virtual bool CheckSpecialCharacterClass(StandardCharacterSet type,
-                                          Label* on_no_match) {
+  virtual bool CheckSpecialClassRanges(StandardCharacterSet type,
+                                       Label* on_no_match) {
     return false;
   }
 
@@ -329,8 +329,9 @@ class NativeRegExpMacroAssembler: public RegExpMacroAssembler {
   // Called from generated code.
   static int CheckStackGuardState(Isolate* isolate, int start_index,
                                   RegExp::CallOrigin call_origin,
-                                  Address* return_address, Code re_code,
-                                  Address* subject, const byte** input_start,
+                                  Address* return_address,
+                                  InstructionStream re_code, Address* subject,
+                                  const byte** input_start,
                                   const byte** input_end);
 
   static Address word_character_map_address() {

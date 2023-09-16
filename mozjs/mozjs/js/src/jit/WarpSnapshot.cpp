@@ -12,11 +12,11 @@
 
 #include "jit/CacheIRCompiler.h"
 #include "jit/CacheIRSpewer.h"
+#include "js/Printer.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/GetterSetter.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
-#include "vm/Printer.h"
 
 using namespace js;
 using namespace js::jit;
@@ -46,7 +46,8 @@ WarpScriptSnapshot::WarpScriptSnapshot(JSScript* script,
       environment_(env),
       opSnapshots_(std::move(opSnapshots)),
       moduleObject_(moduleObject),
-      isArrowFunction_(script->isFunction() && script->function()->isArrow()) {}
+      isArrowFunction_(script->isFunction() && script->function()->isArrow()),
+      isMonomorphicInlined_(false) {}
 
 #ifdef JS_JITSPEW
 void WarpSnapshot::dump() const {
@@ -103,7 +104,7 @@ void WarpScriptSnapshot::dump(GenericPrinter& out) const {
 
 static const char* OpSnapshotKindString(WarpOpSnapshot::Kind kind) {
   static const char* const names[] = {
-#  define NAME(x) #  x,
+#  define NAME(x) #x,
       WARP_OP_SNAPSHOT_LIST(NAME)
 #  undef NAME
   };
@@ -368,6 +369,11 @@ void WarpCacheIR::traceData(JSTracer* trc) {
           TraceWarpStubPtr<BaseScript>(trc, word, "warp-cacheir-script");
           break;
         }
+        case StubField::Type::JitCode: {
+          uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
+          TraceWarpStubPtr<JitCode>(trc, word, "warp-cacheir-jitcode");
+          break;
+        }
         case StubField::Type::Id: {
           uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
           jsid id = jsid::fromRawBits(word);
@@ -383,8 +389,8 @@ void WarpCacheIR::traceData(JSTracer* trc) {
         case StubField::Type::AllocSite: {
           mozilla::DebugOnly<uintptr_t> word =
               stubInfo_->getStubRawWord(stubData_, offset);
-          MOZ_ASSERT(word == uintptr_t(gc::DefaultHeap) ||
-                     word == uintptr_t(gc::TenuredHeap));
+          MOZ_ASSERT(word == uintptr_t(gc::Heap::Default) ||
+                     word == uintptr_t(gc::Heap::Tenured));
           break;
         }
         case StubField::Type::Limit:

@@ -316,7 +316,7 @@ static TypedArrayObject* NewTypedArrayObject(JSContext* cx,
                                              const JSClass* clasp,
                                              HandleObject proto,
                                              gc::AllocKind allocKind,
-                                             gc::InitialHeap heap) {
+                                             gc::Heap heap) {
   MOZ_ASSERT(proto);
 
   MOZ_ASSERT(CanChangeToBackgroundAllocKind(allocKind, clasp));
@@ -329,9 +329,10 @@ static TypedArrayObject* NewTypedArrayObject(JSContext* cx,
   static_assert(nfixed <= NativeObject::MAX_FIXED_SLOTS);
   static_assert(nfixed == TypedArrayObject::FIXED_DATA_START);
 
-  Rooted<Shape*> shape(cx, SharedShape::getInitialShape(cx, clasp, cx->realm(),
-                                                        AsTaggedProto(proto),
-                                                        nfixed, ObjectFlags()));
+  Rooted<SharedShape*> shape(
+      cx,
+      SharedShape::getInitialShape(cx, clasp, cx->realm(), AsTaggedProto(proto),
+                                   nfixed, ObjectFlags()));
   if (!shape) {
     return nullptr;
   }
@@ -409,7 +410,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
 
   static TypedArrayObject* newBuiltinClassInstance(JSContext* cx,
                                                    gc::AllocKind allocKind,
-                                                   gc::InitialHeap heap) {
+                                                   gc::Heap heap) {
     RootedObject proto(cx, GlobalObject::getOrCreatePrototype(cx, protoKey()));
     if (!proto) {
       return nullptr;
@@ -421,13 +422,14 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
                                              gc::AllocKind allocKind) {
     MOZ_ASSERT(proto);
     return NewTypedArrayObject(cx, instanceClass(), proto, allocKind,
-                               gc::DefaultHeap);
+                               gc::Heap::Default);
   }
 
   static TypedArrayObject* makeInstance(
       JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
-      size_t byteOffset, size_t len, HandleObject proto) {
-    MOZ_ASSERT(len <= maxByteLength() / BYTES_PER_ELEMENT);
+      size_t byteOffset, size_t len, HandleObject proto,
+      gc::Heap heap = gc::Heap::Default) {
+    MOZ_ASSERT(len <= MaxByteLength / BYTES_PER_ELEMENT);
 
     gc::AllocKind allocKind =
         buffer ? gc::GetGCObjectKind(instanceClass())
@@ -438,7 +440,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     if (proto) {
       obj = makeProtoInstance(cx, proto, allocKind);
     } else {
-      obj = newBuiltinClassInstance(cx, allocKind, gc::DefaultHeap);
+      obj = newBuiltinClassInstance(cx, allocKind, heap);
     }
     if (!obj || !obj->init(cx, buffer, byteOffset, len, BYTES_PER_ELEMENT)) {
       return nullptr;
@@ -459,7 +461,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
     AutoSetNewObjectMetadata metadata(cx);
 
     Rooted<TypedArrayObject*> tarray(
-        cx, newBuiltinClassInstance(cx, allocKind, gc::TenuredHeap));
+        cx, newBuiltinClassInstance(cx, allocKind, gc::Heap::Tenured));
     if (!tarray) {
       return nullptr;
     }
@@ -508,14 +510,14 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
 
   static TypedArrayObject* makeTypedArrayWithTemplate(
       JSContext* cx, TypedArrayObject* templateObj, int32_t len) {
-    if (len < 0 || size_t(len) > maxByteLength() / BYTES_PER_ELEMENT) {
+    if (len < 0 || size_t(len) > MaxByteLength / BYTES_PER_ELEMENT) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_BAD_ARRAY_LENGTH);
       return nullptr;
     }
 
     size_t nbytes = size_t(len) * BYTES_PER_ELEMENT;
-    MOZ_ASSERT(nbytes <= maxByteLength());
+    MOZ_ASSERT(nbytes <= MaxByteLength);
 
     bool fitsInline = nbytes <= INLINE_BUFFER_LIMIT;
 
@@ -745,7 +747,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
       len = size_t(lengthIndex);
     }
 
-    if (len > maxByteLength() / BYTES_PER_ELEMENT) {
+    if (len > MaxByteLength / BYTES_PER_ELEMENT) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_TYPED_ARRAY_CONSTRUCT_TOO_LARGE,
                                 Scalar::name(ArrayTypeID()));
@@ -867,14 +869,14 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
 
   static bool maybeCreateArrayBuffer(JSContext* cx, uint64_t count,
                                      MutableHandle<ArrayBufferObject*> buffer) {
-    if (count > maxByteLength() / BYTES_PER_ELEMENT) {
+    if (count > MaxByteLength / BYTES_PER_ELEMENT) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_BAD_ARRAY_LENGTH);
       return false;
     }
     size_t byteLength = count * BYTES_PER_ELEMENT;
 
-    MOZ_ASSERT(byteLength <= maxByteLength());
+    MOZ_ASSERT(byteLength <= MaxByteLength);
     static_assert(INLINE_BUFFER_LIMIT % BYTES_PER_ELEMENT == 0,
                   "ArrayBuffer inline storage shouldn't waste any space");
 
@@ -895,14 +897,15 @@ class TypedArrayObjectTemplate : public TypedArrayObject {
   // ES2023 draft rev cf86f1cdc28e809170733d74ea64fd0f3dd79f78
   // 23.2.5.1.1 AllocateTypedArray ( constructorName, newTarget, defaultProto [
   // , length ] )
-  static JSObject* fromLength(JSContext* cx, uint64_t nelements,
-                              HandleObject proto = nullptr) {
+  static TypedArrayObject* fromLength(JSContext* cx, uint64_t nelements,
+                                      HandleObject proto = nullptr,
+                                      gc::Heap heap = gc::Heap::Default) {
     Rooted<ArrayBufferObject*> buffer(cx);
     if (!maybeCreateArrayBuffer(cx, nelements, &buffer)) {
       return nullptr;
     }
 
-    return makeInstance(cx, buffer, 0, nelements, proto);
+    return makeInstance(cx, buffer, 0, nelements, proto, heap);
   }
 
   static TypedArrayObject* fromArray(JSContext* cx, HandleObject other,
@@ -1068,6 +1071,11 @@ TypedArrayObject* js::NewTypedArrayWithTemplateAndBuffer(
     default:
       MOZ_CRASH("Unsupported TypedArray type");
   }
+}
+
+TypedArrayObject* js::NewUint8ArrayWithLength(JSContext* cx, int32_t len,
+                                              gc::Heap heap) {
+  return TypedArrayObjectTemplate<uint8_t>::fromLength(cx, len, nullptr, heap);
 }
 
 template <typename T>
@@ -1301,7 +1309,7 @@ template <typename T>
     return nullptr;
   }
 
-  MOZ_ASSERT(len <= maxByteLength() / BYTES_PER_ELEMENT);
+  MOZ_ASSERT(len <= MaxByteLength / BYTES_PER_ELEMENT);
 
   // Steps 6.b.i.
   Rooted<TypedArrayObject*> obj(cx, makeInstance(cx, buffer, 0, len, proto));
@@ -1345,7 +1353,7 @@ static bool GetTemplateObjectForNative(JSContext* cx,
 
     size_t nbytes;
     if (!js::CalculateAllocSize<T>(len, &nbytes) ||
-        nbytes > TypedArrayObject::maxByteLength()) {
+        nbytes > TypedArrayObject::MaxByteLength) {
       return true;
     }
 
@@ -1871,11 +1879,9 @@ bool TypedArrayObject::copyWithin(JSContext* cx, unsigned argc, Value* vp) {
     JS_SELF_HOSTED_FN("toString", "ArrayToString", 0, 0),
     JS_SELF_HOSTED_FN("toLocaleString", "TypedArrayToLocaleString", 2, 0),
     JS_SELF_HOSTED_FN("at", "TypedArrayAt", 1, 0),
-#ifdef ENABLE_CHANGE_ARRAY_BY_COPY
     JS_SELF_HOSTED_FN("toReversed", "TypedArrayToReversed", 0, 0),
     JS_SELF_HOSTED_FN("toSorted", "TypedArrayToSorted", 1, 0),
     JS_SELF_HOSTED_FN("with", "TypedArrayWith", 2, 0),
-#endif
     JS_FS_END,
 };
 

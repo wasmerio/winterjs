@@ -298,6 +298,7 @@ inline void RunState::setReturnValue(const Value& v) {
 }
 
 extern bool RunScript(JSContext* cx, RunState& state);
+extern bool Interpret(JSContext* cx, RunState& state);
 
 extern JSType TypeOfObject(JSObject* obj);
 
@@ -627,13 +628,15 @@ ArrayObject* ArrayFromArgumentsObject(JSContext* cx,
 JSObject* NewObjectOperation(JSContext* cx, HandleScript script,
                              const jsbytecode* pc);
 
-JSObject* NewPlainObjectBaselineFallback(JSContext* cx, Handle<Shape*> shape,
+JSObject* NewPlainObjectBaselineFallback(JSContext* cx,
+                                         Handle<SharedShape*> shape,
                                          gc::AllocKind allocKind,
                                          gc::AllocSite* site);
 
-JSObject* NewPlainObjectOptimizedFallback(JSContext* cx, Handle<Shape*> shape,
+JSObject* NewPlainObjectOptimizedFallback(JSContext* cx,
+                                          Handle<SharedShape*> shape,
                                           gc::AllocKind allocKind,
-                                          gc::InitialHeap initialHeap);
+                                          gc::Heap initialHeap);
 
 ArrayObject* NewArrayOperation(JSContext* cx, uint32_t length,
                                NewObjectKind newKind = GenericObject);

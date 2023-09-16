@@ -5,9 +5,10 @@
 # Pretty-printers for SpiderMonkey strings.
 
 import gdb
+
 import mozilla.prettyprinters
-from mozilla.prettyprinters import ptr_pretty_printer
 from mozilla.CellHeader import get_header_length_and_flags
+from mozilla.prettyprinters import ptr_pretty_printer
 
 try:
     chr(10000)  # UPPER RIGHT PENCIL

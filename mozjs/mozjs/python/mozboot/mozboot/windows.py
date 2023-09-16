@@ -2,15 +2,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import ctypes
 import os
-import sys
 import subprocess
+import sys
+
+from mozfile import which
 
 from mozboot.base import BaseBootstrapper
-from mozfile import which
 
 
 def is_aarch64_host():
@@ -50,7 +49,6 @@ class WindowsBootstrapper(BaseBootstrapper):
         "patchutils",
         "diffutils",
         "tar",
-        "zip",
         "unzip",
         "mingw-w64-x86_64-toolchain",  # TODO: Remove when Mercurial is installable from a wheel.
         "mingw-w64-i686-toolchain",
@@ -100,30 +98,6 @@ class WindowsBootstrapper(BaseBootstrapper):
         raise NotImplementedError(
             "We do not support building Android on Windows. Sorry!"
         )
-
-    def ensure_clang_static_analysis_package(self):
-        from mozboot import static_analysis
-
-        self.install_toolchain_static_analysis(static_analysis.WINDOWS_CLANG_TIDY)
-
-    def ensure_stylo_packages(self):
-        # On-device artifact builds are supported; on-device desktop builds are not.
-        if is_aarch64_host():
-            raise Exception(
-                "You should not be performing desktop builds on an "
-                "AArch64 device.  If you want to do artifact builds "
-                "instead, please choose the appropriate artifact build "
-                "option when beginning bootstrap."
-            )
-
-        self.install_toolchain_artifact("clang")
-        self.install_toolchain_artifact("cbindgen")
-
-    def ensure_nasm_packages(self):
-        self.install_toolchain_artifact("nasm")
-
-    def ensure_node_packages(self):
-        self.install_toolchain_artifact("node")
 
     def _update_package_manager(self):
         self.pacman_update()

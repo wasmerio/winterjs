@@ -1,21 +1,20 @@
 #!/usr/bin/env python
 # Documentation: https://firefox-source-docs.mozilla.org/taskcluster/partner-repacks.html
 
-import sys
+import json
+import logging
 import os
-import stat
-
 import re
+import stat
+import sys
+import tarfile
+import urllib.parse
+import urllib.request
+import zipfile
+from optparse import OptionParser
 from pathlib import Path
 from shutil import copy, copytree, move, rmtree, which
 from subprocess import Popen
-from optparse import OptionParser
-import urllib.request
-import urllib.parse
-import logging
-import json
-import tarfile
-import zipfile
 
 from redo import retry
 
@@ -409,7 +408,7 @@ class RepackBase(object):
         # Check whether we've already copied files over for this partner.
         if not platform_dir.exists():
             platform_dir.mkdir(mode=0o755, exist_ok=True, parents=True)
-            for i in ["distribution", "extensions", "searchplugins"]:
+            for i in ["distribution", "extensions"]:
                 full_path = self.full_partner_path / i
                 if full_path.exists():
                     copytree(str(full_path), str(platform_dir / i))
@@ -513,12 +512,17 @@ class RepackMac(RepackBase):
         self.appName = self.getAppName()
 
     def getAppName(self):
-        # Cope with Firefox.app vs Firefox Nightly.app by returning the first line that
-        # ends with .app
+        # Cope with Firefox.app vs Firefox Nightly.app by returning the first root object/folder found
         t = tarfile.open(self.build.rsplit(".", 1)[0])
         for name in t.getnames():
-            if name.endswith(".app"):
-                return name
+            root_object = name.split("/")[0]
+            if root_object.endswith(".app"):
+                log.info(f"Found app name in tarball: {root_object}")
+                return root_object
+        log.error(
+            f"Error: Unable to determine app name from tarball: {self.build} - Expected .app in root"
+        )
+        sys.exit(1)
 
     def copyFiles(self):
         super(RepackMac, self).copyFiles(Path(self.appName) / MAC_DEST_DIR)

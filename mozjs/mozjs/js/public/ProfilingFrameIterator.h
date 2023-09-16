@@ -163,7 +163,7 @@ class MOZ_NON_PARAM JS_PUBLIC_API ProfilingFrameIterator {
 
  private:
   mozilla::Maybe<Frame> getPhysicalFrameAndEntry(
-      js::jit::JitcodeGlobalEntry* entry) const;
+      const js::jit::JitcodeGlobalEntry** entry) const;
 
   void iteratorConstruct(const RegisterState& state);
   void iteratorConstruct();
@@ -226,8 +226,8 @@ class ProfiledFrameRange {
       ++index_;
       return *this;
     }
-    bool operator==(const Iter& rhs) { return index_ == rhs.index_; }
-    bool operator!=(const Iter& rhs) { return !(*this == rhs); }
+    bool operator==(const Iter& rhs) const { return index_ == rhs.index_; }
+    bool operator!=(const Iter& rhs) const { return !(*this == rhs); }
 
    private:
     const ProfiledFrameRange& range_;

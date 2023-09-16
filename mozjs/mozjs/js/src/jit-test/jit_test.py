@@ -3,8 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import print_function, unicode_literals
-
 import math
 import os
 import platform
@@ -13,7 +11,6 @@ import shlex
 import subprocess
 import sys
 import traceback
-
 
 read_input = input
 if sys.version_info.major == 2:
@@ -31,14 +28,14 @@ def add_tests_dir_to_path():
 add_tests_dir_to_path()
 
 from lib import jittests
+from lib.tempfile import TemporaryDirectory
 from lib.tests import (
-    get_jitflags,
-    valid_jitflags,
+    change_env,
     get_cpu_count,
     get_environment_overlay,
-    change_env,
+    get_jitflags,
+    valid_jitflags,
 )
-from lib.tempfile import TemporaryDirectory
 
 
 def which(name):
@@ -248,12 +245,6 @@ def main(argv):
         help="Run all tests with valgrind, if valgrind is in $PATH.",
     )
     op.add_argument(
-        "--avoid-stdio",
-        dest="avoid_stdio",
-        action="store_true",
-        help="Use js-shell file indirection instead of piping stdio.",
-    )
-    op.add_argument(
         "--write-failure-output",
         dest="write_failure_output",
         action="store_true",
@@ -390,16 +381,6 @@ def main(argv):
             or not os.access(js_shell + ".exe", os.X_OK)
         ):
             op.error("shell is not executable: " + js_shell)
-
-    if jittests.stdio_might_be_broken():
-        # Prefer erring on the side of caution and not using stdio if
-        # it might be broken on this platform.  The file-redirect
-        # fallback should work on any platform, so at worst by
-        # guessing wrong we might have slowed down the tests a bit.
-        #
-        # XXX technically we could check for broken stdio, but it
-        # really seems like overkill.
-        options.avoid_stdio = True
 
     if options.retest:
         options.read_tests = options.retest

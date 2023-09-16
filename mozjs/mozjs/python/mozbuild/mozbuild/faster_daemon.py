@@ -3,25 +3,24 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 """
-Use pywatchman to watch source directories and perform partial |mach
-build faster| builds.
+Use pywatchman to watch source directories and perform partial
+``mach build faster`` builds.
 """
-
-from __future__ import absolute_import, print_function, unicode_literals
 
 import datetime
 import sys
 import time
 
-import mozbuild.util
 import mozpack.path as mozpath
-from mozpack.manifests import InstallManifest
-from mozpack.copier import FileCopier
-from mozbuild.backend import get_backend_class
 
 # Watchman integration cribbed entirely from
 # https://github.com/facebook/watchman/blob/19aebfebb0b5b0b5174b3914a879370ffc5dac37/python/bin/watchman-wait
 import pywatchman
+from mozpack.copier import FileCopier
+from mozpack.manifests import InstallManifest
+
+import mozbuild.util
+from mozbuild.backend import get_backend_class
 
 
 def print_line(prefix, m, now=None):
@@ -165,7 +164,7 @@ class Daemon(object):
                 "Contents",
                 "Resources",
             )
-            start = time.time()
+            start = time.monotonic()
             result = copier.copy(
                 bundledir,
                 skip_if_older=not force,
@@ -173,10 +172,12 @@ class Daemon(object):
                 remove_all_directory_symlinks=False,
                 remove_empty_directories=False,
             )
-            print_copy_result(time.time() - start, bundledir, result, verbose=verbose)
+            print_copy_result(
+                time.monotonic() - start, bundledir, result, verbose=verbose
+            )
 
         destdir = mozpath.join(self.config_environment.topobjdir, "dist", "bin")
-        start = time.time()
+        start = time.monotonic()
         result = copier.copy(
             destdir,
             skip_if_older=not force,
@@ -184,7 +185,7 @@ class Daemon(object):
             remove_all_directory_symlinks=False,
             remove_empty_directories=False,
         )
-        print_copy_result(time.time() - start, destdir, result, verbose=verbose)
+        print_copy_result(time.monotonic() - start, destdir, result, verbose=verbose)
 
     def input_changes(self, verbose=True):
         """

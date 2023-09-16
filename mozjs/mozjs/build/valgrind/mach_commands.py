@@ -2,22 +2,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, unicode_literals
-
 import json
 import logging
-import mozinfo
 import os
 import time
 
-from mach.decorators import (
-    Command,
-    CommandArgument,
-)
-from mozbuild.base import (
-    MachCommandConditions as conditions,
-    BinaryNotFoundException,
-)
+import mozinfo
+from mach.decorators import Command, CommandArgument
+from mozbuild.base import BinaryNotFoundException
+from mozbuild.base import MachCommandConditions as conditions
 
 
 def is_valgrind_build(cls):

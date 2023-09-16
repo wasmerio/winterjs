@@ -6,100 +6,11 @@
 # needed to install Stylo and Node dependencies.  This class must come before
 # BaseBootstrapper in the inheritance list.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import platform
 
 
 def is_non_x86_64():
     return platform.machine() != "x86_64"
-
-
-class SccacheInstall(object):
-    def __init__(self, **kwargs):
-        pass
-
-    def ensure_sccache_packages(self):
-        self.install_toolchain_artifact("sccache")
-
-
-class FixStacksInstall(object):
-    def __init__(self, **kwargs):
-        pass
-
-    def ensure_fix_stacks_packages(self):
-        self.install_toolchain_artifact("fix-stacks")
-
-
-class StyloInstall(object):
-    def __init__(self, **kwargs):
-        pass
-
-    def ensure_stylo_packages(self):
-        if is_non_x86_64():
-            print(
-                "Cannot install bindgen clang and cbindgen packages from taskcluster.\n"
-                "Please install these packages manually."
-            )
-            return
-
-        self.install_toolchain_artifact("clang")
-        self.install_toolchain_artifact("cbindgen")
-
-
-class NasmInstall(object):
-    def __init__(self, **kwargs):
-        pass
-
-    def ensure_nasm_packages(self):
-        if is_non_x86_64():
-            print(
-                "Cannot install nasm from taskcluster.\n"
-                "Please install this package manually."
-            )
-            return
-
-        self.install_toolchain_artifact("nasm")
-
-
-class NodeInstall(object):
-    def __init__(self, **kwargs):
-        pass
-
-    def ensure_node_packages(self):
-        if is_non_x86_64():
-            print(
-                "Cannot install node package from taskcluster.\n"
-                "Please install this package manually."
-            )
-            return
-
-        self.install_toolchain_artifact("node")
-
-
-class ClangStaticAnalysisInstall(object):
-    def __init__(self, **kwargs):
-        pass
-
-    def ensure_clang_static_analysis_package(self):
-        if is_non_x86_64():
-            print(
-                "Cannot install static analysis tools from taskcluster.\n"
-                "Please install these tools manually."
-            )
-            return
-
-        from mozboot import static_analysis
-
-        self.install_toolchain_static_analysis(static_analysis.LINUX_CLANG_TIDY)
-
-
-class MinidumpStackwalkInstall(object):
-    def __init__(self, **kwargs):
-        pass
-
-    def ensure_minidump_stackwalk_packages(self):
-        self.install_toolchain_artifact("minidump-stackwalk")
 
 
 class MobileAndroidBootstrapper(object):
@@ -152,15 +63,31 @@ class MobileAndroidBootstrapper(object):
         return self.generate_mobile_android_mozconfig(artifact_mode=True)
 
 
-class LinuxBootstrapper(
-    ClangStaticAnalysisInstall,
-    FixStacksInstall,
-    MinidumpStackwalkInstall,
-    MobileAndroidBootstrapper,
-    NasmInstall,
-    NodeInstall,
-    SccacheInstall,
-    StyloInstall,
-):
+class LinuxBootstrapper(MobileAndroidBootstrapper):
     def __init__(self, **kwargs):
+        pass
+
+    def ensure_sccache_packages(self):
+        pass
+
+    def install_system_packages(self):
+        self.install_packages(
+            [
+                "bash",
+                "findutils",  # contains xargs
+                "gzip",
+                "libxml2",  # used by bootstrapped clang
+                "m4",
+                "make",
+                "perl",
+                "tar",
+                "unzip",
+                "watchman",
+            ]
+        )
+
+    def install_browser_packages(self, mozconfig_builder, artifact_mode=False):
+        pass
+
+    def install_browser_artifact_mode_packages(self, mozconfig_builder):
         pass

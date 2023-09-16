@@ -9,6 +9,12 @@
 
 #include <stdint.h>  // For uint16_t
 
+#ifdef FUZZING_JS_FUZZILLI
+#  define INLINABLE_NATIVE_FUZZILLI_LIST(_) _(FuzzilliHash)
+#else
+#  define INLINABLE_NATIVE_FUZZILLI_LIST(_)
+#endif
+
 #define INLINABLE_NATIVE_LIST(_)                   \
   _(Array)                                         \
   _(ArrayIsArray)                                  \
@@ -54,6 +60,8 @@
   _(DataViewSetFloat64)                            \
   _(DataViewSetBigInt64)                           \
   _(DataViewSetBigUint64)                          \
+                                                   \
+  _(FunctionBind)                                  \
                                                    \
   _(IntlGuardToCollator)                           \
   _(IntlGuardToDateTimeFormat)                     \
@@ -102,13 +110,14 @@
   _(MathTrunc)                                     \
   _(MathCbrt)                                      \
                                                    \
+  _(Number)                                        \
+  _(NumberParseInt)                                \
   _(NumberToString)                                \
                                                    \
   _(ReflectGetPrototypeOf)                         \
                                                    \
   _(RegExpMatcher)                                 \
   _(RegExpSearcher)                                \
-  _(RegExpTester)                                  \
   _(IsRegExpObject)                                \
   _(IsPossiblyWrappedRegExpObject)                 \
   _(RegExpPrototypeOptimizable)                    \
@@ -159,7 +168,6 @@
   _(IntrinsicIsConstructing)                       \
   _(IntrinsicSubstringKernel)                      \
   _(IntrinsicObjectHasPrototype)                   \
-  _(IntrinsicFinishBoundFunctionInit)              \
   _(IntrinsicIsPackedArray)                        \
                                                    \
   _(IntrinsicIsSuspendedGenerator)                 \
@@ -196,8 +204,14 @@
   _(IntrinsicIsPossiblyWrappedTypedArray)          \
   _(IntrinsicTypedArrayLength)                     \
   _(IntrinsicPossiblyWrappedTypedArrayLength)      \
+  _(IntrinsicRegExpBuiltinExec)                    \
+  _(IntrinsicRegExpBuiltinExecForTest)             \
+  _(IntrinsicRegExpExec)                           \
+  _(IntrinsicRegExpExecForTest)                    \
   _(IntrinsicTypedArrayByteOffset)                 \
-  _(IntrinsicTypedArrayElementSize)
+  _(IntrinsicTypedArrayElementSize)                \
+                                                   \
+  INLINABLE_NATIVE_FUZZILLI_LIST(_)
 
 struct JSClass;
 class JSJitInfo;

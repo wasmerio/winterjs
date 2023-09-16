@@ -101,11 +101,12 @@ inline T MaybeForwarded(T t) {
   if (IsForwarded(t)) {
     t = Forwarded(t);
   }
+  MOZ_ASSERT(!IsForwarded(t));
   return t;
 }
 
 inline const JSClass* MaybeForwardedObjectClass(const JSObject* obj) {
-  Shape* shape = MaybeForwarded(obj->shape());
+  Shape* shape = MaybeForwarded(obj->shapeMaybeForwarded());
   BaseShape* baseShape = MaybeForwarded(shape->base());
   return baseShape->clasp();
 }
@@ -125,8 +126,7 @@ inline T& MaybeForwardedObjectAs(JSObject* obj) {
 inline RelocationOverlay::RelocationOverlay(Cell* dst) {
   MOZ_ASSERT(dst->flags() == 0);
   uintptr_t ptr = uintptr_t(dst);
-  MOZ_ASSERT((ptr & RESERVED_MASK) == 0);
-  header_ = ptr | FORWARD_BIT;
+  header_.setForwardingAddress(ptr);
 }
 
 /* static */
@@ -147,10 +147,9 @@ inline bool IsAboutToBeFinalizedDuringMinorSweep(Cell** cellp) {
 }
 
 // Special case pre-write barrier for strings used during rope flattening. This
-// is a work around as tracing these strings is problematic for two reasons:
-//  - they may have had their cell headers overwritten with temporary GC data
-//  - interior rope nodes may be transformed into dependent strings before their
-//    base nodes have been transformed into linear strings
+// avoids eager marking of ropes which does not immediately mark the cells if we
+// hit OOM. This does not traverse ropes and is instead called on every node in
+// a rope during flattening.
 inline void PreWriteBarrierDuringFlattening(JSString* str) {
   MOZ_ASSERT(str);
   MOZ_ASSERT(!JS::RuntimeHeapIsMajorCollecting());
@@ -161,12 +160,13 @@ inline void PreWriteBarrierDuringFlattening(JSString* str) {
 
   auto* cell = reinterpret_cast<TenuredCell*>(str);
   JS::shadow::Zone* zone = cell->shadowZoneFromAnyThread();
-
-  if (zone->needsIncrementalBarrier()) {
-    MOZ_ASSERT(!str->isPermanentAndMayBeShared());
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(zone->runtimeFromAnyThread()));
-    PerformIncrementalBarrierDuringFlattening(str);
+  if (!zone->needsIncrementalBarrier()) {
+    return;
   }
+
+  MOZ_ASSERT(!str->isPermanentAndMayBeShared());
+  MOZ_ASSERT(CurrentThreadCanAccessRuntime(zone->runtimeFromAnyThread()));
+  PerformIncrementalBarrierDuringFlattening(str);
 }
 
 #ifdef JSGC_HASH_TABLE_CHECKS

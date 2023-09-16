@@ -2,12 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import os
 import re
-import six
 from collections.abc import Iterable
+
+import six
 
 
 class Makefile(object):
@@ -100,9 +99,7 @@ class _SimpleOrderedSet(object):
 class Rule(object):
     """Class handling simple rules in the form:
     target1 target2 ... : dep1 dep2 ...
-            command1
-            command2
-            ...
+    command1 command2 ...
     """
 
     def __init__(self, targets=()):

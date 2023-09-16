@@ -35,6 +35,9 @@ with Files("docs/**"):
 with Files("mach*"):
     BUG_COMPONENT = ("Firefox Build System", "Mach Core")
 
+with Files("pyproject.toml"):
+    BUG_COMPONENT = ("Developer Infrastructure", "Lint and Formatting")
+
 with Files("*moz*"):
     BUG_COMPONENT = ("Firefox Build System", "General")
 
@@ -180,6 +183,8 @@ if CONFIG["MOZ_BUILD_APP"]:
 else:
     include("/toolkit/toolkit.mozbuild")
 
+OBJDIR_PP_FILES[".cargo"] += [".cargo/config.in"]
+
 DEFINES["top_srcdir"] = TOPSRCDIR
 
 SPHINX_TREES["contributing"] = "docs/contributing"
@@ -205,5 +210,7 @@ SPHINX_TREES["gtest"] = "docs/gtest"
 SPHINX_TREES["nspr"] = "docs/nspr"
 
 SPHINX_TREES["mots"] = "docs/mots"
+
+SPHINX_TREES["update-infrastructure"] = "docs/update-infrastructure"
 
 include("build/templates.mozbuild")

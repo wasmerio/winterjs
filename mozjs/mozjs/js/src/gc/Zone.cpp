@@ -4,9 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "gc/Zone-inl.h"
+#include "gc/Zone.h"
 #include "js/shadow/Zone.h"  // JS::shadow::Zone
 
+#include "mozilla/Sprintf.h"
 #include "mozilla/TimeStamp.h"
 
 #include <type_traits>
@@ -35,7 +36,7 @@ using namespace js::gc;
 Zone* const Zone::NotOnList = reinterpret_cast<Zone*>(1);
 
 ZoneAllocator::ZoneAllocator(JSRuntime* rt, Kind kind)
-    : JS::shadow::Zone(rt, &rt->gc.barrierTracer, kind),
+    : JS::shadow::Zone(rt, rt->gc.marker().tracer(), kind),
       jitHeapThreshold(jit::MaxCodeBytesPerProcess * 0.8) {}
 
 ZoneAllocator::~ZoneAllocator() {
@@ -156,47 +157,35 @@ template class TrackedAllocPolicy<TrackingKind::Cell>;
 JS::Zone::Zone(JSRuntime* rt, Kind kind)
     : ZoneAllocator(rt, kind),
       arenas(this),
-      data(this, nullptr),
-      tenuredBigInts(this, 0),
-      nurseryAllocatedStrings(this, 0),
-      markedStrings(this, 0),
-      finalizedStrings(this, 0),
-      allocNurseryStrings(this, true),
-      allocNurseryBigInts(this, true),
-      suppressAllocationMetadataBuilder(this, false),
-      previousGCStringStats(this),
-      stringStats(this),
+      data(nullptr),
+      tenuredBigInts(0),
+      markedStrings(0),
+      finalizedStrings(0),
+      suppressAllocationMetadataBuilder(false),
+      allocNurseryObjects_(true),
+      allocNurseryStrings_(true),
+      allocNurseryBigInts_(true),
       pretenuring(this),
-      uniqueIds_(this),
-      gcWeakMapList_(this),
       compartments_(),
       crossZoneStringWrappers_(this),
-      weakCaches_(this),
-      gcEphemeronEdges_(this, SystemAllocPolicy(),
-                        rt->randomHashCodeScrambler()),
-      gcNurseryEphemeronEdges_(this, SystemAllocPolicy(),
+      gcEphemeronEdges_(SystemAllocPolicy(), rt->randomHashCodeScrambler()),
+      gcNurseryEphemeronEdges_(SystemAllocPolicy(),
                                rt->randomHashCodeScrambler()),
-      rttValueObjects_(this, this),
-      markedAtoms_(this),
-      atomCache_(this),
-      externalStringCache_(this),
-      functionToStringCache_(this),
-      shapeZone_(this, this),
-      finalizationObservers_(this),
-      jitZone_(this, nullptr),
+      shapeZone_(this),
       gcScheduled_(false),
       gcScheduledSaved_(false),
       gcPreserveCode_(false),
-      keepPropMapTables_(this, false),
+      keepPropMapTables_(false),
       wasCollected_(false),
       listNext_(NotOnList),
-      keptObjects(this, this) {
+      keptObjects(this) {
   /* Ensure that there are no vtables to mess us up here. */
   MOZ_ASSERT(reinterpret_cast<JS::shadow::Zone*>(this) ==
              static_cast<JS::shadow::Zone*>(this));
   MOZ_ASSERT_IF(isAtomsZone(), rt->gc.zones().empty());
 
   updateGCStartThresholds(rt->gc);
+  rt->gc.nursery().setAllocFlagsForZone(this);
 }
 
 Zone::~Zone() {
@@ -397,11 +386,14 @@ void Zone::checkStringWrappersAfterMovingGC() {
 #endif
 
 void Zone::discardJitCode(JS::GCContext* gcx, const DiscardOptions& options) {
-  if (!jitZone()) {
-    return;
+  if (!isPreservingCode()) {
+    forceDiscardJitCode(gcx, options);
   }
+}
 
-  if (isPreservingCode()) {
+void Zone::forceDiscardJitCode(JS::GCContext* gcx,
+                               const DiscardOptions& options) {
+  if (!jitZone()) {
     return;
   }
 
@@ -483,6 +475,13 @@ void Zone::discardJitCode(JS::GCContext* gcx, const DiscardOptions& options) {
     jitScript->resetActive();
   }
 
+  // Also clear references to jit code from RegExpShared cells at this point.
+  // This avoid holding onto ExecutablePools.
+  for (auto regExp = cellIterUnsafe<RegExpShared>(); !regExp.done();
+       regExp.next()) {
+    regExp->discardJitCode();
+  }
+
   /*
    * When scripts contains pointers to nursery things, the store buffer
    * can contain entries that point into the optimized stub space. Since
@@ -494,6 +493,27 @@ void Zone::discardJitCode(JS::GCContext* gcx, const DiscardOptions& options) {
   if (options.discardBaselineCode) {
     jitZone()->optimizedStubSpace()->freeAllAfterMinorGC(this);
     jitZone()->purgeIonCacheIRStubInfo();
+  }
+
+  // Generate a profile marker
+  if (gcx->runtime()->geckoProfiler().enabled()) {
+    char discardingJitScript = options.discardJitScripts ? 'Y' : 'N';
+    char discardingBaseline = options.discardBaselineCode ? 'Y' : 'N';
+    char discardingIon = 'Y';
+
+    char discardingRegExp = 'Y';
+    char discardingNurserySites = options.resetNurseryAllocSites ? 'Y' : 'N';
+    char discardingPretenuredSites =
+        options.resetPretenuredAllocSites ? 'Y' : 'N';
+
+    char buf[100];
+    SprintfLiteral(buf,
+                   "JitScript:%c Baseline:%c Ion:%c "
+                   "RegExp:%c NurserySites:%c PretenuredSites:%c",
+                   discardingJitScript, discardingBaseline, discardingIon,
+                   discardingRegExp, discardingNurserySites,
+                   discardingPretenuredSites);
+    gcx->runtime()->geckoProfiler().markEvent("DiscardJit", buf);
   }
 }
 
@@ -534,14 +554,14 @@ void JS::Zone::beforeClearDelegateInternal(JSObject* wrapper,
   MOZ_ASSERT(js::gc::detail::GetDelegate(wrapper) == delegate);
   MOZ_ASSERT(needsIncrementalBarrier());
   MOZ_ASSERT(!RuntimeFromMainThreadIsHeapMajorCollecting(this));
-  runtimeFromMainThread()->gc.marker.severWeakDelegate(wrapper, delegate);
+  runtimeFromMainThread()->gc.marker().severWeakDelegate(wrapper, delegate);
 }
 
 void JS::Zone::afterAddDelegateInternal(JSObject* wrapper) {
   MOZ_ASSERT(!RuntimeFromMainThreadIsHeapMajorCollecting(this));
   JSObject* delegate = js::gc::detail::GetDelegate(wrapper);
   if (delegate) {
-    runtimeFromMainThread()->gc.marker.restoreWeakDelegate(wrapper, delegate);
+    runtimeFromMainThread()->gc.marker().restoreWeakDelegate(wrapper, delegate);
   }
 }
 
@@ -552,8 +572,6 @@ void JS::Zone::checkUniqueIdTableAfterMovingGC() {
   }
 }
 #endif
-
-uint64_t Zone::gcNumber() { return runtimeFromMainThread()->gc.gcNumber(); }
 
 js::jit::JitZone* Zone::createJitZone(JSContext* cx) {
   MOZ_ASSERT(!jitZone_);
@@ -604,19 +622,6 @@ Zone* Zone::nextZone() const {
 void Zone::fixupAfterMovingGC() {
   ZoneAllocator::fixupAfterMovingGC();
   shapeZone().fixupPropMapShapeTableAfterMovingGC();
-}
-
-bool Zone::addRttValueObject(JSContext* cx, HandleObject obj) {
-  // Type descriptor objects are always tenured so we don't need post barriers
-  // on the set.
-  MOZ_ASSERT(!IsInsideNursery(obj));
-
-  if (!rttValueObjects().put(obj)) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  return true;
 }
 
 void Zone::purgeAtomCache() {

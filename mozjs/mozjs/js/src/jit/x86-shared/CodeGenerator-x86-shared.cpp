@@ -13,6 +13,7 @@
 #include "jit/InlineScriptTree.h"
 #include "jit/JitRuntime.h"
 #include "jit/RangeAnalysis.h"
+#include "jit/ReciprocalMulConstants.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "util/DifferentialTesting.h"
 
@@ -1046,7 +1047,7 @@ void CodeGenerator::visitUDivOrModConstant(LUDivOrModConstant* ins) {
   // The denominator isn't a power of 2 (see LDivPowTwoI and LModPowTwoI).
   MOZ_ASSERT((d & (d - 1)) != 0);
 
-  ReciprocalMulConstants rmc = computeDivisionConstants(d, /* maxLog = */ 32);
+  auto rmc = ReciprocalMulConstants::computeUnsignedDivisionConstants(d);
 
   // We first compute (M * n) >> 32, where M = rmc.multiplier.
   masm.movl(Imm32(rmc.multiplier), eax);
@@ -1211,8 +1212,7 @@ void CodeGenerator::visitDivOrModConstantI(LDivOrModConstantI* ins) {
 
   // We will first divide by Abs(d), and negate the answer if d is negative.
   // If desired, this can be avoided by generalizing computeDivisionConstants.
-  ReciprocalMulConstants rmc =
-      computeDivisionConstants(Abs(d), /* maxLog = */ 31);
+  auto rmc = ReciprocalMulConstants::computeSignedDivisionConstants(Abs(d));
 
   // We first compute (M * n) >> 32, where M = rmc.multiplier.
   masm.movl(Imm32(rmc.multiplier), eax);
@@ -1768,8 +1768,8 @@ MoveOperand CodeGeneratorX86Shared::toMoveOperand(LAllocation a) const {
   if (a.isFloatReg()) {
     return MoveOperand(ToFloatRegister(a));
   }
-  MoveOperand::Kind kind =
-      a.isStackArea() ? MoveOperand::EFFECTIVE_ADDRESS : MoveOperand::MEMORY;
+  MoveOperand::Kind kind = a.isStackArea() ? MoveOperand::Kind::EffectiveAddress
+                                           : MoveOperand::Kind::Memory;
   return MoveOperand(ToAddress(a), kind);
 }
 
@@ -2281,11 +2281,6 @@ void CodeGenerator::visitWasmTernarySimd128(LWasmTernarySimd128* ins) {
       masm.dotInt8x16Int7x16ThenAdd(ToFloatRegister(ins->v0()),
                                     ToFloatRegister(ins->v1()),
                                     ToFloatRegister(ins->v2()));
-      break;
-    case wasm::SimdOp::F32x4RelaxedDotBF16x8AddF32x4:
-      masm.dotBFloat16x8ThenAdd(
-          ToFloatRegister(ins->v0()), ToFloatRegister(ins->v1()),
-          ToFloatRegister(ins->v2()), ToFloatRegister(ins->temp()));
       break;
     default:
       MOZ_CRASH("NYI");
@@ -3640,17 +3635,17 @@ void CodeGenerator::visitWasmUnarySimd128(LWasmUnarySimd128* ins) {
     case wasm::SimdOp::I32x4ExtaddPairwiseI16x8U:
       masm.unsignedExtAddPairwiseInt16x8(src, dest);
       break;
-    case wasm::SimdOp::I32x4RelaxedTruncSSatF32x4:
-      masm.truncSatFloat32x4ToInt32x4Relaxed(src, dest);
+    case wasm::SimdOp::I32x4RelaxedTruncF32x4S:
+      masm.truncFloat32x4ToInt32x4Relaxed(src, dest);
       break;
-    case wasm::SimdOp::I32x4RelaxedTruncUSatF32x4:
-      masm.unsignedTruncSatFloat32x4ToInt32x4Relaxed(src, dest);
+    case wasm::SimdOp::I32x4RelaxedTruncF32x4U:
+      masm.unsignedTruncFloat32x4ToInt32x4Relaxed(src, dest);
       break;
-    case wasm::SimdOp::I32x4RelaxedTruncSatF64x2SZero:
-      masm.truncSatFloat64x2ToInt32x4Relaxed(src, dest);
+    case wasm::SimdOp::I32x4RelaxedTruncF64x2SZero:
+      masm.truncFloat64x2ToInt32x4Relaxed(src, dest);
       break;
-    case wasm::SimdOp::I32x4RelaxedTruncSatF64x2UZero:
-      masm.unsignedTruncSatFloat64x2ToInt32x4Relaxed(src, dest);
+    case wasm::SimdOp::I32x4RelaxedTruncF64x2UZero:
+      masm.unsignedTruncFloat64x2ToInt32x4Relaxed(src, dest);
       break;
     default:
       MOZ_CRASH("Unary SimdOp not implemented");

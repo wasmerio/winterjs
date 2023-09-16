@@ -5,10 +5,11 @@
 # This script generates jit/MIROpsGenerated.h (list of MIR instructions)
 # from MIROps.yaml, as well as MIR op definitions.
 
-import buildconfig
-import yaml
-import six
 from collections import OrderedDict
+
+import buildconfig
+import six
+import yaml
 from mozbuild.preprocessor import Preprocessor
 
 HEADER_TEMPLATE = """\
@@ -67,6 +68,7 @@ type_policies = {
     "Value": "BoxPolicy",
     "Int32": "UnboxedInt32Policy",
     "BigInt": "BigIntPolicy",
+    "Boolean": "BooleanPolicy",
     "Double": "DoublePolicy",
     "String": "StringPolicy",
     "Symbol": "SymbolPolicy",

@@ -7,13 +7,12 @@
 # This script uses `fix-stacks` to post-process the entries produced by
 # MozFormatCodeAddress().
 
-from __future__ import absolute_import, print_function
-from subprocess import Popen, PIPE
 import atexit
 import os
 import platform
 import re
 import sys
+from subprocess import PIPE, Popen
 
 # Matches lines produced by MozFormatCodeAddress(), e.g.
 # `#01: ???[tests/example +0x43a0]`.
@@ -23,8 +22,8 @@ fix_stacks = None
 
 
 def autobootstrap():
-    from mozbuild.configure import ConfigureSandbox
     import buildconfig
+    from mozbuild.configure import ConfigureSandbox
 
     sandbox = ConfigureSandbox(
         {},
@@ -131,5 +130,6 @@ def fixSymbols(
 
 
 if __name__ == "__main__":
+    bpsyms = os.environ.get("BREAKPAD_SYMBOLS_PATH", None)
     for line in sys.stdin:
-        sys.stdout.write(fixSymbols(line))
+        sys.stdout.write(fixSymbols(line, breakpadSymsDir=bpsyms))

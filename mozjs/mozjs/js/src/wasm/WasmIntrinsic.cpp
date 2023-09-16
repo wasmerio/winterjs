@@ -105,11 +105,15 @@ bool wasm::CompileIntrinsicModule(JSContext* cx,
   }
   CompilerEnvironment compilerEnv(
       CompileMode::Once, IonAvailable(cx) ? Tier::Optimized : Tier::Baseline,
-      OptimizedBackend::Ion, DebugEnabled::False);
+      DebugEnabled::False);
   compilerEnv.computeParameters();
 
   // Build a module environment
   ModuleEnvironment moduleEnv(compileArgs->features);
+  if (!moduleEnv.init()) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
 
   // Add (import (memory 0))
   CacheableName emptyString;
@@ -126,12 +130,6 @@ bool wasm::CompileIntrinsicModule(JSContext* cx,
   }
   moduleEnv.memory = Some(MemoryDesc(Limits(0, Nothing(), sharedMemory)));
 
-  // Initialize the type section
-  if (!moduleEnv.initTypes(ids.size())) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
   // Add (type (func (params ...))) for each intrinsic. The function types will
   // be deduplicated by the runtime
   for (uint32_t funcIndex = 0; funcIndex < ids.size(); funcIndex++) {
@@ -139,19 +137,18 @@ bool wasm::CompileIntrinsicModule(JSContext* cx,
     const Intrinsic& intrinsic = Intrinsic::getFromId(id);
 
     FuncType type;
-    if (!intrinsic.funcType(&type)) {
+    if (!intrinsic.funcType(&type) ||
+        !moduleEnv.types->addType(std::move(type))) {
       ReportOutOfMemory(cx);
       return false;
     }
-    (*moduleEnv.types)[funcIndex] = TypeDef(std::move(type));
   }
 
   // Add (func (type $i)) declarations. Do this after all types have been added
   // as the function declaration metadata uses pointers into the type vectors
   // that must be stable.
   for (uint32_t funcIndex = 0; funcIndex < ids.size(); funcIndex++) {
-    FuncDesc decl(&(*moduleEnv.types)[funcIndex].funcType(),
-                  &moduleEnv.typeIds[funcIndex], funcIndex);
+    FuncDesc decl(&(*moduleEnv.types)[funcIndex].funcType(), funcIndex);
     if (!moduleEnv.funcs.append(decl)) {
       ReportOutOfMemory(cx);
       return false;

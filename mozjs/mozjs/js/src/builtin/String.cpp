@@ -34,10 +34,10 @@
 #include "jit/InlinableNatives.h"
 #include "js/Conversions.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #if !JS_HAS_INTL_API
 #  include "js/LocaleSensitive.h"
 #endif
+#include "js/Printer.h"
 #include "js/PropertyAndElement.h"  // JS_DefineFunctions
 #include "js/PropertySpec.h"
 #include "js/StableStringChars.h"
@@ -47,7 +47,6 @@
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
-#include "vm/Printer.h"
 #include "vm/RegExpObject.h"
 #include "vm/SelfHosting.h"
 #include "vm/StaticStrings.h"
@@ -67,11 +66,13 @@ using JS::SymbolCode;
 
 using mozilla::AsciiAlphanumericToNumber;
 using mozilla::CheckedInt;
+using mozilla::EnsureUtf16ValiditySpan;
 using mozilla::IsAsciiHexDigit;
-using mozilla::IsNaN;
 using mozilla::PodCopy;
 using mozilla::RangedPtr;
 using mozilla::SIMD;
+using mozilla::Span;
+using mozilla::Utf16ValidUpTo;
 
 using JS::AutoCheckCannotGC;
 using JS::AutoStableStringChars;
@@ -336,16 +337,16 @@ static bool str_unescape(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   // Steps 2, 4-5.
+  bool unescapeFailed = false;
   if (str->hasLatin1Chars()) {
     AutoCheckCannotGC nogc;
-    if (!Unescape(sb, str->latin1Range(nogc))) {
-      return false;
-    }
+    unescapeFailed = !Unescape(sb, str->latin1Range(nogc));
   } else {
     AutoCheckCannotGC nogc;
-    if (!Unescape(sb, str->twoByteRange(nogc))) {
-      return false;
-    }
+    unescapeFailed = !Unescape(sb, str->twoByteRange(nogc));
+  }
+  if (unescapeFailed) {
+    return false;
   }
 
   // Step 6.
@@ -465,19 +466,13 @@ const JSClass StringObject::class_ = {
  */
 static MOZ_ALWAYS_INLINE JSString* ToStringForStringFunction(
     JSContext* cx, const char* funName, HandleValue thisv) {
-  AutoCheckRecursionLimit recursion(cx);
-  if (!recursion.check(cx)) {
-    return nullptr;
-  }
-
   if (thisv.isString()) {
     return thisv.toString();
   }
 
   if (thisv.isObject()) {
-    RootedObject obj(cx, &thisv.toObject());
-    if (obj->is<StringObject>()) {
-      StringObject* nobj = &obj->as<StringObject>();
+    if (thisv.toObject().is<StringObject>()) {
+      StringObject* nobj = &thisv.toObject().as<StringObject>();
       // We have to make sure that the ToPrimitive call from ToString
       // would be unobservable.
       if (HasNoToPrimitiveMethodPure(nobj, cx) &&
@@ -1570,6 +1565,119 @@ static bool str_normalize(JSContext* cx, unsigned argc, Value* vp) {
 
 #endif  // JS_HAS_INTL_API
 
+#ifdef NIGHTLY_BUILD
+/**
+ * IsStringWellFormedUnicode ( string )
+ * https://tc39.es/ecma262/#sec-isstringwellformedunicode
+ */
+static bool IsStringWellFormedUnicode(JSContext* cx, HandleString str,
+                                      bool* isWellFormedOut) {
+  MOZ_ASSERT(isWellFormedOut);
+  *isWellFormedOut = false;
+
+  JSLinearString* linear = str->ensureLinear(cx);
+  if (!linear) {
+    return false;
+  }
+
+  // Latin1 chars are well-formed.
+  if (linear->hasLatin1Chars()) {
+    *isWellFormedOut = true;
+    return true;
+  }
+
+  {
+    AutoCheckCannotGC nogc;
+    size_t len = linear->length();
+    *isWellFormedOut =
+        Utf16ValidUpTo(Span{linear->twoByteChars(nogc), len}) == len;
+  }
+  return true;
+}
+
+/**
+ * Well-Formed Unicode Strings (Stage 3 proposal)
+ *
+ * String.prototype.isWellFormed
+ * https://tc39.es/proposal-is-usv-string/#sec-string.prototype.iswellformed
+ */
+static bool str_isWellFormed(JSContext* cx, unsigned argc, Value* vp) {
+  AutoJSMethodProfilerEntry pseudoFrame(cx, "String.prototype", "isWellFormed");
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  // Step 1. Let O be ? RequireObjectCoercible(this value).
+  // Step 2. Let S be ? ToString(O).
+  RootedString str(cx,
+                   ToStringForStringFunction(cx, "isWellFormed", args.thisv()));
+  if (!str) {
+    return false;
+  }
+
+  // Step 3. Return IsStringWellFormedUnicode(S).
+  bool isWellFormed;
+  if (!IsStringWellFormedUnicode(cx, str, &isWellFormed)) {
+    return false;
+  }
+
+  args.rval().setBoolean(isWellFormed);
+  return true;
+}
+
+/**
+ * Well-Formed Unicode Strings (Stage 3 proposal)
+ *
+ * String.prototype.toWellFormed
+ * https://tc39.es/proposal-is-usv-string/#sec-string.prototype.towellformed
+ */
+static bool str_toWellFormed(JSContext* cx, unsigned argc, Value* vp) {
+  AutoJSMethodProfilerEntry pseudoFrame(cx, "String.prototype", "toWellFormed");
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  // Step 1. Let O be ? RequireObjectCoercible(this value).
+  // Step 2. Let S be ? ToString(O).
+  RootedString str(cx,
+                   ToStringForStringFunction(cx, "toWellFormed", args.thisv()));
+  if (!str) {
+    return false;
+  }
+
+  // If the string itself is well-formed, return it.
+  bool isWellFormed;
+  if (!IsStringWellFormedUnicode(cx, str, &isWellFormed)) {
+    return false;
+  }
+  if (isWellFormed) {
+    args.rval().setString(str);
+    return true;
+  }
+
+  // Step 3. Let strLen be the length of S.
+  size_t len = str->length();
+
+  // Step 4-6
+  auto buffer = cx->make_pod_arena_array<char16_t>(js::StringBufferArena, len);
+  if (!buffer) {
+    return false;
+  }
+
+  {
+    AutoCheckCannotGC nogc;
+    JSLinearString* linear = str->ensureLinear(cx);
+    PodCopy(buffer.get(), linear->twoByteChars(nogc), len);
+    EnsureUtf16ValiditySpan(Span{buffer.get(), len});
+  }
+
+  JSString* result = NewString<CanGC>(cx, std::move(buffer), len);
+  if (!result) {
+    return false;
+  }
+
+  // Step 7. Return result.
+  args.rval().setString(result);
+  return true;
+}
+#endif  // NIGHTLY_BUILD
+
 static bool str_charAt(JSContext* cx, unsigned argc, Value* vp) {
   AutoJSMethodProfilerEntry pseudoFrame(cx, "String.prototype", "charAt");
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -1821,6 +1929,13 @@ static MOZ_ALWAYS_INLINE int StringMatch(const TextChar* text, uint32_t textLen,
     return pos - text;
   }
 
+  // We use a fast two-character-wide search in Matcher below, so we need to
+  // validate that pat[1] isn't outside the latin1 range up front if the
+  // sizes are different.
+  if (sizeof(TextChar) == 1 && sizeof(PatChar) > 1 && pat[1] > 0xff) {
+    return -1;
+  }
+
   /*
    * If the text or pattern string is short, BMH will be more expensive than
    * the basic linear scan due to initialization cost and a more complex loop
@@ -1886,54 +2001,6 @@ int js::StringFindPattern(JSLinearString* text, JSLinearString* pat,
                           size_t start) {
   return StringMatch(text, pat, start);
 }
-
-// When an algorithm does not need a string represented as a single linear
-// array of characters, this range utility may be used to traverse the string a
-// sequence of linear arrays of characters. This avoids flattening ropes.
-class StringSegmentRange {
-  // If malloc() shows up in any profiles from this vector, we can add a new
-  // StackAllocPolicy which stashes a reusable freed-at-gc buffer in the cx.
-  using StackVector = JS::GCVector<JSString*, 16>;
-  Rooted<StackVector> stack;
-  Rooted<JSLinearString*> cur;
-
-  bool settle(JSString* str) {
-    while (str->isRope()) {
-      JSRope& rope = str->asRope();
-      if (!stack.append(rope.rightChild())) {
-        return false;
-      }
-      str = rope.leftChild();
-    }
-    cur = &str->asLinear();
-    return true;
-  }
-
- public:
-  explicit StringSegmentRange(JSContext* cx)
-      : stack(cx, StackVector(cx)), cur(cx) {}
-
-  [[nodiscard]] bool init(JSString* str) {
-    MOZ_ASSERT(stack.empty());
-    return settle(str);
-  }
-
-  bool empty() const { return cur == nullptr; }
-
-  JSLinearString* front() const {
-    MOZ_ASSERT(!cur->isRope());
-    return cur;
-  }
-
-  [[nodiscard]] bool popFront() {
-    MOZ_ASSERT(!empty());
-    if (stack.empty()) {
-      cur = nullptr;
-      return true;
-    }
-    return settle(stack.popCopy());
-  }
-};
 
 typedef Vector<JSLinearString*, 16, SystemAllocPolicy> LinearStringVector;
 
@@ -2298,7 +2365,7 @@ static bool str_lastIndexOf(JSContext* cx, unsigned argc, Value* vp) {
       if (!ToNumber(cx, args[1], &d)) {
         return false;
       }
-      if (!IsNaN(d)) {
+      if (!std::isnan(d)) {
         d = JS::ToInteger(d);
         if (d <= 0) {
           start = 0;
@@ -3035,6 +3102,74 @@ JSString* js::str_replace_string_raw(JSContext* cx, HandleString string,
   return BuildFlatReplacement(cx, string, repl, match, patternLength);
 }
 
+template <typename StrChar, typename RepChar>
+static bool ReplaceAllInternal(const AutoCheckCannotGC& nogc,
+                               JSLinearString* string,
+                               JSLinearString* searchString,
+                               JSLinearString* replaceString,
+                               const int32_t startPosition,
+                               JSStringBuilder& result) {
+  // Step 7.
+  const size_t stringLength = string->length();
+  const size_t searchLength = searchString->length();
+  const size_t replaceLength = replaceString->length();
+
+  MOZ_ASSERT(stringLength > 0);
+  MOZ_ASSERT(searchLength > 0);
+  MOZ_ASSERT(stringLength >= searchLength);
+
+  // Step 12.
+  uint32_t endOfLastMatch = 0;
+
+  const StrChar* strChars = string->chars<StrChar>(nogc);
+  const RepChar* repChars = replaceString->chars<RepChar>(nogc);
+
+  uint32_t dollarIndex = FindDollarIndex(repChars, replaceLength);
+
+  // If it's true, we are sure that the result's length is, at least, the same
+  // length as |str->length()|.
+  if (replaceLength >= searchLength) {
+    if (!result.reserve(stringLength)) {
+      return false;
+    }
+  }
+
+  int32_t position = startPosition;
+  do {
+    // Step 14.c.
+    // Append the substring before the current match.
+    if (!result.append(strChars + endOfLastMatch, position - endOfLastMatch)) {
+      return false;
+    }
+
+    // Steps 14.a-b and 14.d.
+    // Append the replacement.
+    if (dollarIndex != UINT32_MAX) {
+      size_t matchLimit = position + searchLength;
+      if (!AppendDollarReplacement(result, dollarIndex, position, matchLimit,
+                                   string, repChars, replaceLength)) {
+        return false;
+      }
+    } else {
+      if (!result.append(repChars, replaceLength)) {
+        return false;
+      }
+    }
+
+    // Step 14.e.
+    endOfLastMatch = position + searchLength;
+
+    // Step 11.
+    // Find the next match.
+    position = StringMatch(string, searchString, endOfLastMatch);
+  } while (position >= 0);
+
+  // Step 15.
+  // Append the substring after the last match.
+  return result.append(strChars + endOfLastMatch,
+                       stringLength - endOfLastMatch);
+}
+
 // https://tc39.es/proposal-string-replaceall/#sec-string.prototype.replaceall
 // Steps 7-16 when functionalReplace is false and searchString is not empty.
 //
@@ -3044,14 +3179,7 @@ template <typename StrChar, typename RepChar>
 static JSString* ReplaceAll(JSContext* cx, JSLinearString* string,
                             JSLinearString* searchString,
                             JSLinearString* replaceString) {
-  // Step 7.
-  const size_t stringLength = string->length();
-  const size_t searchLength = searchString->length();
-  const size_t replaceLength = replaceString->length();
-
-  MOZ_ASSERT(stringLength > 0);
-  MOZ_ASSERT(searchLength > 0);
-  MOZ_ASSERT(stringLength >= searchLength);
+  // Step 7 moved into ReplaceAll_internal.
 
   // Step 8 (advanceBy is equal to searchLength when searchLength > 0).
 
@@ -3066,10 +3194,7 @@ static JSString* ReplaceAll(JSContext* cx, JSLinearString* string,
     return string;
   }
 
-  // Step 11 (moved below).
-
-  // Step 12.
-  uint32_t endOfLastMatch = 0;
+  // Steps 11, 12 moved into ReplaceAll_internal.
 
   // Step 13.
   JSStringBuilder result(cx);
@@ -3080,61 +3205,79 @@ static JSString* ReplaceAll(JSContext* cx, JSLinearString* string,
     }
   }
 
+  bool internalFailure = false;
   {
     AutoCheckCannotGC nogc;
-    const StrChar* strChars = string->chars<StrChar>(nogc);
-    const RepChar* repChars = replaceString->chars<RepChar>(nogc);
-
-    uint32_t dollarIndex = FindDollarIndex(repChars, replaceLength);
-
-    // If it's true, we are sure that the result's length is, at least, the same
-    // length as |str->length()|.
-    if (replaceLength >= searchLength) {
-      if (!result.reserve(stringLength)) {
-        return nullptr;
-      }
-    }
-
-    do {
-      // Step 14.c.
-      // Append the substring before the current match.
-      if (!result.append(strChars + endOfLastMatch,
-                         position - endOfLastMatch)) {
-        return nullptr;
-      }
-
-      // Steps 14.a-b and 14.d.
-      // Append the replacement.
-      if (dollarIndex != UINT32_MAX) {
-        size_t matchLimit = position + searchLength;
-        if (!AppendDollarReplacement(result, dollarIndex, position, matchLimit,
-                                     string, repChars, replaceLength)) {
-          return nullptr;
-        }
-      } else {
-        if (!result.append(repChars, replaceLength)) {
-          return nullptr;
-        }
-      }
-
-      // Step 14.e.
-      endOfLastMatch = position + searchLength;
-
-      // Step 11.
-      // Find the next match.
-      position = StringMatch(string, searchString, endOfLastMatch);
-    } while (position >= 0);
-
-    // Step 15.
-    // Append the substring after the last match.
-    if (!result.append(strChars + endOfLastMatch,
-                       stringLength - endOfLastMatch)) {
-      return nullptr;
-    }
+    internalFailure = !ReplaceAllInternal<StrChar, RepChar>(
+        nogc, string, searchString, replaceString, position, result);
+  }
+  if (internalFailure) {
+    return nullptr;
   }
 
   // Step 16.
   return result.finishString();
+}
+
+template <typename StrChar, typename RepChar>
+static bool ReplaceAllInterleaveInternal(const AutoCheckCannotGC& nogc,
+                                         JSContext* cx, JSLinearString* string,
+                                         JSLinearString* replaceString,
+                                         JSStringBuilder& result) {
+  // Step 7.
+  const size_t stringLength = string->length();
+  const size_t replaceLength = replaceString->length();
+
+  const StrChar* strChars = string->chars<StrChar>(nogc);
+  const RepChar* repChars = replaceString->chars<RepChar>(nogc);
+
+  uint32_t dollarIndex = FindDollarIndex(repChars, replaceLength);
+
+  if (dollarIndex != UINT32_MAX) {
+    if (!result.reserve(stringLength)) {
+      return false;
+    }
+  } else {
+    // Compute the exact result length when no substitutions take place.
+    CheckedInt<uint32_t> strLength(stringLength);
+    CheckedInt<uint32_t> repLength(replaceLength);
+    CheckedInt<uint32_t> length = strLength + (strLength + 1) * repLength;
+    if (!length.isValid()) {
+      ReportAllocationOverflow(cx);
+      return false;
+    }
+
+    if (!result.reserve(length.value())) {
+      return false;
+    }
+  }
+
+  auto appendReplacement = [&](size_t match) {
+    if (dollarIndex != UINT32_MAX) {
+      return AppendDollarReplacement(result, dollarIndex, match, match, string,
+                                     repChars, replaceLength);
+    }
+    return result.append(repChars, replaceLength);
+  };
+
+  for (size_t index = 0; index < stringLength; index++) {
+    // Steps 11, 14.a-b and 14.d.
+    // The empty string matches before each character.
+    if (!appendReplacement(index)) {
+      return false;
+    }
+
+    // Step 14.c.
+    if (!result.append(strChars[index])) {
+      return false;
+    }
+  }
+
+  // Steps 11, 14.a-b and 14.d.
+  // The empty string also matches at the end of the string.
+  return appendReplacement(stringLength);
+
+  // Step 15 (not applicable when searchString is the empty string).
 }
 
 // https://tc39.es/proposal-string-replaceall/#sec-string.prototype.replaceall
@@ -3146,9 +3289,7 @@ static JSString* ReplaceAll(JSContext* cx, JSLinearString* string,
 template <typename StrChar, typename RepChar>
 static JSString* ReplaceAllInterleave(JSContext* cx, JSLinearString* string,
                                       JSLinearString* replaceString) {
-  // Step 7.
-  const size_t stringLength = string->length();
-  const size_t replaceLength = replaceString->length();
+  // Step 7 moved into ReplaceAllInterleavedInternal.
 
   // Step 8 (advanceBy is 1 when searchString is the empty string).
 
@@ -3163,60 +3304,14 @@ static JSString* ReplaceAllInterleave(JSContext* cx, JSLinearString* string,
     }
   }
 
+  bool internalFailure = false;
   {
     AutoCheckCannotGC nogc;
-    const StrChar* strChars = string->chars<StrChar>(nogc);
-    const RepChar* repChars = replaceString->chars<RepChar>(nogc);
-
-    uint32_t dollarIndex = FindDollarIndex(repChars, replaceLength);
-
-    if (dollarIndex != UINT32_MAX) {
-      if (!result.reserve(stringLength)) {
-        return nullptr;
-      }
-    } else {
-      // Compute the exact result length when no substitutions take place.
-      CheckedInt<uint32_t> strLength(stringLength);
-      CheckedInt<uint32_t> repLength(replaceLength);
-      CheckedInt<uint32_t> length = strLength + (strLength + 1) * repLength;
-      if (!length.isValid()) {
-        ReportAllocationOverflow(cx);
-        return nullptr;
-      }
-
-      if (!result.reserve(length.value())) {
-        return nullptr;
-      }
-    }
-
-    auto appendReplacement = [&](size_t match) {
-      if (dollarIndex != UINT32_MAX) {
-        return AppendDollarReplacement(result, dollarIndex, match, match,
-                                       string, repChars, replaceLength);
-      }
-      return result.append(repChars, replaceLength);
-    };
-
-    for (size_t index = 0; index < stringLength; index++) {
-      // Steps 11, 14.a-b and 14.d.
-      // The empty string matches before each character.
-      if (!appendReplacement(index)) {
-        return nullptr;
-      }
-
-      // Step 14.c.
-      if (!result.append(strChars[index])) {
-        return nullptr;
-      }
-    }
-
-    // Steps 11, 14.a-b and 14.d.
-    // The empty string also matches at the end of the string.
-    if (!appendReplacement(stringLength)) {
-      return nullptr;
-    }
-
-    // Step 15 (not applicable when searchString is the empty string).
+    internalFailure = !ReplaceAllInterleaveInternal<StrChar, RepChar>(
+        nogc, cx, string, replaceString, result);
+  }
+  if (internalFailure) {
+    return nullptr;
   }
 
   // Step 16.
@@ -3572,6 +3667,10 @@ static const JSFunctionSpec string_methods[] = {
 #if JS_HAS_INTL_API
     JS_FN("normalize", str_normalize, 0, 0),
 #endif
+#ifdef NIGHTLY_BUILD
+    JS_FN("isWellFormed", str_isWellFormed, 0, 0),
+    JS_FN("toWellFormed", str_toWellFormed, 0, 0),
+#endif
 
     /* Perl-ish methods (search is actually Python-esque). */
     JS_SELF_HOSTED_FN("match", "String_match", 1, 0),
@@ -3863,8 +3962,8 @@ static const JSFunctionSpec string_static_methods[] = {
     JS_SELF_HOSTED_FN("raw", "String_static_raw", 1, 0), JS_FS_END};
 
 /* static */
-Shape* StringObject::assignInitialShape(JSContext* cx,
-                                        Handle<StringObject*> obj) {
+SharedShape* StringObject::assignInitialShape(JSContext* cx,
+                                              Handle<StringObject*> obj) {
   MOZ_ASSERT(obj->empty());
 
   if (!NativeObject::addPropertyInReservedSlot(cx, obj, cx->names().length,
@@ -3872,7 +3971,7 @@ Shape* StringObject::assignInitialShape(JSContext* cx,
     return nullptr;
   }
 
-  return obj->shape();
+  return obj->sharedShape();
 }
 
 JSObject* StringObject::createPrototype(JSContext* cx, JSProtoKey key) {

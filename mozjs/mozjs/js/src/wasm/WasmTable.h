@@ -43,13 +43,13 @@ using TableAnyRefVector = GCVector<HeapPtr<JSObject*>, 0, SystemAllocPolicy>;
 class Table : public ShareableBase<Table> {
   using InstanceSet = JS::WeakCache<GCHashSet<
       WeakHeapPtr<WasmInstanceObject*>,
-      MovableCellHasher<WeakHeapPtr<WasmInstanceObject*>>, SystemAllocPolicy>>;
-  using UniqueFuncRefArray = UniquePtr<FunctionTableElem[], JS::FreePolicy>;
+      StableCellHasher<WeakHeapPtr<WasmInstanceObject*>>, SystemAllocPolicy>>;
+  using FuncRefVector = Vector<FunctionTableElem, 0, SystemAllocPolicy>;
 
   WeakHeapPtr<WasmTableObject*> maybeObject_;
   InstanceSet observers_;
-  UniqueFuncRefArray functions_;  // either functions_ has data
-  TableAnyRefVector objects_;     //   or objects_, but not both
+  FuncRefVector functions_;    // either functions_ has data
+  TableAnyRefVector objects_;  // or objects_, but not both
   const RefType elemType_;
   const bool isAsmJS_;
   uint32_t length_;
@@ -58,7 +58,7 @@ class Table : public ShareableBase<Table> {
   template <class>
   friend struct js::MallocProvider;
   Table(JSContext* cx, const TableDesc& desc,
-        Handle<WasmTableObject*> maybeObject, UniqueFuncRefArray functions);
+        Handle<WasmTableObject*> maybeObject, FuncRefVector&& functions);
   Table(JSContext* cx, const TableDesc& desc,
         Handle<WasmTableObject*> maybeObject, TableAnyRefVector&& objects);
 
@@ -74,11 +74,11 @@ class Table : public ShareableBase<Table> {
   TableRepr repr() const { return elemType_.tableRepr(); }
 
   bool isAsmJS() const {
-    MOZ_ASSERT(elemType_.isFunc());
+    MOZ_ASSERT(elemType_.isFuncHierarchy());
     return isAsmJS_;
   }
 
-  bool isFunction() const { return elemType().isFunc(); }
+  bool isFunction() const { return elemType().isFuncHierarchy(); }
   uint32_t length() const { return length_; }
   Maybe<uint32_t> maximum() const { return maximum_; }
 
@@ -99,6 +99,10 @@ class Table : public ShareableBase<Table> {
   AnyRef getAnyRef(uint32_t index) const;
   void fillAnyRef(uint32_t index, uint32_t fillCount, AnyRef ref);
 
+  // Get the element at index and convert it to a JS value.
+  [[nodiscard]] bool getValue(JSContext* cx, uint32_t index,
+                              MutableHandleValue result) const;
+
   void setNull(uint32_t index);
 
   // Copy entry from |srcTable| at |srcIndex| to this table at |dstIndex|.  Used
@@ -111,6 +115,13 @@ class Table : public ShareableBase<Table> {
   [[nodiscard]] bool movingGrowable() const;
   [[nodiscard]] bool addMovingGrowObserver(JSContext* cx,
                                            WasmInstanceObject* instance);
+
+  void fillUninitialized(uint32_t index, uint32_t fillCount, HandleAnyRef ref,
+                         JSContext* cx);
+#ifdef DEBUG
+  void assertRangeNull(uint32_t index, uint32_t length) const;
+  void assertRangeNotNull(uint32_t index, uint32_t length) const;
+#endif  // DEBUG
 
   // about:memory reporting:
 

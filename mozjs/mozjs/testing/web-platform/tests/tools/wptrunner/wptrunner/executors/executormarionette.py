@@ -2,8 +2,6 @@
 
 import json
 import os
-import shutil
-import tempfile
 import threading
 import time
 import traceback
@@ -26,7 +24,8 @@ from .base import (CallbackHandler,
                    WdspecExecutor,
                    get_pages,
                    strip_server)
-from .protocol import (ActionSequenceProtocolPart,
+from .protocol import (AccessibilityProtocolPart,
+                       ActionSequenceProtocolPart,
                        AssertsProtocolPart,
                        BaseProtocolPart,
                        TestharnessProtocolPart,
@@ -455,6 +454,19 @@ class MarionetteCookiesProtocolPart(CookiesProtocolPart):
         self.logger.info("Deleting all cookies")
         return self.marionette.delete_all_cookies()
 
+    def get_all_cookies(self):
+        self.logger.info("Getting all cookies")
+        return self.marionette.get_cookies()
+
+    def get_named_cookie(self, name):
+        self.logger.info("Getting cookie named %s" % name)
+        try:
+            return self.marionette.get_cookie(name)
+        # When errors.NoSuchCookieException is supported,
+        # that should be used here instead.
+        except Exception:
+            return None
+
 
 class MarionetteSendKeysProtocolPart(SendKeysProtocolPart):
     def setup(self):
@@ -600,13 +612,11 @@ class MarionetteSetPermissionProtocolPart(SetPermissionProtocolPart):
     def setup(self):
         self.marionette = self.parent.marionette
 
-    def set_permission(self, descriptor, state, one_realm):
+    def set_permission(self, descriptor, state):
         body = {
             "descriptor": descriptor,
             "state": state,
         }
-        if one_realm is not None:
-            body["oneRealm"] = one_realm
         try:
             self.marionette._send_message("WebDriver:SetPermission", body)
         except errors.UnsupportedOperationException:
@@ -619,7 +629,7 @@ class MarionettePrintProtocolPart(PrintProtocolPart):
         self.runner_handle = None
 
     def load_runner(self):
-        url = urljoin(self.parent.executor.server_url("http"), "/print_reftest_runner.html")
+        url = urljoin(self.parent.executor.server_url("http"), "/print_pdf_runner.html")
         self.logger.debug("Loading %s" % url)
         try:
             self.marionette.navigate(url)
@@ -646,7 +656,7 @@ class MarionettePrintProtocolPart(PrintProtocolPart):
                 "bottom": margin,
             },
             "shrinkToFit": False,
-            "printBackground": True,
+            "background": True,
         }
         return self.marionette._send_message("WebDriver:Print", body, key="value")
 
@@ -692,6 +702,17 @@ loadDevTools().catch((e) => console.error("Devtools failed to load", e))
 """, asynchronous=True)
 
 
+class MarionetteAccessibilityProtocolPart(AccessibilityProtocolPart):
+    def setup(self):
+        self.marionette = self.parent.marionette
+
+    def get_computed_label(self, element):
+        return element.computed_label
+
+    def get_computed_role(self, element):
+        return element.computed_role
+
+
 class MarionetteProtocol(Protocol):
     implements = [MarionetteBaseProtocolPart,
                   MarionetteTestharnessProtocolPart,
@@ -710,7 +731,8 @@ class MarionetteProtocol(Protocol):
                   MarionetteVirtualAuthenticatorProtocolPart,
                   MarionetteSetPermissionProtocolPart,
                   MarionettePrintProtocolPart,
-                  MarionetteDebugProtocolPart]
+                  MarionetteDebugProtocolPart,
+                  MarionetteAccessibilityProtocolPart]
 
     def __init__(self, executor, browser, capabilities=None, timeout_multiplier=1, e10s=True, ccov=False):
         do_delayed_imports()

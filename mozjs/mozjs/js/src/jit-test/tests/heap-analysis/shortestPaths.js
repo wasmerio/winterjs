@@ -63,6 +63,11 @@ assertEq(paths.length, 2, "Two sets of paths expected");
 paths = shortestPaths([f], {maxNumPaths: 1});
 assertEq(paths[0].length, 1, "Single path expected");
 
+print();
+print("shortestPaths([1234n])")
+paths = shortestPaths([1234n]);
+dumpPaths(paths);
+
 var exc;
 
 try { paths = shortestPaths(); } catch (exc) { e = ""+exc; };
@@ -73,3 +78,9 @@ assertEq(e, "TypeError: 100 is not an array object");
 
 try { paths = shortestPaths([f], {start: 200}); } catch (exc) { e = ""+exc; };
 assertEq(e, "TypeError: 200 is not a GC thing");
+
+// Bug 1799824.
+let arr = [{}];
+let objWithGetter = {get start() { arr.length = 0; return {}; }};
+try { paths = shortestPaths(arr, objWithGetter); } catch (exc) { e = ""+exc; }
+assertEq(e, "TypeError: arr is not a dense array object with one or more elements");

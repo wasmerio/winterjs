@@ -15,13 +15,16 @@ import itertools
 # This python script knows how to replace the following variables normally configured by cmake for
 # the wasm2c source
 known_vars = [
-    "#cmakedefine CMAKE_PROJECT_VERSION",
+    '#cmakedefine WABT_VERSION_STRING "@WABT_VERSION_STRING@"',
+    "#cmakedefine WABT_DEBUG @WABT_DEBUG@",
     "#cmakedefine01 HAVE_ALLOCA_H",
     "#cmakedefine01 HAVE_UNISTD_H",
     "#cmakedefine01 HAVE_SNPRINTF",
     "#cmakedefine01 HAVE_SSIZE_T",
     "#cmakedefine01 HAVE_STRCASECMP",
     "#cmakedefine01 HAVE_WIN32_VT100",
+    "#cmakedefine01 WABT_BIG_ENDIAN",
+    "#cmakedefine01 HAVE_OPENSSL_SHA_H",
     "#cmakedefine01 COMPILER_IS_CLANG",
     "#cmakedefine01 COMPILER_IS_GNU",
     "#cmakedefine01 COMPILER_IS_MSVC",
@@ -31,13 +34,17 @@ known_vars = [
 
 # The above variables are replaced with the code shown below
 replaced_variables = """
-#include "mozilla-config.h"
-
-#define CMAKE_PROJECT_VERSION "Firefox-in-tree-version"
-
 // mozilla-config.h defines the following which is used
 // - HAVE_ALLOCA_H
 // - HAVE_UNISTD_H
+#include "mozilla-config.h"
+
+#define WABT_VERSION_STRING "Firefox-in-tree-version"
+
+#define WABT_DEBUG 0
+
+/* We don't require color printing of wasm2c errors on any platform */
+#define HAVE_WIN32_VT100 0
 
 #ifdef _WIN32
   // Ignore whatever is set in mozilla-config.h wrt alloca because it is
@@ -47,13 +54,25 @@ replaced_variables = """
   #define HAVE_SSIZE_T 0
   /* Whether strcasecmp is defined by strings.h */
   #define HAVE_STRCASECMP 0
-  /* Whether ENABLE_VIRTUAL_TERMINAL_PROCESSING is defined by windows.h */
-  #define HAVE_WIN32_VT100 1
 #else
   #define HAVE_SSIZE_T 1
   #define HAVE_STRCASECMP 1
-  #define HAVE_WIN32_VT100 0
 #endif
+
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && defined(__ORDER_BIG_ENDIAN__)
+#  if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#    define WABT_BIG_ENDIAN 0
+#  elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#    define WABT_BIG_ENDIAN 1
+#  else
+#    error "Can't handle mixed-endian architectures"
+#  endif
+#else
+#  error "Don't know how to determine endianness"
+#endif
+
+/* Use internal Pico-SHA. Never use OpenSSL */
+#define HAVE_OPENSSL_SHA_H 0
 
 /* Whether snprintf is defined by stdio.h */
 #define HAVE_SNPRINTF 1

@@ -478,6 +478,9 @@ static inline void js_free(void* p) {
 #define JS_DECLARE_NEW_METHODS(NEWNAME, ALLOCATOR, QUALIFIERS)              \
   template <class T, typename... Args>                                      \
   QUALIFIERS T* MOZ_HEAP_ALLOCATOR NEWNAME(Args&&... args) {                \
+    static_assert(                                                          \
+        alignof(T) <= alignof(max_align_t),                                 \
+        "over-aligned type is not supported by JS_DECLARE_NEW_METHODS");    \
     void* memory = ALLOCATOR(sizeof(T));                                    \
     return MOZ_LIKELY(memory) ? new (memory) T(std::forward<Args>(args)...) \
                               : nullptr;                                    \
@@ -494,6 +497,9 @@ static inline void js_free(void* p) {
 #define JS_DECLARE_NEW_ARENA_METHODS(NEWNAME, ALLOCATOR, QUALIFIERS)           \
   template <class T, typename... Args>                                         \
   QUALIFIERS T* MOZ_HEAP_ALLOCATOR NEWNAME(arena_id_t arena, Args&&... args) { \
+    static_assert(                                                             \
+        alignof(T) <= alignof(max_align_t),                                    \
+        "over-aligned type is not supported by JS_DECLARE_NEW_ARENA_METHODS"); \
     void* memory = ALLOCATOR(arena, sizeof(T));                                \
     return MOZ_LIKELY(memory) ? new (memory) T(std::forward<Args>(args)...)    \
                               : nullptr;                                       \
@@ -632,9 +638,10 @@ struct FreePolicy {
   void operator()(const void* ptr) { js_free(const_cast<void*>(ptr)); }
 };
 
-typedef mozilla::UniquePtr<char[], JS::FreePolicy> UniqueChars;
-typedef mozilla::UniquePtr<char16_t[], JS::FreePolicy> UniqueTwoByteChars;
-typedef mozilla::UniquePtr<JS::Latin1Char[], JS::FreePolicy> UniqueLatin1Chars;
+using UniqueChars = mozilla::UniquePtr<char[], JS::FreePolicy>;
+using UniqueTwoByteChars = mozilla::UniquePtr<char16_t[], JS::FreePolicy>;
+using UniqueLatin1Chars = mozilla::UniquePtr<JS::Latin1Char[], JS::FreePolicy>;
+using UniqueWideChars = mozilla::UniquePtr<wchar_t[], JS::FreePolicy>;
 
 }  // namespace JS
 
@@ -642,13 +649,13 @@ typedef mozilla::UniquePtr<JS::Latin1Char[], JS::FreePolicy> UniqueLatin1Chars;
 #ifndef HAVE_STATIC_ANNOTATIONS
 #  define HAVE_STATIC_ANNOTATIONS
 #  ifdef XGILL_PLUGIN
-#    define STATIC_PRECONDITION(COND) __attribute__((precondition(#    COND)))
+#    define STATIC_PRECONDITION(COND) __attribute__((precondition(#COND)))
 #    define STATIC_PRECONDITION_ASSUME(COND) \
       __attribute__((precondition_assume(#COND)))
-#    define STATIC_POSTCONDITION(COND) __attribute__((postcondition(#    COND)))
+#    define STATIC_POSTCONDITION(COND) __attribute__((postcondition(#COND)))
 #    define STATIC_POSTCONDITION_ASSUME(COND) \
       __attribute__((postcondition_assume(#COND)))
-#    define STATIC_INVARIANT(COND) __attribute__((invariant(#    COND)))
+#    define STATIC_INVARIANT(COND) __attribute__((invariant(#COND)))
 #    define STATIC_INVARIANT_ASSUME(COND) \
       __attribute__((invariant_assume(#COND)))
 #    define STATIC_ASSUME(COND)                                          \

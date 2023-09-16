@@ -2,37 +2,41 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, unicode_literals, print_function
-
-import buildconfig
 import os
 import shutil
-import six
 import sys
 import unittest
-import mozpack.path as mozpath
 from contextlib import contextmanager
+from tempfile import mkdtemp
+
+import buildconfig
+import mozpack.path as mozpath
+import six
 from mozfile import which
+from mozpack.files import FileFinder
 from mozunit import main
+
 from mozbuild.backend import get_backend_class
 from mozbuild.backend.configenvironment import ConfigEnvironment
-from mozbuild.backend.recursivemake import RecursiveMakeBackend
 from mozbuild.backend.fastermake import FasterMakeBackend
+from mozbuild.backend.recursivemake import RecursiveMakeBackend
 from mozbuild.base import MozbuildObject
 from mozbuild.frontend.emitter import TreeMetadataEmitter
 from mozbuild.frontend.reader import BuildReader
 from mozbuild.util import ensureParentDir
-from mozpack.files import FileFinder
-from tempfile import mkdtemp
 
 
 def make_path():
     try:
         return buildconfig.substs["GMAKE"]
     except KeyError:
+        fetches_dir = os.environ.get("MOZ_FETCHES_DIR")
+        extra_search_dirs = ()
+        if fetches_dir:
+            extra_search_dirs = (os.path.join(fetches_dir, "mozmake"),)
         # Fallback for when running the test without an objdir.
         for name in ("gmake", "make", "mozmake", "gnumake", "mingw32-make"):
-            path = which(name)
+            path = which(name, extra_search_dirs=extra_search_dirs)
             if path:
                 return path
 

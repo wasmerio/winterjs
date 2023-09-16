@@ -17,7 +17,7 @@
 #include "mozilla/Maybe.h"       // mozilla::Maybe
 #include "mozilla/Range.h"       // mozilla::Range
 #include "mozilla/Span.h"        // mozilla::Span
-#include "mozilla/Tuple.h"       // mozilla::Tuple
+                                 // std::tuple
 
 #include <algorithm>  // std::copy_n
 #include <stddef.h>   // size_t
@@ -317,7 +317,7 @@ JS_PUBLIC_API size_t JS_GetStringEncodingLength(JSContext* cx, JSString* str);
  *
  * The function does not store an additional zero byte.
  */
-JS_PUBLIC_API mozilla::Maybe<mozilla::Tuple<size_t, size_t>>
+JS_PUBLIC_API mozilla::Maybe<std::tuple<size_t, size_t>>
 JS_EncodeStringToUTF8BufferPartial(JSContext* cx, JSString* str,
                                    mozilla::Span<char> buffer);
 
@@ -521,5 +521,18 @@ MOZ_ALWAYS_INLINE void LossyCopyLinearStringChars(char* dest, JSLinearString* s,
 /** DO NOT USE, only present for Rust bindings as a temporary hack */
 [[deprecated]] extern JS_PUBLIC_API bool JS_DeprecatedStringHasLatin1Chars(
     JSString* str);
+
+// JSString* is an aligned pointer, but this information isn't available in the
+// public header. We specialize HasFreeLSB here so that JS::Result<JSString*>
+// compiles.
+
+namespace mozilla {
+namespace detail {
+template <>
+struct HasFreeLSB<JSString*> {
+  static constexpr bool value = true;
+};
+}  // namespace detail
+}  // namespace mozilla
 
 #endif  // js_String_h

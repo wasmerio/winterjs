@@ -10,6 +10,10 @@ loadRelativeToScript('callgraph.js');
 
 var options = parse_options([
     {
+        name: '--verbose',
+        type: 'bool'
+    },
+    {
         name: '--function',
         type: 'string'
     },
@@ -22,11 +26,6 @@ var options = parse_options([
         name: 'callgraphOut_filename',
         type: 'string',
         default: "rawcalls.txt"
-    },
-    {
-        name: 'gcEdgesOut_filename',
-        type: 'string',
-        default: "gcEdges.json"
     },
     {
         name: 'batch',
@@ -45,8 +44,6 @@ var origOut = os.file.redirect(options.callgraphOut_filename);
 var memoized = new Map();
 
 var unmangled2id = new Set();
-
-var gcEdges = {};
 
 // Insert a string into the name table and return the ID. Do not use for
 // functions, which must be handled specially.
@@ -158,20 +155,20 @@ function processBody(functionName, body, functionBodies)
         // The attrs (eg ATTR_GC_SUPPRESSED) are determined by whatever RAII
         // scopes might be active, which have been computed previously for all
         // points in the body.
-        var edgeAttrs = body.attrs[edge.Index[0]] | 0;
+        const scopeAttrs = body.attrs[edge.Index[0]] | 0;
 
-        for (var callee of getCallees(edge)) {
-            // Special-case some calls when we can derive more information about them, eg
-            // that they are a destructor that won't do anything.
-            if (callee.kind === "direct" && edgeIsNonReleasingDtor(body, edge, callee.name, functionBodies)) {
-                const block = blockIdentifier(body);
-                addToKeyedList(gcEdges, block, { Index: edge.Index, attrs: ATTR_GC_SUPPRESSED | ATTR_NONRELEASING });
+        for (const { callee, attrs } of getCallees(body, edge, scopeAttrs, functionBodies)) {
+            // Some function names will be synthesized by manually constructing
+            // their names. Verify that we managed to synthesize an existing function.
+            // This cannot be done later with either the callees or callers tables,
+            // because the function may be an otherwise uncalled leaf.
+            if (attrs & ATTR_SYNTHETIC) {
+                assertFunctionExists(callee.name);
             }
 
             // Individual callees may have additional attrs. The only such
             // bit currently is that nsISupports.{AddRef,Release} are assumed
             // to never GC.
-            const attrs = edgeAttrs | callee.attrs;
             let prologue = attrs ? `/${attrs} ` : "";
             prologue += functionId(functionName) + " ";
             if (callee.kind == 'direct') {
@@ -273,7 +270,9 @@ for (const [csu, methods] of virtualDeclarations) {
 var xdb = xdbLibrary();
 xdb.open("src_body.xdb");
 
-printErr("Finished loading data structures");
+if (options.verbose) {
+    printErr("Finished loading data structures");
+}
 
 var minStream = xdb.min_data_stream();
 var maxStream = xdb.max_data_stream();
@@ -287,6 +286,11 @@ if (options.function) {
     minStream = maxStream = index;
 }
 
+function assertFunctionExists(name) {
+    var data = xdb.read_entry(name);
+    assert(data.contents != 0, `synthetic function '${name}' not found!`);
+}
+
 function process(functionName, functionBodies)
 {
     for (var body of functionBodies)
@@ -298,8 +302,12 @@ function process(functionName, functionBodies)
         }
     }
 
-    for (var body of functionBodies)
+    if (options.function) {
+        debugger;
+    }
+    for (var body of functionBodies) {
         processBody(functionName, body, functionBodies);
+    }
 
     // Not strictly necessary, but add an edge from the synthetic "(js-code)"
     // to RunScript to allow better stacks than just randomly selecting a
@@ -422,9 +430,5 @@ for (var nameIndex = start; nameIndex <= end; nameIndex++) {
     xdb.free_string(name);
     xdb.free_string(data);
 }
-
-os.file.close(os.file.redirect(options.gcEdgesOut_filename));
-
-print(JSON.stringify(gcEdges, null, 4));
 
 os.file.close(os.file.redirect(origOut));

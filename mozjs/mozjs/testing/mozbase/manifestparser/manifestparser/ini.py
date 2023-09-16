@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
 import io
 import os
 import sys
@@ -57,6 +55,7 @@ def read_ini(
         fp = io.open(fp, encoding="utf-8")
 
     # read the lines
+    current_section_name = ""
     for (linenum, line) in enumerate(fp.read().splitlines(), start=1):
 
         stripped = line.strip()
@@ -99,6 +98,7 @@ def read_ini(
                     assert default not in section_names
                 section_names.add(default)
                 current_section = default_section
+                current_section_name = "DEFAULT"
                 continue
 
             if strict:
@@ -109,6 +109,7 @@ def read_ini(
 
             section_names.add(section)
             current_section = {}
+            current_section_name = section
             sections.append((section, current_section))
             continue
 
@@ -124,6 +125,16 @@ def read_ini(
         line_indent = len(line) - len(line.lstrip(" "))
         if key and line_indent > key_indent:
             value = "%s%s%s" % (value, os.linesep, stripped)
+            if strict:
+                # make sure the value doesn't contain assignments
+                if " = " in value:
+                    raise IniParseError(
+                        fp,
+                        linenum,
+                        "Should not assign in {} condition for {}".format(
+                            key, current_section_name
+                        ),
+                    )
             current_section[key] = value
             continue
 
@@ -137,11 +148,22 @@ def read_ini(
 
                 # make sure this key isn't already in the section
                 if key:
-                    assert key not in current_section
+                    assert (
+                        key not in current_section
+                    ), f"Found duplicate key {key} in section {section}"
 
                 if strict:
                     # make sure this key isn't empty
                     assert key
+                    # make sure the value doesn't contain assignments
+                    if " = " in value:
+                        raise IniParseError(
+                            fp,
+                            linenum,
+                            "Should not assign in {} condition for {}".format(
+                                key, current_section_name
+                            ),
+                        )
 
                 current_section[key] = value
                 break

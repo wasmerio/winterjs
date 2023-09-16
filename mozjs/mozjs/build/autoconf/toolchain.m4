@@ -79,9 +79,6 @@ esac
 AC_PROG_CC
 AC_PROG_CXX
 
-AC_CHECK_PROGS(LIPO, "${TOOLCHAIN_PREFIX}lipo", :)
-AC_CHECK_PROGS(OTOOL, "${TOOLCHAIN_PREFIX}otool", :)
-AC_CHECK_PROGS(INSTALL_NAME_TOOL, "${TOOLCHAIN_PREFIX}install_name_tool", :)
 PATH=$_SAVE_PATH
 ])
 
@@ -93,28 +90,21 @@ AC_LANG_CPLUSPLUS
 if test "$GNU_CXX"; then
     AC_CACHE_CHECK([whether 64-bits std::atomic requires -latomic],
         ac_cv_needs_atomic,
-        dnl x86 with clang is a little peculiar.  std::atomic does not require
-        dnl linking with libatomic, but using atomic intrinsics does, so we
-        dnl force the setting on for such systems.
-        if test "$CC_TYPE" = "clang" -a "$CPU_ARCH" = "x86" -a "$OS_ARCH" = "Linux"; then
-            ac_cv_needs_atomic=yes
-        else
+        AC_TRY_LINK(
+            [#include <cstdint>
+             #include <atomic>],
+            [ std::atomic<uint64_t> foo; foo = 1; ],
+            ac_cv_needs_atomic=no,
+            _SAVE_LIBS="$LIBS"
+            LIBS="$LIBS -latomic"
             AC_TRY_LINK(
                 [#include <cstdint>
                  #include <atomic>],
                 [ std::atomic<uint64_t> foo; foo = 1; ],
-                ac_cv_needs_atomic=no,
-                _SAVE_LIBS="$LIBS"
-                LIBS="$LIBS -latomic"
-                AC_TRY_LINK(
-                    [#include <cstdint>
-                     #include <atomic>],
-                    [ std::atomic<uint64_t> foo; foo = 1; ],
-                    ac_cv_needs_atomic=yes,
-                    ac_cv_needs_atomic="do not know; assuming no")
-                LIBS="$_SAVE_LIBS"
-            )
-        fi
+                ac_cv_needs_atomic=yes,
+                ac_cv_needs_atomic="do not know; assuming no")
+            LIBS="$_SAVE_LIBS"
+        )
     )
     if test "$ac_cv_needs_atomic" = yes; then
       MOZ_NEEDS_LIBATOMIC=1

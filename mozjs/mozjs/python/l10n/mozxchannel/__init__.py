@@ -2,18 +2,18 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this,
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import os
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
-import os
-import shutil
-from compare_locales import merge
-import hglib
 from pathlib import Path
 
+import hglib
+from compare_locales import merge
 from mozpack import path as mozpath
-from . import projectconfig
-from . import source
+
+from . import projectconfig, source
 
 
 def get_default_config(topsrcdir, strings_path):
@@ -44,25 +44,6 @@ def get_default_config(topsrcdir, strings_path):
                 "config_files": [
                     "browser/locales/l10n.toml",
                     "mobile/android/locales/l10n.toml",
-                ],
-            },
-            "comm-central": {
-                "path": topsrcdir / "comm",
-                "post-clobber": True,
-                "url": "https://hg.mozilla.org/comm-central/",
-                "heads": {
-                    # This list of repositories is ordered, starting with the
-                    # one with the most recent content (central) to the oldest
-                    # (ESR). In case two ESR versions are supported, the oldest
-                    # ESR goes last (e.g. esr78 goes after esr91).
-                    "comm": "comm-central",
-                    "comm-beta": "releases/comm-beta",
-                    "comm-esr102": "releases/comm-esr102",
-                },
-                "config_files": [
-                    "comm/calendar/locales/l10n.toml",
-                    "comm/mail/locales/l10n.toml",
-                    "comm/suite/locales/l10n.toml",
                 ],
             },
         },

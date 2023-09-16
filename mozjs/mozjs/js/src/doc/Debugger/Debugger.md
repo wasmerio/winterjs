@@ -3,7 +3,7 @@
 When called as a constructor, the `Debugger` object creates a new
 `Debugger` instance.
 
-### `new Debugger([global, ...])`
+## `new Debugger([global, ...])`
 Create a debugger object, and apply its [`addDebuggee`][add] method to
 each of the given <i>global</i> objects to add them as the initial
 debuggees.
@@ -166,10 +166,10 @@ call, it must be an object.
 
 SpiderMonkey only calls `onNativeCall` hooks when execution is inside a
 debugger evaluation associated with the debugger that has the `onNativeCall`
-hook.  Such evaluation methods include `Debugger.Object.executeInGlobal`,
-`Debugger.Frame.eval`, and associated methods.
+hook.  Such evaluation methods include `Debugger.Object.apply`, `Debugger.Object.call`,
+`Debugger.Object.executeInGlobal`, `Debugger.Frame.eval`, and associated methods.
 
-Separately, any Debugger hooks triggered during calls to
+Separately, any Debugger hooks triggered during calls to  `Debugger.Object.apply`, `Debugger.Object.call`,
 `Debugger.Object.executeInGlobal`, `Debugger.Frame.eval`, and associated methods
 will only be triggered on Debugger objects owned by the Debugger performing
 the evaluation.
@@ -526,6 +526,14 @@ Enable async stack capturing for the realm for the global object designated by
 Disable async stack capturing for the realm for the global object designated by
 <i>global</i>.
 
+### `enableUnlimitedStacksCapturing(global)`
+Allow to capture more than 50 stacktraces for the realm for the global object
+designated by <i>global</i>, even if it is not a debuggee.
+
+### `disableUnlimitedStacksCapturing(global)`
+Disallow to capture more than 50 stacktraces for the realm for the global object
+designated by <i>global</i>, unless it is a debuggee.
+
 ## Static methods of the Debugger Object
 
 The functions described below are not called with a `this` value.
@@ -540,8 +548,8 @@ The functions described below are not called with a `this` value.
 [add]: #adddebuggee-global
 [source]: Debugger.Source.md
 [script]: Debugger.Script.md
-[rv]: Conventions.html#resumption-values
+[rv]: Conventions.md#resumption-values
 [object]: Debugger.Object.md
-[vf]: Debugger.Frame.html#visible-frames
-[tracking-allocs]: Debugger.Memory.html#trackingallocationsites
+[vf]: Debugger.Frame.md#visible-frames
+[tracking-allocs]: Debugger.Memory.md#trackingallocationsites
 [frame]: Debugger.Frame.md

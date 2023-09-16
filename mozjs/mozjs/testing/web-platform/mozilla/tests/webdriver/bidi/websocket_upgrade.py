@@ -1,6 +1,5 @@
 import pytest
-
-from support.network import websocket_request, get_host
+from support.network import get_host, websocket_request
 
 
 @pytest.mark.parametrize(
@@ -53,10 +52,11 @@ from support.network import websocket_request, get_host
 def test_host_header(browser, hostname, port_type, status):
     # Request a default browser
     current_browser = browser(use_bidi=True)
+    server_host = current_browser.remote_agent_host
     server_port = current_browser.remote_agent_port
     test_host = get_host(port_type, hostname, server_port)
 
-    response = websocket_request("127.0.0.1", server_port, host=test_host)
+    response = websocket_request(server_host, server_port, host=test_host)
     assert response.status == status
 
 
@@ -105,10 +105,11 @@ def test_allowed_hosts(browser, hostname, port_type, status):
         use_bidi=True,
         extra_args=["--remote-allow-hosts", "testhost"],
     )
+    server_host = current_browser.remote_agent_host
     server_port = current_browser.remote_agent_port
     test_host = get_host(port_type, hostname, server_port)
 
-    response = websocket_request("127.0.0.1", server_port, host=test_host)
+    response = websocket_request(server_host, server_port, host=test_host)
     assert response.status == status
 
 
@@ -124,8 +125,9 @@ def test_allowed_hosts(browser, hostname, port_type, status):
 def test_origin_header(browser, origin, status):
     # Request a default browser.
     current_browser = browser(use_bidi=True)
+    server_host = current_browser.remote_agent_host
     server_port = current_browser.remote_agent_port
-    response = websocket_request("127.0.0.1", server_port, origin=origin)
+    response = websocket_request(server_host, server_port, origin=origin)
     assert response.status == status
 
 

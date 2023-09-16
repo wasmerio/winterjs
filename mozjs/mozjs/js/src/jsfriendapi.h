@@ -388,6 +388,11 @@ JS_PUBLIC_API JSFunction* NewFunctionByIdWithReserved(JSContext* cx,
                                                       unsigned nargs,
                                                       unsigned flags, jsid id);
 
+/**
+ * Get or set function's reserved slot value.
+ * `fun` should be a function created with `*WithReserved` API above.
+ * Such functions have 2 reserved slots, and `which` can be either 0 or 1.
+ */
 JS_PUBLIC_API const JS::Value& GetFunctionNativeReserved(JSObject* fun,
                                                          size_t which);
 
@@ -733,10 +738,52 @@ class MOZ_STACK_CLASS JS_PUBLIC_API AutoAssertNoContentJS {
 };
 
 /**
+ * This function reports memory used by a zone in bytes, this includes:
+ *  * The size of this JS GC zone.
+ *  * Malloc memory referred to from this zone.
+ *  * JIT memory for this zone.
+ *
+ * Note that malloc memory referred to from this zone can include
+ * SharedArrayBuffers which may also be referred to from other zones. Adding the
+ * memory usage of multiple zones may lead to an over-estimate.
+ */
+extern JS_PUBLIC_API uint64_t GetMemoryUsageForZone(JS::Zone* zone);
+
+enum class MemoryUse : uint8_t;
+
+namespace gc {
+
+struct SharedMemoryUse {
+  explicit SharedMemoryUse(MemoryUse use) : count(0), nbytes(0) {
+#ifdef DEBUG
+    this->use = use;
+#endif
+  }
+
+  size_t count;
+  size_t nbytes;
+#ifdef DEBUG
+  MemoryUse use;
+#endif
+};
+
+// A map which tracks shared memory uses (shared in the sense that an allocation
+// can be referenced by more than one GC thing in a zone). This allows us to
+// only account for the memory once.
+using SharedMemoryMap =
+    HashMap<void*, SharedMemoryUse, DefaultHasher<void*>, SystemAllocPolicy>;
+
+} /* namespace gc */
+
+extern JS_PUBLIC_API const gc::SharedMemoryMap& GetSharedMemoryUsageForZone(
+    JS::Zone* zone);
+
+/**
  * This function only reports GC heap memory,
  * and not malloc allocated memory associated with GC things.
+ * It reports the total of all memory for the whole Runtime.
  */
-extern JS_PUBLIC_API uint64_t GetGCHeapUsageForObjectZone(JSObject* obj);
+extern JS_PUBLIC_API uint64_t GetGCHeapUsage(JSContext* cx);
 
 class JS_PUBLIC_API CompartmentTransplantCallback {
  public:

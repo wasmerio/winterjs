@@ -61,27 +61,37 @@ using mozilla::Maybe;
 using mozilla::Range;
 using mozilla::RangedPtr;
 
+static PlainObject* CreateThis(JSContext* cx, HandleObject newTarget) {
+  RootedObject proto(cx);
+  if (!GetPrototypeFromConstructor(cx, newTarget, JSProto_Object, &proto)) {
+    return nullptr;
+  }
+
+  gc::AllocKind allocKind = NewObjectGCKind();
+
+  if (proto) {
+    return NewPlainObjectWithProtoAndAllocKind(cx, proto, allocKind);
+  }
+  return NewPlainObjectWithAllocKind(cx, allocKind);
+}
+
 bool js::obj_construct(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  RootedObject obj(cx, nullptr);
+  JSObject* obj;
   if (args.isConstructing() &&
       (&args.newTarget().toObject() != &args.callee())) {
     RootedObject newTarget(cx, &args.newTarget().toObject());
-    obj = CreateThis(cx, &PlainObject::class_, newTarget);
-    if (!obj) {
-      return false;
-    }
+    obj = CreateThis(cx, newTarget);
   } else if (args.length() > 0 && !args[0].isNullOrUndefined()) {
     obj = ToObject(cx, args[0]);
-    if (!obj) {
-      return false;
-    }
   } else {
     /* Make an object whether this was called with 'new' or not. */
-    if (!NewObjectScriptedCall(cx, &obj)) {
-      return false;
-    }
+    gc::AllocKind allocKind = NewObjectGCKind();
+    obj = NewPlainObjectWithAllocKind(cx, allocKind);
+  }
+  if (!obj) {
+    return false;
   }
 
   args.rval().setObject(*obj);
@@ -570,9 +580,8 @@ static JSString* GetBuiltinTagSlow(JSContext* cx, HandleObject obj) {
 }
 
 static MOZ_ALWAYS_INLINE JSString* GetBuiltinTagFast(JSObject* obj,
-                                                     const JSClass* clasp,
                                                      JSContext* cx) {
-  MOZ_ASSERT(clasp == obj->getClass());
+  const JSClass* clasp = obj->getClass();
   MOZ_ASSERT(!clasp->isProxyObject());
 
   // Optimize the non-proxy case to bypass GetBuiltinClass.
@@ -701,8 +710,7 @@ bool js::obj_toString(JSContext* cx, unsigned argc, Value* vp) {
 
   // When |obj| is a non-proxy object, compute |builtinTag| only when needed.
   RootedString builtinTag(cx);
-  const JSClass* clasp = obj->getClass();
-  if (MOZ_UNLIKELY(clasp->isProxyObject())) {
+  if (MOZ_UNLIKELY(obj->is<ProxyObject>())) {
     builtinTag = GetBuiltinTagSlow(cx, obj);
     if (!builtinTag) {
       return false;
@@ -719,7 +727,7 @@ bool js::obj_toString(JSContext* cx, unsigned argc, Value* vp) {
   // Step 16.
   if (!tag.isString()) {
     if (!builtinTag) {
-      builtinTag = GetBuiltinTagFast(obj, clasp, cx);
+      builtinTag = GetBuiltinTagFast(obj, cx);
 #ifdef DEBUG
       // Assert this fast path is correct and matches BuiltinTagSlow.
       JSString* builtinTagSlow = GetBuiltinTagSlow(cx, obj);
@@ -756,7 +764,7 @@ JSString* js::ObjectClassToString(JSContext* cx, JSObject* obj) {
                                         cx->wellKnownSymbols().toStringTag)) {
     return nullptr;
   }
-  return GetBuiltinTagFast(obj, obj->getClass(), cx);
+  return GetBuiltinTagFast(obj, cx);
 }
 
 static bool obj_setPrototypeOf(JSContext* cx, unsigned argc, Value* vp) {
@@ -926,7 +934,7 @@ static bool CanAddNewPropertyExcludingProtoFast(PlainObject* obj) {
       toPlain->canReuseShapeForNewProperties(fromPlain->shape())) {
     MOZ_ASSERT(!Watchtower::watchesPropertyAdd(toPlain),
                "watched objects require Watchtower calls");
-    Shape* newShape = fromPlain->shape();
+    SharedShape* newShape = fromPlain->sharedShape();
     uint32_t oldSpan = 0;
     uint32_t newSpan = props.length();
     if (!toPlain->setShapeAndAddNewSlots(cx, newShape, oldSpan, newSpan)) {
@@ -998,7 +1006,7 @@ static bool TryAssignNative(JSContext* cx, HandleObject to, HandleObject from,
 
   Rooted<PropertyInfoWithKeyVector> props(cx, PropertyInfoWithKeyVector(cx));
 
-  Rooted<Shape*> fromShape(cx, fromNative->shape());
+  Rooted<NativeShape*> fromShape(cx, fromNative->shape());
   for (ShapePropertyIter<NoGC> iter(fromShape); !iter.done(); iter++) {
     // Symbol properties need to be assigned last. For now fall back to the
     // slow path if we see a symbol property.
@@ -1688,7 +1696,7 @@ static bool TryEnumerableOwnPropertiesNative(JSContext* cx, HandleObject obj,
     Rooted<PropertyInfoWithKeyVector> props(cx, PropertyInfoWithKeyVector(cx));
 
     // Collect all non-symbol properties.
-    Rooted<Shape*> objShape(cx, nobj->shape());
+    Rooted<NativeShape*> objShape(cx, nobj->shape());
     for (ShapePropertyIter<NoGC> iter(objShape); !iter.done(); iter++) {
       if (iter->key().isSymbol()) {
         continue;
@@ -2263,7 +2271,7 @@ static bool FinishObjectClassInit(JSContext* cx, JS::HandleObject ctor,
                                   JS::HandleObject proto) {
   Rooted<GlobalObject*> global(cx, cx->global());
 
-  /* ES5 15.1.2.1. */
+  // ES5 15.1.2.1.
   RootedId evalId(cx, NameToId(cx->names().eval));
   JSFunction* evalobj =
       DefineFunction(cx, global, evalId, IndirectEval, 1, JSPROP_RESOLVING);
@@ -2281,21 +2289,10 @@ static bool FinishObjectClassInit(JSContext* cx, JS::HandleObject ctor,
   }
 #endif
 
-  /*
-   * The global object should have |Object.prototype| as its [[Prototype]].
-   * Eventually we'd like to have standard classes be there from the start,
-   * and thus we would know we were always setting what had previously been a
-   * null [[Prototype]], but right now some code assumes it can set the
-   * [[Prototype]] before standard classes have been initialized.  For now,
-   * only set the [[Prototype]] if it hasn't already been set.
-   */
-  if (global->staticPrototype() == nullptr) {
-    MOZ_ASSERT(!global->staticPrototypeIsImmutable());
-    if (!SetPrototype(cx, global, proto)) {
-      return false;
-    }
-  }
-  return true;
+  // The global object should have |Object.prototype| as its [[Prototype]].
+  MOZ_ASSERT(global->staticPrototype() == nullptr);
+  MOZ_ASSERT(!global->staticPrototypeIsImmutable());
+  return SetPrototype(cx, global, proto);
 }
 
 static const ClassSpec PlainObjectClassSpec = {

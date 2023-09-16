@@ -1251,11 +1251,14 @@ bool MMathFunction::writeRecoverData(CompactBufferWriter& writer) const {
     case UnaryMathFunction::Trunc:
       writer.writeUnsigned(uint32_t(RInstruction::Recover_Trunc));
       return true;
+    case UnaryMathFunction::SinNative:
+    case UnaryMathFunction::SinFdlibm:
+    case UnaryMathFunction::CosNative:
+    case UnaryMathFunction::CosFdlibm:
+    case UnaryMathFunction::TanNative:
+    case UnaryMathFunction::TanFdlibm:
     case UnaryMathFunction::Log:
-    case UnaryMathFunction::Sin:
-    case UnaryMathFunction::Cos:
     case UnaryMathFunction::Exp:
-    case UnaryMathFunction::Tan:
     case UnaryMathFunction::ACos:
     case UnaryMathFunction::ASin:
     case UnaryMathFunction::ATan:
@@ -1287,20 +1290,29 @@ bool RMathFunction::recover(JSContext* cx, SnapshotIterator& iter) const {
 
   double result;
   switch (function_) {
+    case UnaryMathFunction::SinNative:
+      result = js::math_sin_native_impl(num);
+      break;
+    case UnaryMathFunction::SinFdlibm:
+      result = js::math_sin_fdlibm_impl(num);
+      break;
+    case UnaryMathFunction::CosNative:
+      result = js::math_cos_native_impl(num);
+      break;
+    case UnaryMathFunction::CosFdlibm:
+      result = js::math_cos_fdlibm_impl(num);
+      break;
+    case UnaryMathFunction::TanNative:
+      result = js::math_tan_native_impl(num);
+      break;
+    case UnaryMathFunction::TanFdlibm:
+      result = js::math_tan_fdlibm_impl(num);
+      break;
     case UnaryMathFunction::Log:
       result = js::math_log_impl(num);
       break;
-    case UnaryMathFunction::Sin:
-      result = js::math_sin_impl(num);
-      break;
-    case UnaryMathFunction::Cos:
-      result = js::math_cos_impl(num);
-      break;
     case UnaryMathFunction::Exp:
       result = js::math_exp_impl(num);
-      break;
-    case UnaryMathFunction::Tan:
-      result = js::math_tan_impl(num);
       break;
     case UnaryMathFunction::ACos:
       result = js::math_acos_impl(num);
@@ -1405,7 +1417,7 @@ RNaNToZero::RNaNToZero(CompactBufferReader& reader) {}
 
 bool RNaNToZero::recover(JSContext* cx, SnapshotIterator& iter) const {
   double v = iter.read().toNumber();
-  if (mozilla::IsNaN(v) || mozilla::IsNegativeZero(v)) {
+  if (std::isnan(v) || mozilla::IsNegativeZero(v)) {
     v = 0.0;
   }
 
@@ -1454,28 +1466,6 @@ bool RRegExpSearcher::recover(JSContext* cx, SnapshotIterator& iter) const {
   }
 
   iter.storeInstructionResult(Int32Value(result));
-  return true;
-}
-
-bool MRegExpTester::writeRecoverData(CompactBufferWriter& writer) const {
-  MOZ_ASSERT(canRecoverOnBailout());
-  writer.writeUnsigned(uint32_t(RInstruction::Recover_RegExpTester));
-  return true;
-}
-
-RRegExpTester::RRegExpTester(CompactBufferReader& reader) {}
-
-bool RRegExpTester::recover(JSContext* cx, SnapshotIterator& iter) const {
-  RootedString string(cx, iter.read().toString());
-  RootedObject regexp(cx, &iter.read().toObject());
-  int32_t lastIndex = iter.read().toInt32();
-  int32_t endIndex;
-
-  if (!js::RegExpTesterRaw(cx, regexp, string, lastIndex, &endIndex)) {
-    return false;
-  }
-
-  iter.storeInstructionResult(Int32Value(endIndex));
   return true;
 }
 
@@ -1604,7 +1594,7 @@ bool MNewPlainObject::writeRecoverData(CompactBufferWriter& writer) const {
 
   MOZ_ASSERT(gc::AllocKind(uint8_t(allocKind_)) == allocKind_);
   writer.writeByte(uint8_t(allocKind_));
-  MOZ_ASSERT(gc::InitialHeap(uint8_t(initialHeap_)) == initialHeap_);
+  MOZ_ASSERT(gc::Heap(uint8_t(initialHeap_)) == initialHeap_);
   writer.writeByte(uint8_t(initialHeap_));
   return true;
 }
@@ -1612,13 +1602,14 @@ bool MNewPlainObject::writeRecoverData(CompactBufferWriter& writer) const {
 RNewPlainObject::RNewPlainObject(CompactBufferReader& reader) {
   allocKind_ = gc::AllocKind(reader.readByte());
   MOZ_ASSERT(gc::IsValidAllocKind(allocKind_));
-  initialHeap_ = gc::InitialHeap(reader.readByte());
-  MOZ_ASSERT(initialHeap_ == gc::DefaultHeap ||
-             initialHeap_ == gc::TenuredHeap);
+  initialHeap_ = gc::Heap(reader.readByte());
+  MOZ_ASSERT(initialHeap_ == gc::Heap::Default ||
+             initialHeap_ == gc::Heap::Tenured);
 }
 
 bool RNewPlainObject::recover(JSContext* cx, SnapshotIterator& iter) const {
-  Rooted<Shape*> shape(cx, &iter.read().toGCCellPtr().as<Shape>());
+  Rooted<SharedShape*> shape(cx,
+                             &iter.read().toGCCellPtr().as<Shape>().asShared());
 
   // See CodeGenerator::visitNewPlainObject.
   JSObject* resultObject =
@@ -1636,23 +1627,23 @@ bool MNewArrayObject::writeRecoverData(CompactBufferWriter& writer) const {
   writer.writeUnsigned(uint32_t(RInstruction::Recover_NewArrayObject));
 
   writer.writeUnsigned(length_);
-  MOZ_ASSERT(gc::InitialHeap(uint8_t(initialHeap_)) == initialHeap_);
+  MOZ_ASSERT(gc::Heap(uint8_t(initialHeap_)) == initialHeap_);
   writer.writeByte(uint8_t(initialHeap_));
   return true;
 }
 
 RNewArrayObject::RNewArrayObject(CompactBufferReader& reader) {
   length_ = reader.readUnsigned();
-  initialHeap_ = gc::InitialHeap(reader.readByte());
-  MOZ_ASSERT(initialHeap_ == gc::DefaultHeap ||
-             initialHeap_ == gc::TenuredHeap);
+  initialHeap_ = gc::Heap(reader.readByte());
+  MOZ_ASSERT(initialHeap_ == gc::Heap::Default ||
+             initialHeap_ == gc::Heap::Tenured);
 }
 
 bool RNewArrayObject::recover(JSContext* cx, SnapshotIterator& iter) const {
   iter.read();  // Skip unused shape field.
 
   NewObjectKind kind =
-      initialHeap_ == gc::TenuredHeap ? TenuredObject : GenericObject;
+      initialHeap_ == gc::Heap::Tenured ? TenuredObject : GenericObject;
   JSObject* array = NewArrayOperation(cx, length_, kind);
   if (!array) {
     return false;
@@ -1801,7 +1792,7 @@ RNewCallObject::RNewCallObject(CompactBufferReader& reader) {}
 bool RNewCallObject::recover(JSContext* cx, SnapshotIterator& iter) const {
   Rooted<CallObject*> templateObj(cx, &iter.read().toObject().as<CallObject>());
 
-  Rooted<Shape*> shape(cx, templateObj->shape());
+  Rooted<SharedShape*> shape(cx, templateObj->sharedShape());
 
   JSObject* resultObject = CallObject::createWithShape(cx, shape);
   if (!resultObject) {

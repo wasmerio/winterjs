@@ -13,9 +13,9 @@ import os
 import sys
 import time
 
-print(sys.path, file=sys.stderr)
 import blessed
 import six
+from mozbuild.util import mozilla_build_version
 from packaging.version import Version
 
 IS_WINDOWS = sys.platform.startswith("win")
@@ -50,7 +50,7 @@ def enable_blessed():
     # MozillaBuild 4.0.2 is the first Release that supports
     # ANSI escape sequences, so if we're greater than that
     # version, we can enable them (via Blessed).
-    return False
+    return mozilla_build_version() >= Version("4.0.2")
 
 
 # stdout and stderr may not necessarily be set up to write Unicode output, so

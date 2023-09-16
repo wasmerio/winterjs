@@ -15,13 +15,13 @@ MOZ_PKG_VERSION = $(MOZ_APP_VERSION)
 endif
 
 ifndef MOZ_PKG_PLATFORM
-MOZ_PKG_PLATFORM := $(TARGET_OS)-$(TARGET_CPU)
+MOZ_PKG_PLATFORM := $(TARGET_RAW_OS)-$(TARGET_CPU)
 
 ifeq ($(MOZ_BUILD_APP),mobile/android)
 MOZ_PKG_PLATFORM := android-$(TARGET_CPU)
 endif
 
-# TARGET_OS/TARGET_CPU may be unintuitive, so we hardcode some special formats
+# TARGET_RAW_OS/TARGET_CPU may be unintuitive, so we hardcode some special formats
 ifeq ($(OS_ARCH),WINNT)
 ifeq ($(CPU_ARCH),x86)
 MOZ_PKG_PLATFORM := win32
@@ -36,7 +36,7 @@ endif
 ifeq ($(OS_ARCH),Darwin)
 MOZ_PKG_PLATFORM := mac
 endif
-ifeq ($(TARGET_OS),linux-gnu)
+ifeq ($(TARGET_RAW_OS),linux-gnu)
 MOZ_PKG_PLATFORM := linux-$(TARGET_CPU)
 endif
 endif #MOZ_PKG_PLATFORM
@@ -90,9 +90,8 @@ CODE_COVERAGE_ARCHIVE_BASENAME = $(PKG_BASENAME).code-coverage-gcno
 
 # Mozsearch package naming
 MOZSEARCH_ARCHIVE_BASENAME = $(PKG_BASENAME).mozsearch-index
-MOZSEARCH_RUST_ANALYSIS_BASENAME = $(PKG_BASENAME).mozsearch-rust
-MOZSEARCH_RUST_STDLIB_BASENAME = $(PKG_BASENAME).mozsearch-rust-stdlib
 MOZSEARCH_INCLUDEMAP_BASENAME = $(PKG_BASENAME).mozsearch-distinclude
+MOZSEARCH_SCIP_INDEX_BASENAME = $(PKG_BASENAME).mozsearch-scip-index
 
 # Mozharness naming
 MOZHARNESS_PACKAGE = mozharness.zip
@@ -111,6 +110,9 @@ GTEST_PACKAGE = $(PKG_BASENAME).gtest.tests.tar.gz
 # macOS codesigning package naming
 MACOS_CODESIGN_ARCHIVE_BASENAME = $(PKG_BASENAME).codesign-entitlements
 
+# `.xpt` artifacts: for use in artifact builds.
+XPT_ARTIFACTS_ARCHIVE_BASENAME = $(PKG_BASENAME).xpt_artifacts
+
 ifneq (,$(wildcard $(DIST)/bin/application.ini))
 BUILDID = $(shell $(PYTHON3) $(MOZILLA_DIR)/config/printconfigsetting.py $(DIST)/bin/application.ini App BuildID)
 else
@@ -120,7 +122,6 @@ endif
 MOZ_SOURCESTAMP_FILE = $(DIST)/$(PKG_PATH)/$(MOZ_INFO_BASENAME).txt
 MOZ_BUILDINFO_FILE = $(DIST)/$(PKG_PATH)/$(MOZ_INFO_BASENAME).json
 MOZ_BUILDHUB_JSON = $(DIST)/$(PKG_PATH)/buildhub.json
-MOZ_NORMANDY_JSON = $(DIST)/$(PKG_PATH)/$(PKG_BASENAME).normandy.json
 MOZ_BUILDID_INFO_TXT_FILE = $(DIST)/$(PKG_PATH)/$(MOZ_INFO_BASENAME)_info.txt
 MOZ_MOZINFO_FILE = $(DIST)/$(PKG_PATH)/$(MOZ_INFO_BASENAME).mozinfo.json
 MOZ_TEST_PACKAGES_FILE = $(DIST)/$(PKG_PATH)/$(PKG_BASENAME).test_packages.json

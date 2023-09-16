@@ -3,9 +3,9 @@ import os
 import re
 import subprocess
 import sys
+from collections import defaultdict, namedtuple
 
 from sixgill import Body
-from collections import defaultdict, namedtuple
 
 scriptdir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -54,13 +54,15 @@ class Test(object):
     def compile(self, source, options=""):
         env = os.environ
         env["CCACHE_DISABLE"] = "1"
-        cmd = "{CXX} -c {source} -O3 -std=c++11 -fplugin={sixgill} -fplugin-arg-xgill-mangle=1 {options}".format(  # NOQA: E501
+        if "-fexceptions" not in options and "-fno-exceptions" not in options:
+            options += " -fno-exceptions"
+        cmd = "{CXX} -c {source} -O3 -std=c++17 -fplugin={sixgill} -fplugin-arg-xgill-mangle=1 {options}".format(  # NOQA: E501
             source=self.infile(source),
             CXX=self.cfg.cxx,
             sixgill=self.cfg.sixgill_plugin,
             options=options,
         )
-        if self.cfg.verbose:
+        if self.cfg.verbose > 0:
             print("Running %s" % cmd)
         subprocess.check_call(["sh", "-c", cmd])
 
@@ -85,7 +87,7 @@ class Test(object):
         )
         return json.loads(output)
 
-    def run_analysis_script(self, startPhase, upto=None):
+    def run_analysis_script(self, startPhase="gcTypes", upto=None):
         open("defaults.py", "w").write(
             """\
 analysis_scriptdir = '{scriptdir}'
@@ -97,16 +99,14 @@ sixgill_bin = '{bindir}'
         cmd = [
             sys.executable,
             os.path.join(scriptdir, "analyze.py"),
-            "-v" if self.verbose else "-q",
+            ["-q", "", "-v"][min(self.verbose, 2)],
         ]
         cmd += ["--first", startPhase]
         if upto:
             cmd += ["--last", upto]
         cmd.append("--source=%s" % self.indir)
-        cmd.append("--objdir=%s" % self.outdir)
         cmd.append("--js=%s" % self.cfg.js)
         if self.cfg.verbose:
-            cmd.append("--verbose")
             print("Running " + " ".join(cmd))
         subprocess.check_call(cmd)
 
@@ -222,7 +222,7 @@ sixgill_bin = '{bindir}'
                 return HazardSummary(*info)
             return None
 
-        return self.load_text_file("rootingHazards.txt", extract=grab_hazard)
+        return self.load_text_file("hazards.txt", extract=grab_hazard)
 
     def process_body(self, body):
         return Body(body)

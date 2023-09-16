@@ -205,8 +205,13 @@ static void OnLeaveIonFrame(JSContext* cx, const InlineFrameIterator& frame,
   RematerializedFrame* rematFrame = nullptr;
   {
     JS::AutoSaveExceptionState savedExc(cx);
-    rematFrame =
-        act->getRematerializedFrame(cx, frame.frame(), frame.frameNo());
+
+    // We can run recover instructions without invalidating because we're
+    // already leaving the frame.
+    MaybeReadFallback::FallbackConsequence consequence =
+        MaybeReadFallback::Fallback_DoNothing;
+    rematFrame = act->getRematerializedFrame(cx, frame.frame(), frame.frameNo(),
+                                             consequence);
     if (!rematFrame) {
       return;
     }
@@ -663,6 +668,12 @@ void HandleException(ResumeFromException* rfe) {
 
 #ifdef DEBUG
   cx->runtime()->jitRuntime()->clearDisallowArbitraryCode();
+
+  // Reset the counter when we bailed after MDebugEnterGCUnsafeRegion, but
+  // before the matching MDebugLeaveGCUnsafeRegion.
+  //
+  // NOTE: EnterJit ensures the counter is zero when we enter JIT code.
+  cx->resetInUnsafeRegion();
 #endif
 
   auto resetProfilerFrame = mozilla::MakeScopeExit([=] {
@@ -1299,6 +1310,15 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
   TraceJitExitFrameCopiedArguments(trc, f, footer);
 }
 
+static void TraceBaselineInterpreterEntryFrame(JSTracer* trc,
+                                               const JSJitFrameIter& frame) {
+  // Baseline Interpreter entry code generated under --emit-interpreter-entry.
+  BaselineInterpreterEntryFrameLayout* layout =
+      (BaselineInterpreterEntryFrameLayout*)frame.fp();
+  layout->replaceCalleeToken(TraceCalleeToken(trc, layout->calleeToken()));
+  TraceThisAndArguments(trc, frame, layout);
+}
+
 static void TraceRectifierFrame(JSTracer* trc, const JSJitFrameIter& frame) {
   // Trace thisv.
   //
@@ -1352,6 +1372,9 @@ static void TraceJitActivation(JSTracer* trc, JitActivation* activation) {
         case FrameType::Bailout:
           TraceBailoutFrame(trc, jitFrame);
           break;
+        case FrameType::BaselineInterpreterEntry:
+          TraceBaselineInterpreterEntryFrame(trc, jitFrame);
+          break;
         case FrameType::Rectifier:
           TraceRectifierFrame(trc, jitFrame);
           break;
@@ -1376,7 +1399,7 @@ static void TraceJitActivation(JSTracer* trc, JitActivation* activation) {
       MOZ_ASSERT(nextPC != 0);
       wasm::WasmFrameIter& wasmFrameIter = frames.asWasm();
       wasm::Instance* instance = wasmFrameIter.instance();
-      instance->trace(trc);
+      wasm::TraceInstanceEdge(trc, instance, "WasmFrameIter instance");
       highestByteVisitedInPrevWasmFrame = instance->traceFrame(
           trc, wasmFrameIter, nextPC, highestByteVisitedInPrevWasmFrame);
     }
@@ -1427,6 +1450,12 @@ void GetPcScript(JSContext* cx, JSScript** scriptRes, jsbytecode** pcRes) {
   uint8_t* retAddr;
   if (it.frame().isExitFrame()) {
     ++it;
+
+    // Skip baseline interpreter entry frames.
+    // Can exist before rectifier frames.
+    if (it.frame().isBaselineInterpreterEntry()) {
+      ++it;
+    }
 
     // Skip rectifier frames.
     if (it.frame().isRectifier()) {
@@ -1621,7 +1650,7 @@ bool SnapshotIterator::allocationReadable(const RValueAllocation& alloc,
   // If we have to recover stores, and if we are not interested in the
   // default value of the instruction, then we have to check if the recover
   // instruction results are available.
-  if (alloc.needSideEffect() && !(rm & RM_AlwaysDefault)) {
+  if (alloc.needSideEffect() && rm != ReadMethod::AlwaysDefault) {
     if (!hasInstructionResults()) {
       return false;
     }
@@ -1653,7 +1682,8 @@ bool SnapshotIterator::allocationReadable(const RValueAllocation& alloc,
     case RValueAllocation::RECOVER_INSTRUCTION:
       return hasInstructionResult(alloc.index());
     case RValueAllocation::RI_WITH_DEFAULT_CST:
-      return rm & RM_AlwaysDefault || hasInstructionResult(alloc.index());
+      return rm == ReadMethod::AlwaysDefault ||
+             hasInstructionResult(alloc.index());
 
     default:
       return true;
@@ -1741,10 +1771,10 @@ Value SnapshotIterator::allocationValue(const RValueAllocation& alloc,
       return fromInstructionResult(alloc.index());
 
     case RValueAllocation::RI_WITH_DEFAULT_CST:
-      if (rm & RM_Normal && hasInstructionResult(alloc.index())) {
+      if (rm == ReadMethod::Normal && hasInstructionResult(alloc.index())) {
         return fromInstructionResult(alloc.index());
       }
-      MOZ_ASSERT(rm & RM_AlwaysDefault);
+      MOZ_ASSERT(rm == ReadMethod::AlwaysDefault);
       return ionScript_->getConstant(alloc.index2());
 
     default:
@@ -1857,11 +1887,11 @@ void SnapshotIterator::writeAllocationValuePayload(
 
 void SnapshotIterator::traceAllocation(JSTracer* trc) {
   RValueAllocation alloc = readAllocation();
-  if (!allocationReadable(alloc, RM_AlwaysDefault)) {
+  if (!allocationReadable(alloc, ReadMethod::AlwaysDefault)) {
     return;
   }
 
-  Value v = allocationValue(alloc, RM_AlwaysDefault);
+  Value v = allocationValue(alloc, ReadMethod::AlwaysDefault);
   if (!v.isGCThing()) {
     return;
   }
@@ -1914,11 +1944,13 @@ bool SnapshotIterator::initInstructionResults(MaybeReadFallback& fallback) {
   if (!results) {
     AutoRealm ar(cx, fallback.frame->script());
 
-    // We do not have the result yet, which means that an observable stack
-    // slot is requested.  As we do not want to bailout every time for the
-    // same reason, we need to recompile without optimizing away the
-    // observable stack slots.  The script would later be recompiled to have
-    // support for Argument objects.
+    // We are going to run recover instructions. To avoid problems where recover
+    // instructions are not idempotent (for example, if we allocate an object,
+    // object identity may be observable), we should not execute code in the
+    // Ion stack frame afterwards. To avoid doing so, we invalidate the script.
+    // This is not necessary for bailouts or other cases where we are leaving
+    // the frame anyway. We only need it for niche cases like debugger
+    // introspection or Function.arguments.
     if (fallback.consequence == MaybeReadFallback::Fallback_Invalidate) {
       ionScript_->invalidate(cx, fallback.frame->script(),
                              /* resetUses = */ false,
@@ -2289,7 +2321,12 @@ uintptr_t MachineState::read(Register reg) const {
 
 template <typename T>
 T MachineState::read(FloatRegister reg) const {
+#if !defined(JS_CODEGEN_RISCV64)
   MOZ_ASSERT(reg.size() == sizeof(T));
+#else
+  // RISCV64 always store FloatRegister as 64bit.
+  MOZ_ASSERT(reg.size() == sizeof(double));
+#endif
 
 #if !defined(JS_CODEGEN_NONE) && !defined(JS_CODEGEN_WASM32)
   if (state_.is<BailoutState>()) {
@@ -2346,17 +2383,21 @@ void SnapshotIterator::warnUnreadableAllocation() {
           "f.arguments).\n");
 }
 
-struct DumpOp {
-  explicit DumpOp(unsigned int i) : i_(i) {}
+struct DumpOverflownOp {
+  const unsigned numFormals_;
+  unsigned i_ = 0;
 
-  unsigned int i_;
+  explicit DumpOverflownOp(unsigned numFormals) : numFormals_(numFormals) {}
+
   void operator()(const Value& v) {
-    fprintf(stderr, "  actual (arg %u): ", i_);
+    if (i_ >= numFormals_) {
+      fprintf(stderr, "  actual (arg %u): ", i_);
 #if defined(DEBUG) || defined(JS_JITSPEW)
-    DumpValue(v);
+      DumpValue(v);
 #else
-    fprintf(stderr, "?\n");
+      fprintf(stderr, "?\n");
 #endif
+    }
     i_++;
   }
 };
@@ -2406,9 +2447,8 @@ void InlineFrameIterator::dump() const {
       } else {
         if (i - 2 == calleeTemplate()->nargs() &&
             numActualArgs() > calleeTemplate()->nargs()) {
-          DumpOp d(calleeTemplate()->nargs());
-          unaliasedForEachActual(TlsContext.get(), d, ReadFrame_Overflown,
-                                 fallback);
+          DumpOverflownOp d(calleeTemplate()->nargs());
+          unaliasedForEachActual(TlsContext.get(), d, fallback);
         }
 
         fprintf(stderr, "  slot %d: ", int(i - 2 - calleeTemplate()->nargs()));
@@ -2458,9 +2498,12 @@ void AssertJitStackInvariants(JSContext* cx) {
         prevFrameSize = frameSize;
         frameSize = callerFp - calleeFp;
 
-        if (frames.isScripted() && frames.prevType() == FrameType::Rectifier) {
-          MOZ_RELEASE_ASSERT(frameSize % JitStackAlignment == 0,
-                             "The rectifier frame should keep the alignment");
+        if (frames.isScripted() &&
+            (frames.prevType() == FrameType::Rectifier ||
+             frames.prevType() == FrameType::BaselineInterpreterEntry)) {
+          MOZ_RELEASE_ASSERT(
+              frameSize % JitStackAlignment == 0,
+              "The rectifier and bli entry frame should keep the alignment");
 
           size_t expectedFrameSize =
               sizeof(Value) *

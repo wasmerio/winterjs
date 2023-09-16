@@ -20,6 +20,7 @@
 #include "frontend/BytecodeCompilation.h"  // frontend::CompileGlobalScript
 #include "frontend/BytecodeCompiler.h"     // frontend::IsIdentifier
 #include "frontend/CompilationStencil.h"  // for frontened::{CompilationStencil, BorrowingCompilationStencil, CompilationGCOutput}
+#include "frontend/FrontendContext.h"     // js::AutoReportFrontendContext
 #include "frontend/Parser.h"       // frontend::Parser, frontend::ParseGoal
 #include "js/CharacterEncoding.h"  // JS::UTF8Chars, JS::UTF8CharsToNewTwoByteCharsZ
 #include "js/experimental/JSStencil.h"  // JS::Stencil
@@ -32,9 +33,9 @@
 #include "util/CompleteFile.h"     // js::FileContents, js::ReadCompleteFile
 #include "util/StringBuffer.h"     // js::StringBuffer
 #include "vm/EnvironmentObject.h"  // js::CreateNonSyntacticEnvironmentChain
-#include "vm/ErrorContext.h"       // js::AutoReportFrontendContext
-#include "vm/Interpreter.h"        // js::Execute
-#include "vm/JSContext.h"          // JSContext
+#include "vm/ErrorReporting.h"  // js::ErrorMetadata, js::ReportCompileErrorLatin1
+#include "vm/Interpreter.h"     // js::Execute
+#include "vm/JSContext.h"       // JSContext
 
 #include "vm/JSContext-inl.h"  // JSContext::check
 
@@ -56,6 +57,28 @@ JS_PUBLIC_API void JS::detail::ReportSourceTooLong(JSContext* cx) {
                             JSMSG_SOURCE_TOO_LONG);
 }
 
+static void ReportSourceTooLongImpl(JS::FrontendContext* fc, ...) {
+  va_list args;
+  va_start(args, fc);
+
+  js::ErrorMetadata metadata;
+  metadata.filename = "<unknown>";
+  metadata.lineNumber = 0;
+  metadata.columnNumber = 0;
+  metadata.lineLength = 0;
+  metadata.tokenOffset = 0;
+  metadata.isMuted = false;
+
+  js::ReportCompileErrorLatin1(fc, std::move(metadata), nullptr,
+                               JSMSG_SOURCE_TOO_LONG, &args);
+
+  va_end(args);
+}
+
+JS_PUBLIC_API void JS::detail::ReportSourceTooLong(JS::FrontendContext* fc) {
+  ReportSourceTooLongImpl(fc);
+}
+
 template <typename Unit>
 static JSScript* CompileSourceBuffer(JSContext* cx,
                                      const ReadOnlyCompileOptions& options,
@@ -69,10 +92,8 @@ static JSScript* CompileSourceBuffer(JSContext* cx,
 
   JS::Rooted<JSScript*> script(cx);
   {
-    AutoReportFrontendContext ec(cx);
-    script = frontend::CompileGlobalScript(cx, &ec,
-                                           cx->stackLimitForCurrentPrincipal(),
-                                           options, srcBuf, scopeKind);
+    AutoReportFrontendContext fc(cx);
+    script = frontend::CompileGlobalScript(cx, &fc, options, srcBuf, scopeKind);
   }
   return script;
 }
@@ -100,13 +121,13 @@ JS_PUBLIC_API bool JS::StartIncrementalEncoding(JSContext* cx,
     stencil = nullptr;
   } else {
     initial = cx->make_unique<frontend::ExtensibleCompilationStencil>(
-        cx, stencil->source);
+        stencil->source);
     if (!initial) {
       return false;
     }
 
-    AutoReportFrontendContext ec(cx);
-    if (!initial->steal(&ec, std::move(stencil))) {
+    AutoReportFrontendContext fc(cx);
+    if (!initial->steal(&fc, std::move(stencil))) {
       return false;
     }
   }
@@ -170,27 +191,26 @@ JS_PUBLIC_API bool JS_Utf8BufferIsCompilableUnit(JSContext* cx,
   using frontend::ParseGoal;
   using frontend::Parser;
 
-  AutoReportFrontendContext ec(cx,
+  AutoReportFrontendContext fc(cx,
                                AutoReportFrontendContext::Warning::Suppress);
   CompileOptions options(cx);
   Rooted<frontend::CompilationInput> input(cx,
                                            frontend::CompilationInput(options));
-  if (!input.get().initForGlobal(cx, &ec)) {
+  if (!input.get().initForGlobal(&fc)) {
     return false;
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   js::frontend::NoScopeBindingCache scopeCache;
-  frontend::CompilationState compilationState(cx, allocScope, input.get());
-  if (!compilationState.init(cx, &ec, &scopeCache)) {
+  frontend::CompilationState compilationState(&fc, allocScope, input.get());
+  if (!compilationState.init(&fc, &scopeCache)) {
     return false;
   }
 
-  Parser<FullParseHandler, char16_t> parser(
-      cx, &ec, cx->stackLimitForCurrentPrincipal(), options, chars.get(),
-      length,
-      /* foldConstants = */ true, compilationState,
-      /* syntaxParser = */ nullptr);
+  Parser<FullParseHandler, char16_t> parser(&fc, options, chars.get(), length,
+                                            /* foldConstants = */ true,
+                                            compilationState,
+                                            /* syntaxParser = */ nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of source, we
     // return false so our caller knows to try to collect more buffered
@@ -215,8 +235,8 @@ class FunctionCompiler {
   bool nameIsIdentifier_ = true;
 
  public:
-  explicit FunctionCompiler(JSContext* cx)
-      : cx_(cx), nameAtom_(cx), funStr_(cx) {
+  explicit FunctionCompiler(JSContext* cx, FrontendContext* fc)
+      : cx_(cx), nameAtom_(cx), funStr_(fc) {
     AssertHeapIsIdle();
     CHECK_THREAD(cx);
     MOZ_ASSERT(!cx->zone()->isAtomsZone());
@@ -362,12 +382,15 @@ JS_PUBLIC_API JSFunction* JS::CompileFunction(
     JSContext* cx, HandleObjectVector envChain,
     const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
     const char* const* argnames, SourceText<char16_t>& srcBuf) {
-  FunctionCompiler compiler(cx);
+  ManualReportFrontendContext fc(cx);
+  FunctionCompiler compiler(cx, &fc);
   if (!compiler.init(name, nargs, argnames) ||
       !compiler.addFunctionBody(srcBuf)) {
+    fc.failure();
     return nullptr;
   }
 
+  fc.ok();
   return compiler.finish(envChain, options);
 }
 
@@ -375,12 +398,15 @@ JS_PUBLIC_API JSFunction* JS::CompileFunction(
     JSContext* cx, HandleObjectVector envChain,
     const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
     const char* const* argnames, SourceText<Utf8Unit>& srcBuf) {
-  FunctionCompiler compiler(cx);
+  ManualReportFrontendContext fc(cx);
+  FunctionCompiler compiler(cx, &fc);
   if (!compiler.init(name, nargs, argnames) ||
       !compiler.addFunctionBody(srcBuf)) {
+    fc.failure();
     return nullptr;
   }
 
+  fc.ok();
   return compiler.finish(envChain, options);
 }
 
@@ -520,10 +546,9 @@ static bool EvaluateSourceBuffer(JSContext* cx, ScopeKind scopeKind,
   options.setNonSyntacticScope(scopeKind == ScopeKind::NonSyntactic);
   options.setIsRunOnce(true);
 
-  AutoReportFrontendContext ec(cx);
-  RootedScript script(cx, frontend::CompileGlobalScript(
-                              cx, &ec, cx->stackLimitForCurrentPrincipal(),
-                              options, srcBuf, scopeKind));
+  AutoReportFrontendContext fc(cx);
+  RootedScript script(
+      cx, frontend::CompileGlobalScript(cx, &fc, options, srcBuf, scopeKind));
   if (!script) {
     return false;
   }

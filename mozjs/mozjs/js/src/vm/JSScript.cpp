@@ -32,6 +32,7 @@
 
 #include "frontend/BytecodeSection.h"
 #include "frontend/CompilationStencil.h"  // frontend::CompilationStencil
+#include "frontend/FrontendContext.h"     // AutoReportFrontendContext
 #include "frontend/ParseContext.h"
 #include "frontend/SourceNotes.h"  // SrcNote, SrcNoteType, SrcNoteIterator
 #include "frontend/Stencil.h"  // DumpFunctionFlagsItems, DumpImmutableScriptFlags
@@ -50,6 +51,7 @@
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/HeapAPI.h"               // JS::GCCellPtr
 #include "js/MemoryMetrics.h"
+#include "js/Printer.h"  // js::GenericPrinter, js::Fprinter, js::Sprinter, js::QuoteString
 #include "js/Transcoding.h"
 #include "js/UniquePtr.h"
 #include "js/Utility.h"  // JS::UniqueChars
@@ -62,21 +64,18 @@
 #include "vm/BytecodeLocation.h"
 #include "vm/BytecodeUtil.h"  // Disassemble
 #include "vm/Compression.h"
-#include "vm/ErrorContext.h"       // AutoReportFrontendContext
 #include "vm/HelperThreadState.h"  // js::RunPendingSourceCompressions
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/JSONPrinter.h"  // JSONPrinter
 #include "vm/Opcodes.h"
-#include "vm/Printer.h"  // js::GenericPrinter, js::Fprinter, js::Sprinter, js::QuoteString
 #include "vm/Scope.h"  // Scope
 #include "vm/SharedImmutableStringsCache.h"
 #include "vm/StencilEnums.h"  // TryNote, TryNoteKind, ScopeNote
 #include "vm/StringType.h"    // JSString, JSAtom
 #include "vm/Time.h"          // AutoIncrementalTimer
 #include "vm/ToSource.h"      // JS::ValueToSource
-#include "vm/Warnings.h"      // js::WarnNumberLatin1
 #ifdef MOZ_VTUNE
 #  include "vtune/VTuneWrapper.h"
 #endif
@@ -138,7 +137,14 @@ void js::BaseScript::finalize(JS::GCContext* gcx) {
     script->destroyScriptCounts();
   }
 
-  gcx->runtime()->geckoProfiler().onScriptFinalized(this);
+  {
+    JSRuntime* rt = gcx->runtime();
+    if (rt->hasJitRuntime() && rt->jitRuntime()->hasInterpreterEntryMap()) {
+      rt->jitRuntime()->getInterpreterEntryMap()->remove(this);
+    }
+
+    rt->geckoProfiler().onScriptFinalized(this);
+  }
 
 #ifdef MOZ_VTUNE
   if (zone()->scriptVTuneIdMap) {
@@ -827,6 +833,15 @@ void ScriptSourceObject::setPrivate(JSRuntime* rt, const Value& value) {
   rt->addRefScriptPrivate(value);
 }
 
+void ScriptSourceObject::clearPrivate(JSRuntime* rt) {
+  // Clear the private value, calling release hook if necessary.
+  // |this| may be gray, be careful not to create edges to it.
+  JS::AutoSuppressGCAnalysis nogc;
+  Value prevValue = getReservedSlot(PRIVATE_SLOT);
+  rt->releaseScriptPrivate(prevValue);
+  getSlotRef(PRIVATE_SLOT).setUndefinedUnchecked();
+}
+
 class ScriptSource::LoadSourceMatcher {
   JSContext* const cx_;
   ScriptSource* const ss_;
@@ -1322,11 +1337,11 @@ JSLinearString* ScriptSource::functionBodyString(JSContext* cx) {
   return substring(cx, start, stop);
 }
 
-template <typename Unit>
+template <typename ContextT, typename Unit>
 [[nodiscard]] bool ScriptSource::setUncompressedSourceHelper(
-    JSContext* cx, EntryUnits<Unit>&& source, size_t length,
+    ContextT* cx, EntryUnits<Unit>&& source, size_t length,
     SourceRetrievable retrievable) {
-  auto& cache = cx->runtime()->sharedImmutableStrings();
+  auto& cache = SharedImmutableStringsCache::getSingleton();
 
   auto uniqueChars = SourceTypeTraits<Unit>::toCacheable(std::move(source));
   auto deduped = cache.getOrCreate(std::move(uniqueChars), length);
@@ -1439,15 +1454,15 @@ void ScriptSource::triggerConvertToCompressedSource(
 
 template <typename Unit>
 [[nodiscard]] bool ScriptSource::initializeWithUnretrievableCompressedSource(
-    JSContext* cx, UniqueChars&& compressed, size_t rawLength,
+    FrontendContext* fc, UniqueChars&& compressed, size_t rawLength,
     size_t sourceLength) {
   MOZ_ASSERT(data.is<Missing>(), "shouldn't be double-initializing");
   MOZ_ASSERT(compressed != nullptr);
 
-  auto& cache = cx->runtime()->sharedImmutableStrings();
+  auto& cache = SharedImmutableStringsCache::getSingleton();
   auto deduped = cache.getOrCreate(std::move(compressed), rawLength);
   if (!deduped) {
-    ReportOutOfMemory(cx);
+    ReportOutOfMemory(fc);
     return false;
   }
 
@@ -1469,14 +1484,14 @@ template <typename Unit>
 }
 
 template bool ScriptSource::initializeWithUnretrievableCompressedSource<
-    Utf8Unit>(JSContext* cx, UniqueChars&& compressed, size_t rawLength,
+    Utf8Unit>(FrontendContext* fc, UniqueChars&& compressed, size_t rawLength,
               size_t sourceLength);
 template bool ScriptSource::initializeWithUnretrievableCompressedSource<
-    char16_t>(JSContext* cx, UniqueChars&& compressed, size_t rawLength,
+    char16_t>(FrontendContext* fc, UniqueChars&& compressed, size_t rawLength,
               size_t sourceLength);
 
 template <typename Unit>
-bool ScriptSource::assignSource(JSContext* cx, ErrorContext* ec,
+bool ScriptSource::assignSource(FrontendContext* fc,
                                 const ReadOnlyCompileOptions& options,
                                 SourceText<Unit>& srcBuf) {
   MOZ_ASSERT(data.is<Missing>(),
@@ -1494,8 +1509,7 @@ bool ScriptSource::assignSource(JSContext* cx, ErrorContext* ec,
     return true;
   }
 
-  JSRuntime* runtime = cx->runtime();
-  auto& cache = runtime->sharedImmutableStrings();
+  auto& cache = SharedImmutableStringsCache::getSingleton();
   auto deduped = cache.getOrCreate(srcBuf.get(), srcBuf.length(), [&srcBuf]() {
     using CharT = typename SourceTypeTraits<Unit>::CharT;
     return srcBuf.ownsUnits()
@@ -1503,7 +1517,7 @@ bool ScriptSource::assignSource(JSContext* cx, ErrorContext* ec,
                : DuplicateString(srcBuf.get(), srcBuf.length());
   });
   if (!deduped) {
-    ReportOutOfMemory(ec);
+    ReportOutOfMemory(fc);
     return false;
   }
 
@@ -1512,10 +1526,10 @@ bool ScriptSource::assignSource(JSContext* cx, ErrorContext* ec,
   return true;
 }
 
-template bool ScriptSource::assignSource(JSContext* cx, ErrorContext* ec,
+template bool ScriptSource::assignSource(FrontendContext* fc,
                                          const ReadOnlyCompileOptions& options,
                                          SourceText<char16_t>& srcBuf);
-template bool ScriptSource::assignSource(JSContext* cx, ErrorContext* ec,
+template bool ScriptSource::assignSource(FrontendContext* fc,
                                          const ReadOnlyCompileOptions& options,
                                          SourceText<Utf8Unit>& srcBuf);
 
@@ -1599,7 +1613,7 @@ void SourceCompressionTask::workEncodingSpecific() {
     return;
   }
 
-  auto& strings = runtime_->sharedImmutableStrings();
+  auto& strings = SharedImmutableStringsCache::getSingleton();
   resultString_ = strings.getOrCreate(std::move(compressed), totalBytes);
 }
 
@@ -1790,15 +1804,15 @@ bool ScriptSource::xdrFinalizeEncoder(JSContext* cx,
 
   auto cleanup = mozilla::MakeScopeExit([&] { xdrEncoder_.reset(); });
 
-  AutoReportFrontendContext ec(cx);
-  XDRStencilEncoder encoder(cx, &ec, buffer);
+  AutoReportFrontendContext fc(cx);
+  XDRStencilEncoder encoder(&fc, buffer);
 
   frontend::BorrowingCompilationStencil borrowingStencil(
       xdrEncoder_.merger_->getResult());
   XDRResult res = encoder.codeStencil(this, borrowingStencil);
   if (res.isErr()) {
     if (JS::IsTranscodeFailureResult(res.unwrapErr())) {
-      ec.clearAutoReport();
+      fc.clearAutoReport();
       JS_ReportErrorASCII(cx, "XDR encoding failure");
     }
     return false;
@@ -1806,26 +1820,27 @@ bool ScriptSource::xdrFinalizeEncoder(JSContext* cx,
   return true;
 }
 
+void ScriptSource::xdrAbortEncoder() { xdrEncoder_.reset(); }
+
 template <typename Unit>
 [[nodiscard]] bool ScriptSource::initializeUnretrievableUncompressedSource(
-    JSContext* cx, EntryUnits<Unit>&& source, size_t length) {
+    FrontendContext* fc, EntryUnits<Unit>&& source, size_t length) {
   MOZ_ASSERT(data.is<Missing>(), "must be initializing a fresh ScriptSource");
-  return setUncompressedSourceHelper(cx, std::move(source), length,
+  return setUncompressedSourceHelper(fc, std::move(source), length,
                                      SourceRetrievable::No);
 }
 
 template bool ScriptSource::initializeUnretrievableUncompressedSource(
-    JSContext* cx, EntryUnits<Utf8Unit>&& source, size_t length);
+    FrontendContext* fc, EntryUnits<Utf8Unit>&& source, size_t length);
 template bool ScriptSource::initializeUnretrievableUncompressedSource(
-    JSContext* cx, EntryUnits<char16_t>&& source, size_t length);
+    FrontendContext* fc, EntryUnits<char16_t>&& source, size_t length);
 
 // Format and return a cx->pod_malloc'ed URL for a generated script like:
 //   {filename} line {lineno} > {introducer}
 // For example:
 //   foo.js line 7 > eval
 // indicating code compiled by the call to 'eval' on line 7 of foo.js.
-UniqueChars js::FormatIntroducedFilename(JSContext* cx, const char* filename,
-                                         unsigned lineno,
+UniqueChars js::FormatIntroducedFilename(const char* filename, unsigned lineno,
                                          const char* introducer) {
   // Compute the length of the string in advance, so we can allocate a
   // buffer of the right size on the first shot.
@@ -1839,7 +1854,7 @@ UniqueChars js::FormatIntroducedFilename(JSContext* cx, const char* filename,
   size_t introducerLen = strlen(introducer);
   size_t len = filenameLen + 6 /* == strlen(" line ") */ + linenoLen +
                3 /* == strlen(" > ") */ + introducerLen + 1 /* \0 */;
-  UniqueChars formatted(cx->pod_malloc<char>(len));
+  UniqueChars formatted(js_pod_malloc<char>(len));
   if (!formatted) {
     return nullptr;
   }
@@ -1851,7 +1866,7 @@ UniqueChars js::FormatIntroducedFilename(JSContext* cx, const char* filename,
   return formatted;
 }
 
-bool ScriptSource::initFromOptions(JSContext* cx, ErrorContext* ec,
+bool ScriptSource::initFromOptions(FrontendContext* fc,
                                    const ReadOnlyCompileOptions& options) {
   MOZ_ASSERT(!filename_);
   MOZ_ASSERT(!introducerFilename_);
@@ -1860,6 +1875,7 @@ bool ScriptSource::initFromOptions(JSContext* cx, ErrorContext* ec,
   delazificationMode_ = options.eagerDelazificationStrategy();
 
   startLine_ = options.lineno;
+  startColumn_ = options.column;
   introductionType_ = options.introductionType;
   setIntroductionOffset(options.introductionOffset);
   // The parameterListEnd_ is initialized later by setParameterListEnd, before
@@ -1870,21 +1886,22 @@ bool ScriptSource::initFromOptions(JSContext* cx, ErrorContext* ec,
     const char* filename =
         options.filename() ? options.filename() : "<unknown>";
     UniqueChars formatted = FormatIntroducedFilename(
-        cx, filename, options.introductionLineno, options.introductionType);
+        filename, options.introductionLineno, options.introductionType);
     if (!formatted) {
+      ReportOutOfMemory(fc);
       return false;
     }
-    if (!setFilename(cx, ec, std::move(formatted))) {
+    if (!setFilename(fc, std::move(formatted))) {
       return false;
     }
   } else if (options.filename()) {
-    if (!setFilename(cx, ec, options.filename())) {
+    if (!setFilename(fc, options.filename())) {
       return false;
     }
   }
 
   if (options.introducerFilename()) {
-    if (!setIntroducerFilename(cx, ec, options.introducerFilename())) {
+    if (!setIntroducerFilename(fc, options.introducerFilename())) {
       return false;
     }
   }
@@ -1895,108 +1912,98 @@ bool ScriptSource::initFromOptions(JSContext* cx, ErrorContext* ec,
 // Use the SharedImmutableString map to deduplicate input string. The input
 // string must be null-terminated.
 template <typename SharedT, typename CharT>
-static SharedT GetOrCreateStringZ(JSContext* cx, ErrorContext* ec,
+static SharedT GetOrCreateStringZ(FrontendContext* fc,
                                   UniquePtr<CharT[], JS::FreePolicy>&& str) {
-  JSRuntime* rt = cx->runtime();
   size_t lengthWithNull = std::char_traits<CharT>::length(str.get()) + 1;
-  auto res =
-      rt->sharedImmutableStrings().getOrCreate(std::move(str), lengthWithNull);
+  auto res = SharedImmutableStringsCache::getSingleton().getOrCreate(
+      std::move(str), lengthWithNull);
   if (!res) {
-    ReportOutOfMemory(ec);
+    ReportOutOfMemory(fc);
   }
   return res;
 }
 
-SharedImmutableString ScriptSource::getOrCreateStringZ(JSContext* cx,
-                                                       ErrorContext* ec,
+SharedImmutableString ScriptSource::getOrCreateStringZ(FrontendContext* fc,
                                                        UniqueChars&& str) {
-  return GetOrCreateStringZ<SharedImmutableString>(cx, ec, std::move(str));
+  return GetOrCreateStringZ<SharedImmutableString>(fc, std::move(str));
 }
 
 SharedImmutableTwoByteString ScriptSource::getOrCreateStringZ(
-    JSContext* cx, ErrorContext* ec, UniqueTwoByteChars&& str) {
-  return GetOrCreateStringZ<SharedImmutableTwoByteString>(cx, ec,
-                                                          std::move(str));
+    FrontendContext* fc, UniqueTwoByteChars&& str) {
+  return GetOrCreateStringZ<SharedImmutableTwoByteString>(fc, std::move(str));
 }
 
-bool ScriptSource::setFilename(JSContext* cx, ErrorContext* ec,
-                               const char* filename) {
-  UniqueChars owned = DuplicateString(cx, filename);
+bool ScriptSource::setFilename(FrontendContext* fc, const char* filename) {
+  UniqueChars owned = DuplicateString(fc, filename);
   if (!owned) {
     return false;
   }
-  return setFilename(cx, ec, std::move(owned));
+  return setFilename(fc, std::move(owned));
 }
 
-bool ScriptSource::setFilename(JSContext* cx, ErrorContext* ec,
-                               UniqueChars&& filename) {
+bool ScriptSource::setFilename(FrontendContext* fc, UniqueChars&& filename) {
   MOZ_ASSERT(!filename_);
-  filename_ = getOrCreateStringZ(cx, ec, std::move(filename));
-  return bool(filename_);
+  filename_ = getOrCreateStringZ(fc, std::move(filename));
+  if (filename_) {
+    filenameHash_ =
+        mozilla::HashStringKnownLength(filename_.chars(), filename_.length());
+    return true;
+  }
+  return false;
 }
 
-bool ScriptSource::setIntroducerFilename(JSContext* cx, ErrorContext* ec,
+bool ScriptSource::setIntroducerFilename(FrontendContext* fc,
                                          const char* filename) {
-  UniqueChars owned = DuplicateString(cx, filename);
+  UniqueChars owned = DuplicateString(fc, filename);
   if (!owned) {
     return false;
   }
-  return setIntroducerFilename(cx, ec, std::move(owned));
+  return setIntroducerFilename(fc, std::move(owned));
 }
 
-bool ScriptSource::setIntroducerFilename(JSContext* cx, ErrorContext* ec,
+bool ScriptSource::setIntroducerFilename(FrontendContext* fc,
                                          UniqueChars&& filename) {
   MOZ_ASSERT(!introducerFilename_);
-  introducerFilename_ = getOrCreateStringZ(cx, ec, std::move(filename));
+  introducerFilename_ = getOrCreateStringZ(fc, std::move(filename));
   return bool(introducerFilename_);
 }
 
-bool ScriptSource::setDisplayURL(JSContext* cx, ErrorContext* ec,
-                                 const char16_t* url) {
-  UniqueTwoByteChars owned = DuplicateString(cx, url);
+bool ScriptSource::setDisplayURL(FrontendContext* fc, const char16_t* url) {
+  UniqueTwoByteChars owned = DuplicateString(fc, url);
   if (!owned) {
     return false;
   }
-  return setDisplayURL(cx, ec, std::move(owned));
+  return setDisplayURL(fc, std::move(owned));
 }
 
-bool ScriptSource::setDisplayURL(JSContext* cx, ErrorContext* ec,
+bool ScriptSource::setDisplayURL(FrontendContext* fc,
                                  UniqueTwoByteChars&& url) {
-  if (hasDisplayURL()) {
-    // FIXME: filename() should be UTF-8 (bug 987069).
-    if (!cx->isHelperThreadContext() &&
-        !WarnNumberLatin1(cx, JSMSG_ALREADY_HAS_PRAGMA, filename(),
-                          "//# sourceURL")) {
-      return false;
-    }
-  }
-
+  MOZ_ASSERT(!hasDisplayURL());
   MOZ_ASSERT(url);
   if (url[0] == '\0') {
     return true;
   }
 
-  displayURL_ = getOrCreateStringZ(cx, ec, std::move(url));
+  displayURL_ = getOrCreateStringZ(fc, std::move(url));
   return bool(displayURL_);
 }
 
-bool ScriptSource::setSourceMapURL(JSContext* cx, ErrorContext* ec,
-                                   const char16_t* url) {
-  UniqueTwoByteChars owned = DuplicateString(cx, url);
+bool ScriptSource::setSourceMapURL(FrontendContext* fc, const char16_t* url) {
+  UniqueTwoByteChars owned = DuplicateString(fc, url);
   if (!owned) {
     return false;
   }
-  return setSourceMapURL(cx, ec, std::move(owned));
+  return setSourceMapURL(fc, std::move(owned));
 }
 
-bool ScriptSource::setSourceMapURL(JSContext* cx, ErrorContext* ec,
+bool ScriptSource::setSourceMapURL(FrontendContext* fc,
                                    UniqueTwoByteChars&& url) {
   MOZ_ASSERT(url);
   if (url[0] == '\0') {
     return true;
   }
 
-  sourceMapURL_ = getOrCreateStringZ(cx, ec, std::move(url));
+  sourceMapURL_ = getOrCreateStringZ(fc, std::move(url));
   return bool(sourceMapURL_);
 }
 
@@ -2040,17 +2047,17 @@ bool ScriptSource::setSourceMapURL(JSContext* cx, ErrorContext* ec,
 }
 
 js::UniquePtr<ImmutableScriptData> js::ImmutableScriptData::new_(
-    ErrorContext* ec, uint32_t codeLength, uint32_t noteLength,
+    FrontendContext* fc, uint32_t codeLength, uint32_t noteLength,
     uint32_t numResumeOffsets, uint32_t numScopeNotes, uint32_t numTryNotes) {
   auto size = sizeFor(codeLength, noteLength, numResumeOffsets, numScopeNotes,
                       numTryNotes);
   if (!size.isValid()) {
-    ReportAllocationOverflow(ec);
+    ReportAllocationOverflow(fc);
     return nullptr;
   }
 
   // Allocate contiguous raw buffer.
-  void* raw = ec->getAllocator()->pod_malloc<uint8_t>(size.value());
+  void* raw = fc->getAllocator()->pod_malloc<uint8_t>(size.value());
   MOZ_ASSERT(uintptr_t(raw) % alignof(ImmutableScriptData) == 0);
   if (!raw) {
     return nullptr;
@@ -2071,8 +2078,8 @@ js::UniquePtr<ImmutableScriptData> js::ImmutableScriptData::new_(
 }
 
 js::UniquePtr<ImmutableScriptData> js::ImmutableScriptData::new_(
-    JSContext* cx, uint32_t totalSize) {
-  void* raw = cx->pod_malloc<uint8_t>(totalSize);
+    FrontendContext* fc, uint32_t totalSize) {
+  void* raw = fc->getAllocator()->pod_malloc<uint8_t>(totalSize);
   MOZ_ASSERT(uintptr_t(raw) % alignof(ImmutableScriptData) == 0);
   UniquePtr<ImmutableScriptData> result(
       reinterpret_cast<ImmutableScriptData*>(raw));
@@ -2102,15 +2109,16 @@ bool js::ImmutableScriptData::validateLayout(uint32_t expectedSize) {
 }
 
 /* static */
-SharedImmutableScriptData* SharedImmutableScriptData::create(ErrorContext* ec) {
-  return ec->getAllocator()->new_<SharedImmutableScriptData>();
+SharedImmutableScriptData* SharedImmutableScriptData::create(
+    FrontendContext* fc) {
+  return fc->getAllocator()->new_<SharedImmutableScriptData>();
 }
 
 /* static */
 SharedImmutableScriptData* SharedImmutableScriptData::createWith(
-    ErrorContext* ec, js::UniquePtr<ImmutableScriptData>&& isd) {
+    FrontendContext* fc, js::UniquePtr<ImmutableScriptData>&& isd) {
   MOZ_ASSERT(isd.get());
-  SharedImmutableScriptData* sisd = create(ec);
+  SharedImmutableScriptData* sisd = create(fc);
   if (!sisd) {
     return nullptr;
   }
@@ -2160,26 +2168,25 @@ void JSScript::relazify(JSRuntime* rt) {
 // entry already exists and replaces the passed RefPtr with the existing entry.
 /* static */
 bool SharedImmutableScriptData::shareScriptData(
-    JSContext* cx, ErrorContext* ec, RefPtr<SharedImmutableScriptData>& sisd) {
+    FrontendContext* fc, RefPtr<SharedImmutableScriptData>& sisd) {
   MOZ_ASSERT(sisd);
   MOZ_ASSERT(sisd->refCount() == 1);
 
   SharedImmutableScriptData* data = sisd.get();
 
-  // Calculate the hash before taking the lock. Because the data is reference
-  // counted, it also will be freed after releasing the lock if necessary.
   SharedImmutableScriptData::Hasher::Lookup lookup(data);
 
-  AutoLockScriptData lock(cx->runtime());
+  Maybe<AutoLockGlobalScriptData> lock;
+  js::SharedImmutableScriptDataTable& table =
+      fc->scriptDataTableHolder()->getMaybeLocked(lock);
 
-  SharedImmutableScriptDataTable::AddPtr p =
-      cx->scriptDataTable(lock).lookupForAdd(lookup);
+  SharedImmutableScriptDataTable::AddPtr p = table.lookupForAdd(lookup);
   if (p) {
     MOZ_ASSERT(data != *p);
     sisd = *p;
   } else {
-    if (!cx->scriptDataTable(lock).add(p, data)) {
-      ReportOutOfMemory(ec);
+    if (!table.add(p, data)) {
+      ReportOutOfMemory(fc);
       return false;
     }
 
@@ -2193,12 +2200,9 @@ bool SharedImmutableScriptData::shareScriptData(
   return true;
 }
 
-void js::SweepScriptData(JSRuntime* rt) {
+static void SweepScriptDataTable(SharedImmutableScriptDataTable& table) {
   // Entries are removed from the table when their reference count is one,
   // i.e. when the only reference to them is from the table entry.
-
-  AutoLockScriptData lock(rt);
-  SharedImmutableScriptDataTable& table = rt->scriptDataTable(lock);
 
   for (SharedImmutableScriptDataTable::Enum e(table); !e.empty();
        e.popFront()) {
@@ -2208,6 +2212,13 @@ void js::SweepScriptData(JSRuntime* rt) {
       e.removeFront();
     }
   }
+}
+
+void js::SweepScriptData(JSRuntime* rt) {
+  SweepScriptDataTable(rt->scriptDataTableHolder().getWithoutLock());
+
+  AutoLockGlobalScriptData lock;
+  SweepScriptDataTable(js::globalSharedScriptDataTableHolder.get(lock));
 }
 
 inline size_t PrivateScriptData::allocationSize() const { return endOffset(); }
@@ -2291,15 +2302,7 @@ bool PrivateScriptData::InitFromStencil(
 
 void PrivateScriptData::trace(JSTracer* trc) {
   for (JS::GCCellPtr& elem : gcthings()) {
-    gc::Cell* thing = elem.asCell();
-    TraceManuallyBarrieredGenericPointerEdge(trc, &thing, "script-gcthing");
-    if (MOZ_UNLIKELY(!thing)) {
-      // NOTE: If we are clearing edges, also erase the type. This can happen
-      // due to OOM triggering the ClearEdgesTracer.
-      elem = JS::GCCellPtr();
-    } else if (thing != elem.asCell()) {
-      elem = JS::GCCellPtr(thing, elem.kind());
-    }
+    TraceManuallyBarrieredGCCellPtr(trc, &elem, "script-gcthing");
   }
 }
 
@@ -2773,7 +2776,7 @@ void js::maybeUpdateWarmUpCount(JSScript* script) {
     ScriptFinalWarmUpCountMap::Ptr p = map->lookup(script);
     MOZ_ASSERT(p);
 
-    mozilla::Get<0>(p->value()) += script->jitScript()->warmUpCount();
+    std::get<0>(p->value()) += script->jitScript()->warmUpCount();
   }
 }
 
@@ -2787,8 +2790,8 @@ void js::maybeSpewScriptFinalWarmUpCount(JSScript* script) {
     ScriptFinalWarmUpCountMap::Ptr p = map->lookup(script);
     MOZ_ASSERT(p);
     auto& tuple = p->value();
-    uint32_t warmUpCount = mozilla::Get<0>(tuple);
-    SharedImmutableString& scriptName = mozilla::Get<1>(tuple);
+    uint32_t warmUpCount = std::get<0>(tuple);
+    SharedImmutableString& scriptName = std::get<1>(tuple);
 
     JSContext* cx = TlsContext.get();
     cx->spewer().enableSpewing();
@@ -2872,10 +2875,10 @@ void CopySpan(const SourceSpan& source, TargetSpan target) {
 
 /* static */
 js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
-    ErrorContext* ec, uint32_t mainOffset, uint32_t nfixed, uint32_t nslots,
+    FrontendContext* fc, uint32_t mainOffset, uint32_t nfixed, uint32_t nslots,
     GCThingIndex bodyScopeIndex, uint32_t numICEntries, bool isFunction,
-    uint16_t funLength, mozilla::Span<const jsbytecode> code,
-    mozilla::Span<const SrcNote> notes,
+    uint16_t funLength, uint16_t propertyCountEstimate,
+    mozilla::Span<const jsbytecode> code, mozilla::Span<const SrcNote> notes,
     mozilla::Span<const uint32_t> resumeOffsets,
     mozilla::Span<const ScopeNote> scopeNotes,
     mozilla::Span<const TryNote> tryNotes) {
@@ -2892,7 +2895,7 @@ js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
 
   // Allocate ImmutableScriptData
   js::UniquePtr<ImmutableScriptData> data(ImmutableScriptData::new_(
-      ec, code.Length(), noteLength + nullLength, resumeOffsets.Length(),
+      fc, code.Length(), noteLength + nullLength, resumeOffsets.Length(),
       scopeNotes.Length(), tryNotes.Length()));
   if (!data) {
     return data;
@@ -2904,6 +2907,7 @@ js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
   data->nslots = nslots;
   data->bodyScopeIndex = bodyScopeIndex;
   data->numICEntries = numICEntries;
+  data->propertyCountEstimate = propertyCountEstimate;
 
   if (isFunction) {
     data->funLength = funLength;
@@ -2925,15 +2929,21 @@ void ScriptWarmUpData::trace(JSTracer* trc) {
   switch (tag) {
     case EnclosingScriptTag: {
       BaseScript* enclosingScript = toEnclosingScript();
+      BaseScript* prior = enclosingScript;
       TraceManuallyBarrieredEdge(trc, &enclosingScript, "enclosingScript");
-      setTaggedPtr<EnclosingScriptTag>(enclosingScript);
+      if (enclosingScript != prior) {
+        setTaggedPtr<EnclosingScriptTag>(enclosingScript);
+      }
       break;
     }
 
     case EnclosingScopeTag: {
       Scope* enclosingScope = toEnclosingScope();
+      Scope* prior = enclosingScope;
       TraceManuallyBarrieredEdge(trc, &enclosingScope, "enclosingScope");
-      setTaggedPtr<EnclosingScopeTag>(enclosingScope);
+      if (enclosingScope != prior) {
+        setTaggedPtr<EnclosingScopeTag>(enclosingScope);
+      }
       break;
     }
 
@@ -3189,7 +3199,17 @@ void JSScript::updateJitCodeRaw(JSRuntime* rt) {
   } else if (hasBaselineScript()) {
     setJitCodeRaw(baselineScript()->method()->raw());
   } else if (hasJitScript() && js::jit::IsBaselineInterpreterEnabled()) {
-    setJitCodeRaw(rt->jitRuntime()->baselineInterpreter().codeRaw());
+    bool usingEntryTrampoline = false;
+    if (js::jit::JitOptions.emitInterpreterEntryTrampoline) {
+      auto p = rt->jitRuntime()->getInterpreterEntryMap()->lookup(this);
+      if (p) {
+        setJitCodeRaw(p->value().raw());
+        usingEntryTrampoline = true;
+      }
+    }
+    if (!usingEntryTrampoline) {
+      setJitCodeRaw(rt->jitRuntime()->baselineInterpreter().codeRaw());
+    }
   } else {
     setJitCodeRaw(rt->jitRuntime()->interpreterStub().value);
   }
@@ -3206,7 +3226,7 @@ bool JSScript::hasLoops() {
 }
 
 bool JSScript::mayReadFrameArgsDirectly() {
-  return needsArgsObj() || hasRest();
+  return needsArgsObj() || usesArgumentsIntrinsics() || hasRest();
 }
 
 void JSScript::resetWarmUpCounterToDelayIonCompilation() {
@@ -3305,6 +3325,9 @@ static void DumpMutableScriptFlags(js::JSONPrinter& json,
         case MutableScriptFlagsEnum::Uninlineable:
           json.value("Uninlineable");
           break;
+        case MutableScriptFlagsEnum::NoEagerBaselineHint:
+          json.value("NoEagerBaselineHint");
+          break;
         case MutableScriptFlagsEnum::FailedBoundsCheck:
           json.value("FailedBoundsCheck");
           break;
@@ -3381,6 +3404,10 @@ bool JSScript::dump(JSContext* cx, JS::Handle<JSScript*> script,
     }
 
     json.endObject();
+  }
+
+  if (sp->hadOutOfMemory()) {
+    return false;
   }
 
   if (!sp->put("\n")) {

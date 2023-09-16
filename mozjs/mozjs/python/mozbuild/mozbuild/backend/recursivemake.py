@@ -2,32 +2,29 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import io
 import logging
 import os
 import re
-import six
-
 from collections import defaultdict, namedtuple
 from itertools import chain
 from operator import itemgetter
-from six import StringIO
 
-from mozpack.manifests import InstallManifest
 import mozpack.path as mozpath
+import six
+from mozpack.manifests import InstallManifest
+from six import StringIO
 
 from mozbuild import frontend
 from mozbuild.frontend.context import (
     AbsolutePath,
+    ObjDirPath,
     Path,
     RenamedSourcePath,
     SourcePath,
-    ObjDirPath,
 )
-from .common import CommonBackend
-from .make import MakeBackend
+from mozbuild.shellutil import quote as shell_quote
+
 from ..frontend.data import (
     BaseLibrary,
     BaseProgram,
@@ -46,6 +43,7 @@ from ..frontend.data import (
     HostLibrary,
     HostProgram,
     HostRustProgram,
+    HostSharedLibrary,
     HostSimpleProgram,
     HostSources,
     InstallationTarget,
@@ -58,7 +56,6 @@ from ..frontend.data import (
     ObjdirPreprocessedFiles,
     PerSourceFlag,
     Program,
-    HostSharedLibrary,
     RustProgram,
     RustTests,
     SandboxedWasmLibrary,
@@ -71,9 +68,10 @@ from ..frontend.data import (
     WasmSources,
     XPIDLModule,
 )
-from ..util import ensureParentDir, FileAvoidWrite, OrderedDefaultDict, pairwise
 from ..makeutil import Makefile
-from mozbuild.shellutil import quote as shell_quote
+from ..util import FileAvoidWrite, OrderedDefaultDict, ensureParentDir, pairwise
+from .common import CommonBackend
+from .make import MakeBackend
 
 # To protect against accidentally adding logic to Makefiles that belong in moz.build,
 # we check if moz.build-like variables are defined in Makefiles. If they are, we throw
@@ -253,6 +251,7 @@ class RecursiveMakeTraversal(object):
 
         filter is a function with the following signature:
             def filter(current, subdirs)
+
         where current is the directory being traversed, and subdirs the
         SubDirectories instance corresponding to it.
         The filter function returns a tuple (filtered_current, filtered_parallel,
@@ -367,7 +366,6 @@ class RecursiveMakeBackend(MakeBackend):
         self._traversal = RecursiveMakeTraversal()
         self._compile_graph = OrderedDefaultDict(set)
         self._rust_targets = set()
-        self._rust_lib_targets = set()
         self._gkrust_target = None
         self._pre_compile = set()
 
@@ -611,7 +609,6 @@ class RecursiveMakeBackend(MakeBackend):
             build_target = self._build_target_for_obj(obj)
             self._compile_graph[build_target]
             self._rust_targets.add(build_target)
-            self._rust_lib_targets.add(build_target)
             if obj.is_gkrust:
                 self._gkrust_target = build_target
 
@@ -626,7 +623,6 @@ class RecursiveMakeBackend(MakeBackend):
 
         elif isinstance(obj, SandboxedWasmLibrary):
             self._process_sandboxed_wasm_library(obj, backend_file)
-            self._no_skip["syms"].add(backend_file.relobjdir)
 
         elif isinstance(obj, HostLibrary):
             self._process_linked_libraries(obj, backend_file)
@@ -774,7 +770,6 @@ class RecursiveMakeBackend(MakeBackend):
             # on other directories in the tree, so putting them first here will
             # start them earlier in the build.
             rust_roots = sorted(r for r in roots if r in self._rust_targets)
-            rust_libs = sorted(r for r in roots if r in self._rust_lib_targets)
             if category == "compile" and rust_roots:
                 rust_rule = root_deps_mk.create_rule(["recurse_rust"])
                 rust_rule.add_dependencies(rust_roots)
@@ -786,7 +781,7 @@ class RecursiveMakeBackend(MakeBackend):
                 # builds.
                 for prior_target, target in pairwise(
                     sorted(
-                        [t for t in rust_libs], key=lambda t: t != self._gkrust_target
+                        [t for t in rust_roots], key=lambda t: t != self._gkrust_target
                     )
                 ):
                     r = root_deps_mk.create_rule([target])
@@ -1201,8 +1196,9 @@ class RecursiveMakeBackend(MakeBackend):
         self, obj, backend_file, target_variable, target_cargo_variable
     ):
         backend_file.write_once("CARGO_FILE := %s\n" % obj.cargo_file)
-        backend_file.write_once("CARGO_TARGET_DIR := .\n")
-        backend_file.write("%s += %s\n" % (target_variable, obj.location))
+        target_dir = mozpath.normpath(backend_file.environment.topobjdir)
+        backend_file.write_once("CARGO_TARGET_DIR := %s\n" % target_dir)
+        backend_file.write("%s += $(DEPTH)/%s\n" % (target_variable, obj.location))
         backend_file.write("%s += %s\n" % (target_cargo_variable, obj.name))
 
     def _process_rust_program(self, obj, backend_file):
@@ -1431,6 +1427,9 @@ class RecursiveMakeBackend(MakeBackend):
             backend_file.write_once("%s_OBJS := %s\n" % (obj.name, list_file_ref))
             backend_file.write_once("%s: %s\n" % (obj_target, list_file_path))
             backend_file.write("%s: %s\n" % (obj_target, objs_ref))
+
+        if getattr(obj, "symbols_file", None):
+            backend_file.write_once("%s: %s\n" % (obj_target, obj.symbols_file))
 
         for lib in shared_libs:
             assert obj.KIND != "host" and obj.KIND != "wasm"

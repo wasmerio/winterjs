@@ -1,6 +1,6 @@
 'use strict';
 
-import {SubAppsService, SubAppsServiceReceiver, SubAppsServiceResult} from '/gen/third_party/blink/public/mojom/subapps/sub_apps_service.mojom.m.js';
+import {SubAppsService, SubAppsServiceReceiver, SubAppsServiceResultCode} from '/gen/third_party/blink/public/mojom/subapps/sub_apps_service.mojom.m.js';
 
 self.SubAppsServiceTest = (() => {
   // Class that mocks SubAppsService interface defined in /third_party/blink/public/mojom/subapps/sub_apps_service.mojom
@@ -29,15 +29,15 @@ self.SubAppsServiceTest = (() => {
     list() {
       return Promise.resolve({
         result: {
-          code: testInternal.serviceResultCode,
-          subAppIds: []
+          resultCode: testInternal.serviceResultCode,
+          subAppsList: testInternal.listCallReturnValue,
         }
       });
     }
 
     remove() {
       return Promise.resolve({
-        result: testInternal.serviceResultCode,
+        result: testInternal.removeCallReturnValue,
       });
     }
   }
@@ -46,7 +46,9 @@ self.SubAppsServiceTest = (() => {
     initialized: false,
     mockSubAppsService: null,
     serviceResultCode: 0,
-    addCallReturnValue: []
+    addCallReturnValue: [],
+    listCallReturnValue: [],
+    removeCallReturnValue: [],
   }
 
   class SubAppsServiceTestChromium {
@@ -54,13 +56,15 @@ self.SubAppsServiceTest = (() => {
       Object.freeze(this);  // Make it immutable.
     }
 
-    initialize(service_result_code, add_call_return_value) {
+    initialize(service_result_code, add_call_return_value, list_call_return_value, remove_call_return_value) {
       if (!testInternal.initialized) {
         testInternal = {
           mockSubAppsService: new MockSubAppsService(),
           initialized: true,
           serviceResultCode: service_result_code,
           addCallReturnValue: add_call_return_value,
+          listCallReturnValue: list_call_return_value,
+          removeCallReturnValue: remove_call_return_value,
         };
       };
     }
@@ -72,7 +76,9 @@ self.SubAppsServiceTest = (() => {
           mockSubAppsService: null,
           initialized: false,
           serviceResultCode: 0,
-          addCallReturnValue: []
+          addCallReturnValue: [],
+          listCallReturnValue: [],
+          removeCallReturnValue: [],
         };
         await new Promise(resolve => setTimeout(resolve, 0));
       }

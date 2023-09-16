@@ -3,21 +3,25 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import sys
+
+import yaml
+from mozbuild.shellutil import quote as shellquote
 from vsdownload import (
     getArgsParser,
     getManifest,
     getPackages,
     getSelectedPackages,
-    setPackageSelection,
     lowercaseIgnores,
+    setPackageSelection,
 )
-import sys
-import yaml
-
 
 if __name__ == "__main__":
     parser = getArgsParser()
     parser.add_argument("-o", dest="output", required=True, help="Output file")
+    parser.add_argument(
+        "--exclude", default=[], nargs="+", help="Patterns of file names to exclude"
+    )
     args = parser.parse_args()
     lowercaseIgnores(args)
 
@@ -40,6 +44,7 @@ if __name__ == "__main__":
                 }
                 for payload in s["payloads"]
                 if payload["fileName"].endswith((".cab", ".msi", ".vsix"))
+                and not any(e in payload["fileName"] for e in args.exclude)
             ]
             reduced.append(filtered)
     with open(args.output, "w") as out:
@@ -47,7 +52,8 @@ if __name__ == "__main__":
         print(
             "# ./mach python --virtualenv build build/vs/generate_yaml.py \\", file=out
         )
-        for i, arg in enumerate(sys.argv[1:]):
+        for i, arg_ in enumerate(sys.argv[1:]):
+            arg = shellquote(arg_)
             if i < len(sys.argv) - 2:
                 print("#  ", arg, "\\", file=out)
             else:

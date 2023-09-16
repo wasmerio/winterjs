@@ -32,6 +32,7 @@
 #include "js/experimental/PCCountProfiling.h"  // JS::{Start,Stop}PCCountProfiling, JS::PurgePCCounts, JS::GetPCCountScript{Count,Summary,Contents}
 #include "js/friend/DumpFunctions.h"           // js::DumpPC, js::DumpScript
 #include "js/friend/ErrorMessages.h"           // js::GetErrorMessage, JSMSG_*
+#include "js/Printer.h"
 #include "js/Printf.h"
 #include "js/Symbol.h"
 #include "util/DifferentialTesting.h"
@@ -50,7 +51,6 @@
 #include "vm/JSONPrinter.h"
 #include "vm/JSScript.h"
 #include "vm/Opcodes.h"
-#include "vm/Printer.h"
 #include "vm/Realm.h"
 #include "vm/Shape.h"
 #include "vm/ToSource.h"       // js::ValueToSource
@@ -1336,11 +1336,12 @@ static bool DecompileAtPCForStackDump(
     JSContext* cx, HandleScript script,
     const OffsetAndDefIndex& offsetAndDefIndex, Sprinter* sp);
 
-static bool PrintShapeProperties(JSContext* cx, Sprinter* sp, Shape* shape) {
+static bool PrintShapeProperties(JSContext* cx, Sprinter* sp,
+                                 SharedShape* shape) {
   // Add all property keys to a vector to allow printing them in property
   // definition order.
   Vector<PropertyKey> props(cx);
-  for (ShapePropertyIter<NoGC> iter(shape); !iter.done(); iter++) {
+  for (SharedShapePropertyIter<NoGC> iter(shape); !iter.done(); iter++) {
     if (!props.append(iter->key())) {
       return false;
     }
@@ -1560,7 +1561,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
     }
 
     case JOF_SHAPE: {
-      Shape* shape = script->getShape(pc);
+      SharedShape* shape = script->getShape(pc);
       if (!sp->put(" ")) {
         return 0;
       }
@@ -2427,7 +2428,7 @@ static bool DecompileExpressionFromStack(JSContext* cx, int spindex,
   FrameIter frameIter(cx);
 
   if (frameIter.done() || !frameIter.hasScript() ||
-      frameIter.realm() != cx->realm()) {
+      frameIter.realm() != cx->realm() || frameIter.inPrologue()) {
     return true;
   }
 
@@ -2443,11 +2444,6 @@ static bool DecompileExpressionFromStack(JSContext* cx, int spindex,
   jsbytecode* valuepc = frameIter.pc();
 
   MOZ_ASSERT(script->containsPC(valuepc));
-
-  // Give up if in prologue.
-  if (valuepc < script->main()) {
-    return true;
-  }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   BytecodeParser parser(cx, allocScope.alloc(), frameIter.script());
@@ -2739,11 +2735,17 @@ JSString* JS::GetPCCountScriptSummary(JSContext* cx, size_t index) {
 
   json.beginObject();
 
-  RootedString filename(cx, NewStringCopyZ<CanGC>(cx, script->filename()));
-  if (!filename) {
+  Rooted<JSString*> filenameStr(cx);
+  if (const char* filename = script->filename()) {
+    filenameStr =
+        JS_NewStringCopyUTF8N(cx, JS::UTF8Chars(filename, strlen(filename)));
+  } else {
+    filenameStr = JS_GetEmptyString(cx);
+  }
+  if (!filenameStr) {
     return nullptr;
   }
-  if (!JSONStringProperty(sp, json, "file", filename)) {
+  if (!JSONStringProperty(sp, json, "file", filenameStr)) {
     return nullptr;
   }
   json.property("line", script->lineno());
@@ -2921,7 +2923,7 @@ static bool GetPCCountJSON(JSContext* cx, const ScriptAndCounts& sac,
 
   json.endObject();
 
-  return true;
+  return !sp.hadOutOfMemory();
 }
 
 JSString* JS::GetPCCountScriptContents(JSContext* cx, size_t index) {

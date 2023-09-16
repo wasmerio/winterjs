@@ -21,8 +21,6 @@
 #include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "frontend/TokenStream.h"
 
-struct JS_PUBLIC_API JSContext;
-
 namespace js {
 
 namespace frontend {
@@ -175,7 +173,7 @@ class SyntaxParseHandler {
   }
 
  public:
-  SyntaxParseHandler(ErrorContext* ec, CompilationState& compilationState) {
+  SyntaxParseHandler(FrontendContext* fc, CompilationState& compilationState) {
     MOZ_ASSERT(!compilationState.input.isDelazifying());
   }
 

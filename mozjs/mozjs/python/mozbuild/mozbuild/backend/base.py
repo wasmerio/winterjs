@@ -2,35 +2,26 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
-from abc import (
-    ABCMeta,
-    abstractmethod,
-)
-
 import errno
 import io
 import itertools
 import os
-import six
 import time
-
+from abc import ABCMeta, abstractmethod
 from contextlib import contextmanager
 
+import mozpack.path as mozpath
+import six
 from mach.mixin.logging import LoggingMixin
 
-import mozpack.path as mozpath
-from ..preprocessor import Preprocessor
-from ..pythonutil import iter_modules_in_path
-from ..util import (
-    FileAvoidWrite,
-    simple_diff,
-)
+from mozbuild.base import ExecutionSummary
+
 from ..frontend.data import ContextDerived
 from ..frontend.reader import EmptyConfig
+from ..preprocessor import Preprocessor
+from ..pythonutil import iter_modules_in_path
+from ..util import FileAvoidWrite, simple_diff
 from .configenvironment import ConfigEnvironment
-from mozbuild.base import ExecutionSummary
 
 
 class BuildBackend(LoggingMixin):
@@ -128,10 +119,10 @@ class BuildBackend(LoggingMixin):
                 )
 
         for obj in objs:
-            obj_start = time.time()
+            obj_start = time.monotonic()
             if not self.consume_object(obj) and not isinstance(self, PartialBackend):
                 raise Exception("Unhandled object of type %s" % type(obj))
-            self._execution_time += time.time() - obj_start
+            self._execution_time += time.monotonic() - obj_start
 
             if isinstance(obj, ContextDerived) and not isinstance(self, PartialBackend):
                 self.backend_input_files |= obj.context_all_paths
@@ -142,9 +133,9 @@ class BuildBackend(LoggingMixin):
             iter_modules_in_path(self.environment.topsrcdir, self.environment.topobjdir)
         )
 
-        finished_start = time.time()
+        finished_start = time.monotonic()
         self.consume_finished()
-        self._execution_time += time.time() - finished_start
+        self._execution_time += time.monotonic() - finished_start
 
         # Purge backend files created in previous run, but not created anymore
         delete_files = backend_output_list - self._backend_output_files
@@ -215,8 +206,8 @@ class BuildBackend(LoggingMixin):
         invalidate the XUL cache (which includes some JS) at application
         startup-time.  The application checks for .purgecaches in the
         application directory, which varies according to
-        --enable-application.  There's a further wrinkle on macOS, where
-        the real application directory is part of a Cocoa bundle
+        --enable-application/--enable-project.  There's a further wrinkle on
+        macOS, where the real application directory is part of a Cocoa bundle
         produced from the regular application directory by the build
         system.  In this case, we write to both locations, since the
         build system recreates the Cocoa bundle from the contents of the
@@ -264,7 +255,7 @@ class BuildBackend(LoggingMixin):
         status value of a subprocess, where 0 denotes success and any
         other value is an error code.
 
-        If an exception is raised, |mach build| will fail with a
+        If an exception is raised, ``mach build`` will fail with a
         non-zero exit code.
         """
         self._write_purgecaches(config)

@@ -61,7 +61,7 @@ using namespace js;
 
 #define IMPLEMENT_ERROR_PROTO_CLASS(name)                         \
   {                                                               \
-#    name ".prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_##name), \
+    #name ".prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_##name), \
         JS_NULL_CLASS_OPS,                                        \
         &ErrorObject::classSpecs[JSProto_##name - JSProto_Error]  \
   }
@@ -150,7 +150,7 @@ const ClassSpec ErrorObject::classSpecs[JSEXN_ERROR_LIMIT] = {
 
 #define IMPLEMENT_ERROR_CLASS_CORE(name, reserved_slots)         \
   {                                                              \
-#    name,                                                       \
+    #name,                                                       \
         JSCLASS_HAS_CACHED_PROTO(JSProto_##name) |               \
             JSCLASS_HAS_RESERVED_SLOTS(reserved_slots) |         \
             JSCLASS_BACKGROUND_FINALIZE,                         \
@@ -247,7 +247,8 @@ static ErrorObject* CreateErrorObject(JSContext* cx, const CallArgs& args,
     fileName = cx->runtime()->emptyString;
     if (!iter.done()) {
       if (const char* cfilename = iter.filename()) {
-        fileName = JS_NewStringCopyZ(cx, cfilename);
+        fileName = JS_NewStringCopyUTF8Z(
+            cx, JS::ConstUTF8CharsZ(cfilename, strlen(cfilename)));
       }
       if (iter.hasScript()) {
         sourceId = iter.script()->scriptSource()->id();
@@ -414,8 +415,8 @@ JSObject* ErrorObject::createConstructor(JSContext* cx, JSProtoKey key) {
 }
 
 /* static */
-Shape* js::ErrorObject::assignInitialShape(JSContext* cx,
-                                           Handle<ErrorObject*> obj) {
+SharedShape* js::ErrorObject::assignInitialShape(JSContext* cx,
+                                                 Handle<ErrorObject*> obj) {
   MOZ_ASSERT(obj->empty());
 
   constexpr PropertyFlags propFlags = {PropertyFlag::Configurable,
@@ -436,7 +437,7 @@ Shape* js::ErrorObject::assignInitialShape(JSContext* cx,
     return nullptr;
   }
 
-  return obj->shape();
+  return obj->sharedShape();
 }
 
 /* static */
@@ -571,7 +572,8 @@ JSErrorReport* js::ErrorObject::getOrCreateErrorReport(JSContext* cx) {
   report.exnType = type_;
 
   // Filename.
-  UniqueChars filenameStr = JS_EncodeStringToLatin1(cx, fileName(cx));
+  RootedString filename(cx, fileName(cx));
+  UniqueChars filenameStr = JS_EncodeStringToUTF8(cx, filename);
   if (!filenameStr) {
     return nullptr;
   }
@@ -615,36 +617,30 @@ static bool FindErrorInstanceOrPrototype(JSContext* cx, HandleObject obj,
   //   (new NYI).stack
   // to continue returning stacks that are useless, but at least don't throw.
 
-  RootedObject target(cx, CheckedUnwrapStatic(obj));
-  if (!target) {
-    ReportAccessDenied(cx);
-    return false;
-  }
-
-  RootedObject proto(cx);
-  while (!IsErrorProtoKey(StandardProtoKeyOrNull(target))) {
-    if (!GetPrototype(cx, target, &proto)) {
-      return false;
-    }
-
-    if (!proto) {
-      // We walked the whole prototype chain and did not find an Error
-      // object.
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_INCOMPATIBLE_PROTO, js_Error_str,
-                                "(get stack)", obj->getClass()->name);
-      return false;
-    }
-
-    target = CheckedUnwrapStatic(proto);
+  RootedObject curr(cx, obj);
+  RootedObject target(cx);
+  do {
+    target = CheckedUnwrapStatic(curr);
     if (!target) {
       ReportAccessDenied(cx);
       return false;
     }
-  }
+    if (IsErrorProtoKey(StandardProtoKeyOrNull(target))) {
+      result.set(target);
+      return true;
+    }
 
-  result.set(target);
-  return true;
+    if (!GetPrototype(cx, curr, &curr)) {
+      return false;
+    }
+  } while (curr);
+
+  // We walked the whole prototype chain and did not find an Error
+  // object.
+  JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                            JSMSG_INCOMPATIBLE_PROTO, js_Error_str,
+                            "(get stack)", obj->getClass()->name);
+  return false;
 }
 
 static MOZ_ALWAYS_INLINE bool IsObject(HandleValue v) { return v.isObject(); }

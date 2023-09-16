@@ -72,14 +72,32 @@ enum class TypeCode {
   // A reference to any host value.
   ExternRef = 0x6f,  // SLEB128(-0x11)
 
+  // A reference to any wasm gc value.
+  AnyRef = 0x6e,  // SLEB128(-0x12)
+
   // A reference to a struct/array value.
-  EqRef = 0x6d,  // SLEB128(-0x12)
+  EqRef = 0x6d,  // SLEB128(-0x13)
 
   // Type constructor for nullable reference types.
   NullableRef = 0x6c,  // SLEB128(-0x14)
 
   // Type constructor for non-nullable reference types.
   Ref = 0x6b,  // SLEB128(-0x15)
+
+  // A null reference in the extern hierarchy.
+  NullExternRef = 0x69,  // SLEB128(-0x17)
+
+  // A null reference in the func hierarchy.
+  NullFuncRef = 0x68,  // SLEB128(-0x18)
+
+  // A reference to any struct value.
+  StructRef = 0x67,  // SLEB128(-0x19)
+
+  // A reference to any array value.
+  ArrayRef = 0x66,  // SLEB128(-0x1A)
+
+  // A null reference in the any hierarchy.
+  NullAnyRef = 0x65,  // SLEB128(-0x1B)
 
   // Type constructor for function types
   Func = 0x60,  // SLEB128(-0x20)
@@ -90,8 +108,20 @@ enum class TypeCode {
   // Type constructor for array types - gc proposal
   Array = 0x5e,  // SLEB128(-0x22)
 
+  // Value for non-nullable type present.
+  TableHasInitExpr = 0x40,
+
   // The 'empty' case of blocktype.
   BlockVoid = 0x40,  // SLEB128(-0x40)
+
+  // Type constructor for recursion groups - gc proposal
+  RecGroup = 0x4f,
+
+  // TODO: update wasm-tools to use the correct prefix
+  RecGroupOld = 0x45,
+
+  // Type prefix for parent types - gc proposal
+  SubType = 0x50,
 
   Limit = 0x80
 };
@@ -107,12 +137,10 @@ static constexpr TypeCode LowestPrimitiveTypeCode = TypeCode::I16;
 
 static constexpr TypeCode AbstractReferenceTypeCode = TypeCode::ExternRef;
 
-// A type code used to represent (ref null? typeindex) whether or not the type
+// A type code used to represent (ref null? T) whether or not the type
 // is encoded with 'Ref' or 'NullableRef'.
 
-static constexpr TypeCode AbstractReferenceTypeIndexCode = TypeCode::Ref;
-
-enum class TypeIdDescKind { None, Immediate, Global };
+static constexpr TypeCode AbstractTypeRefCode = TypeCode::Ref;
 
 // A wasm::Trap represents a wasm-defined trap that can occur during execution
 // which triggers a WebAssembly.RuntimeError. Generated code may jump to a Trap
@@ -464,18 +492,40 @@ enum class GcOp {
   ArrayNewFixed = 0x1a,
   ArrayNewDefault = 0x1c,
   ArrayNewData = 0x1d,
-  ArrayNewElem = 0x10,
+  // array.init_from_elem_static in V5 became array.new_elem in V6, changing
+  // opcodes in the process
+  ArrayInitFromElemStaticV5 = 0x10,
+  ArrayNewElem = 0x1f,
   ArrayGet = 0x13,
   ArrayGetS = 0x14,
   ArrayGetU = 0x15,
   ArraySet = 0x16,
-  ArrayLen = 0x17,
+  ArrayLenWithTypeIndex = 0x17,
   ArrayCopy = 0x18,
+  ArrayLen = 0x19,
 
   // Ref operations
-  RefTest = 0x44,
-  RefCast = 0x45,
-  BrOnCast = 0x46,
+  RefTestV5 = 0x44,
+  RefCastV5 = 0x45,
+  BrOnCastV5 = 0x46,
+  BrOnCastHeapV5 = 0x42,
+  BrOnCastHeapNullV5 = 0x4a,
+  BrOnCastFailV5 = 0x47,
+  BrOnCastFailHeapV5 = 0x43,
+  BrOnCastFailHeapNullV5 = 0x4b,
+  RefTest = 0x40,
+  RefCast = 0x41,
+  RefTestNull = 0x48,
+  RefCastNull = 0x49,
+  BrOnCast = 0x4f,
+
+  // Dart compatibility instruction
+  RefAsStructV5 = 0x59,
+  BrOnNonStructV5 = 0x64,
+
+  // Extern/any coercion operations
+  ExternInternalize = 0x70,
+  ExternExternalize = 0x71,
 
   Limit
 };
@@ -744,10 +794,10 @@ enum class SimdOp {
   F64x2ConvertLowI32x4S = 0xfe,
   F64x2ConvertLowI32x4U = 0xff,
   I8x16RelaxedSwizzle = 0x100,
-  I32x4RelaxedTruncSSatF32x4 = 0x101,
-  I32x4RelaxedTruncUSatF32x4 = 0x102,
-  I32x4RelaxedTruncSatF64x2SZero = 0x103,
-  I32x4RelaxedTruncSatF64x2UZero = 0x104,
+  I32x4RelaxedTruncF32x4S = 0x101,
+  I32x4RelaxedTruncF32x4U = 0x102,
+  I32x4RelaxedTruncF64x2SZero = 0x103,
+  I32x4RelaxedTruncF64x2UZero = 0x104,
   F32x4RelaxedFma = 0x105,
   F32x4RelaxedFnma = 0x106,
   F64x2RelaxedFma = 0x107,
@@ -763,9 +813,8 @@ enum class SimdOp {
   I16x8RelaxedQ15MulrS = 0x111,
   I16x8DotI8x16I7x16S = 0x112,
   I32x4DotI8x16I7x16AddS = 0x113,
-  F32x4RelaxedDotBF16x8AddF32x4 = 0x114,
 
-  // Reserved for Relaxed SIMD = 0x115-0x12f
+  // Reserved for Relaxed SIMD = 0x114-0x12f
 
   // Unused = 0x130 and up
 
@@ -800,6 +849,8 @@ enum class MiscOp {
   TableGrow = 0x0f,
   TableSize = 0x10,
   TableFill = 0x11,
+
+  MemoryDiscard = 0x12,
 
   Limit
 };
@@ -929,9 +980,12 @@ enum class MozOp {
   F32TeeStore,
   F64TeeStore,
   F64Mod,
-  F64Sin,
-  F64Cos,
-  F64Tan,
+  F64SinNative,
+  F64SinFdlibm,
+  F64CosNative,
+  F64CosFdlibm,
+  F64TanNative,
+  F64TanFdlibm,
   F64Asin,
   F64Acos,
   F64Atan,
@@ -963,6 +1017,38 @@ struct OpBytes {
     b1 = 0;
   }
   OpBytes() = default;
+
+  // Whether this opcode should have a breakpoint site inserted directly before
+  // the opcode in baseline when debugging. We use this as a heuristic to
+  // reduce the number of breakpoint sites.
+  bool shouldHaveBreakpoint() const {
+    switch (Op(b0)) {
+      // Block-like instructions don't get their own breakpoint site, a
+      // breakpoint can be used on instructions in the block.
+      case Op::Block:
+      case Op::Loop:
+      case Op::If:
+      case Op::Else:
+      case Op::Try:
+      case Op::Delegate:
+      case Op::Catch:
+      case Op::CatchAll:
+      case Op::End:
+      // Effect-less instructions without inputs are leaf nodes in expressions,
+      // a breakpoint can be used on instructions that consume these values.
+      case Op::LocalGet:
+      case Op::GlobalGet:
+      case Op::I32Const:
+      case Op::I64Const:
+      case Op::F32Const:
+      case Op::F64Const:
+      case Op::RefNull:
+      case Op::Drop:
+        return false;
+      default:
+        return true;
+    }
+  }
 };
 
 static const char NameSectionName[] = "name";
@@ -972,7 +1058,7 @@ enum class NameType { Module = 0, Function = 1, Local = 2 };
 
 enum class FieldFlags { Mutable = 0x01, AllowedMask = 0x01 };
 
-enum class FieldExtension { None, Signed, Unsigned };
+enum class FieldWideningOp { None, Signed, Unsigned };
 
 // The WebAssembly spec hard-codes the virtual page size to be 64KiB and
 // requires the size of linear memory to always be a multiple of 64KiB.
@@ -1000,7 +1086,7 @@ static const unsigned MaxTableLength = 10000000;
 static const unsigned MaxLocals = 50000;
 static const unsigned MaxParams = 1000;
 static const unsigned MaxResults = 1000;
-static const unsigned MaxStructFields = 1000;
+static const unsigned MaxStructFields = 2000;
 static const uint64_t MaxMemory32LimitField = uint64_t(1) << 16;
 static const uint64_t MaxMemory64LimitField = uint64_t(1) << 48;
 static const unsigned MaxStringBytes = 100000;
@@ -1010,15 +1096,18 @@ static const unsigned MaxFunctionBytes = 7654321;
 // These limits pertain to our WebAssembly implementation only, but may make
 // sense to get into the shared limits spec eventually.
 
-// See PackedTypeCode for exact bits available for these fields depending on
-// platform
-#ifdef JS_64BIT
-static const unsigned MaxTypeIndex = 1000000;
-#else
-static const unsigned MaxTypeIndex = 15000;
-#endif
-
+static const unsigned MaxRecGroups = 1000000;
+static const unsigned MaxSubTypingDepth = 31;
 static const unsigned MaxTags = 1000000;
+
+// Maximum payload size, in bytes, of a gc-proposal Array.  Puts it fairly
+// close to 2^31 without exposing us to potential danger at the signed-i32
+// wraparound boundary.  Note that gc-proposal Struct sizes are limited by
+// MaxStructFields above.  Some code assumes that the payload size will fit in
+// a uint32_t, hence the static assert.
+static const unsigned MaxArrayPayloadBytes = 1987654321;
+static_assert(uint64_t(MaxArrayPayloadBytes) <
+              (uint64_t(1) << (8 * sizeof(uint32_t))));
 
 // These limits pertain to our WebAssembly implementation only.
 
@@ -1039,12 +1128,6 @@ static const unsigned MaxFrameSize = 512 * 1024;
 // Asserted by Decoder::readVarU32.
 
 static const unsigned MaxVarU32DecodedBytes = 5;
-
-// Which backend to use in the case of the optimized tier.
-
-enum class OptimizedBackend {
-  Ion,
-};
 
 // The CompileMode controls how compilation of a module is performed (notably,
 // how many times we compile it).

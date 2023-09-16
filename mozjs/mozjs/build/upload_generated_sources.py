@@ -3,25 +3,24 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import argparse
-from contextlib import contextmanager
 import gzip
 import io
 import logging
+import os
+import sys
+import tarfile
+import time
+from contextlib import contextmanager
+from threading import Event, Thread
+
+import requests
 from mozbuild.generated_sources import (
     get_filename_with_digest,
     get_s3_region_and_bucket,
 )
-import os
-from six.moves.queue import Queue
-import requests
-import sys
-import tarfile
 from requests.packages.urllib3.util.retry import Retry
-from threading import Event, Thread
-import time
+from six.moves.queue import Queue
 
 # Arbitrary, should probably measure this.
 NUM_WORKER_THREADS = 10

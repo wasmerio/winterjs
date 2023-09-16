@@ -6,7 +6,6 @@ from unittest import mock
 
 import mozunit
 import pytest
-
 from mozbuild.base import MachCommandBase  # noqa
 
 from mozperftest.runner import main
@@ -32,6 +31,8 @@ def test_side_by_side(arg, patched_mozperftest_tools):
         "mozperftest.runner._activate_mach_virtualenv", return_value="fake_path"
     ) as _, mock.patch(
         "mozperftest.runner._create_artifacts_dir", return_value="fake_path"
+    ) as _, mock.patch(
+        "mozperftest.runner._save_params", return_value="fake_path"
     ) as _:
         main(
             [

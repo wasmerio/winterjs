@@ -29,6 +29,7 @@
 #include "vm/DateTime.h"
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
+#include "vm/PIC.h"
 
 #include "gc/Marking-inl.h"
 #include "vm/JSObject-inl.h"
@@ -41,10 +42,6 @@ Realm::DebuggerVectorEntry::DebuggerVectorEntry(js::Debugger* dbg_,
 
 ObjectRealm::ObjectRealm(JS::Zone* zone)
     : innerViews(zone, zone), iteratorCache(zone) {}
-
-ObjectRealm::~ObjectRealm() {
-  MOZ_ASSERT(enumerators == iteratorSentinel_.get());
-}
 
 Realm::Realm(Compartment* comp, const JS::RealmOptions& options)
     : JS::shadow::Realm(comp),
@@ -74,18 +71,7 @@ Realm::~Realm() {
   runtime_->numRealms--;
 }
 
-bool ObjectRealm::init(JSContext* cx) {
-  NativeIteratorSentinel sentinel(NativeIterator::allocateSentinel(cx));
-  if (!sentinel) {
-    return false;
-  }
-
-  iteratorSentinel_ = std::move(sentinel);
-  enumerators = iteratorSentinel_.get();
-  return true;
-}
-
-bool Realm::init(JSContext* cx, JSPrincipals* principals) {
+void Realm::init(JSContext* cx, JSPrincipals* principals) {
   /*
    * As a hack, we clear our timezone cache every time we create a new realm.
    * This ensures that the cache is always relatively fresh, but shouldn't
@@ -94,10 +80,6 @@ bool Realm::init(JSContext* cx, JSPrincipals* principals) {
    */
   js::ResetTimeZoneInternal(ResetTimeZoneMode::DontResetIfOffsetUnchanged);
 
-  if (!objects_.init(cx)) {
-    return false;
-  }
-
   if (principals) {
     // Any realm with the trusted principals -- and there can be
     // multiple -- is a system realm.
@@ -105,8 +87,6 @@ bool Realm::init(JSContext* cx, JSPrincipals* principals) {
     JS_HoldPrincipals(principals);
     principals_ = principals;
   }
-
-  return true;
 }
 
 bool JSRuntime::createJitRuntime(JSContext* cx) {
@@ -155,9 +135,7 @@ bool Realm::ensureJitRealmExists(JSContext* cx) {
     return false;
   }
 
-  if (!jitRealm->initialize(cx, zone()->allocNurseryStrings)) {
-    return false;
-  }
+  jitRealm->initialize(zone()->allocNurseryStrings());
 
   jitRealm_ = std::move(jitRealm);
   return true;
@@ -166,7 +144,7 @@ bool Realm::ensureJitRealmExists(JSContext* cx) {
 #ifdef JSGC_HASH_TABLE_CHECKS
 
 void js::DtoaCache::checkCacheAfterMovingGC() {
-  MOZ_ASSERT(!s || !IsForwarded(s));
+  MOZ_ASSERT(!str || !IsForwarded(str));
 }
 
 #endif  // JSGC_HASH_TABLE_CHECKS
@@ -270,10 +248,9 @@ void ObjectRealm::trace(JSTracer* trc) {
 
 void Realm::traceRoots(JSTracer* trc,
                        js::gc::GCRuntime::TraceOrMarkRuntime traceOrMark) {
-  if (objectMetadataState_.is<PendingMetadata>()) {
-    GCPolicy<NewObjectMetadataState>::trace(trc, &objectMetadataState_,
-                                            "on-stack object pending metadata");
-  }
+  // It's not possible to trigger a GC between allocating the pending object and
+  // setting its meta data in ~AutoSetNewObjectMetadata.
+  MOZ_RELEASE_ASSERT(!objectPendingMetadata_);
 
   if (!JS::RuntimeHeapIsMinorCollecting()) {
     // The global is never nursery allocated, so we don't need to
@@ -363,25 +340,6 @@ void Realm::traceWeakDebugEnvironmentEdges(JSTracer* trc) {
   }
 }
 
-void ObjectRealm::traceWeakNativeIterators(JSTracer* trc) {
-  /* Sweep list of native iterators. */
-  NativeIterator* ni = enumerators->next();
-  while (ni != enumerators) {
-    JSObject* iterObj = ni->iterObj();
-    NativeIterator* next = ni->next();
-    if (!TraceManuallyBarrieredWeakEdge(trc, &iterObj,
-                                        "ObjectRealm::enumerators")) {
-      ni->unlink();
-    }
-    MOZ_ASSERT(&ObjectRealm::get(ni->objectBeingIterated()) == this);
-    ni = next;
-  }
-}
-
-void Realm::traceWeakObjectRealm(JSTracer* trc) {
-  objects_.traceWeakNativeIterators(trc);
-}
-
 void Realm::fixupAfterMovingGC(JSTracer* trc) {
   purge();
   traceWeakGlobalEdge(trc);
@@ -394,6 +352,19 @@ void Realm::purge() {
   objects_.iteratorCache.clearAndCompact();
   arraySpeciesLookup.purge();
   promiseLookup.purge();
+
+  if (zone()->isGCPreparing()) {
+    purgeForOfPicChain();
+  }
+}
+
+void Realm::purgeForOfPicChain() {
+  if (GlobalObject* global = global_.unbarrieredGet()) {
+    if (NativeObject* object = global->getForOfPICObject()) {
+      ForOfPIC::Chain* chain = ForOfPIC::fromJSObject(object);
+      chain->freeAllStubs(runtime_->gcContext());
+    }
+  }
 }
 
 // Check to see if this individual realm is recording allocations. Debuggers or
@@ -587,8 +558,9 @@ bool Realm::shouldCaptureStackForThrow() {
   // relevant for uncaught exceptions that are not Error objects.
 
   // To match other browsers, we always capture a stack trace if the realm is a
-  // debuggee (this includes the devtools console being open).
-  if (isDebuggee()) {
+  // debuggee (this includes the devtools console being open) or if unlimited
+  // stack traces have been enabled for this realm (used in automation).
+  if (isDebuggee() || isUnlimitedStacksCapturingEnabled) {
     return true;
   }
 
@@ -615,37 +587,30 @@ mozilla::HashCodeScrambler Realm::randomHashCodeScrambler() {
                                     randomKeyGenerator_.next());
 }
 
-AutoSetNewObjectMetadata::AutoSetNewObjectMetadata(JSContext* cx)
-    : cx_(cx), prevState_(cx, cx->realm()->objectMetadataState_) {
-  MOZ_ASSERT(cx_->isMainThreadContext());
-  cx_->realm()->objectMetadataState_ = NewObjectMetadataState(DelayMetadata());
-}
-
-AutoSetNewObjectMetadata::~AutoSetNewObjectMetadata() {
-  if (!cx_->isExceptionPending() && cx_->realm()->hasObjectPendingMetadata()) {
-    // This destructor often runs upon exit from a function that is
-    // returning an unrooted pointer to a Cell. The allocation metadata
-    // callback often allocates; if it causes a GC, then the Cell pointer
-    // being returned won't be traced or relocated.
-    //
-    // The only extant callbacks are those internal to SpiderMonkey that
-    // capture the JS stack. In fact, we're considering removing general
-    // callbacks altogther in bug 1236748. Since it's not running arbitrary
-    // code, it's adequate to simply suppress GC while we run the callback.
-    gc::AutoSuppressGC autoSuppressGC(cx_);
-
-    JSObject* obj = cx_->realm()->objectMetadataState_.as<PendingMetadata>();
-
-    // Make sure to restore the previous state before setting the object's
-    // metadata. SetNewObjectMetadata asserts that the state is not
-    // PendingMetadata in order to ensure that metadata callbacks are called
-    // in order.
-    cx_->realm()->objectMetadataState_ = prevState_;
-
-    obj = SetNewObjectMetadata(cx_, obj);
-  } else {
-    cx_->realm()->objectMetadataState_ = prevState_;
+void AutoSetNewObjectMetadata::setPendingMetadata() {
+  JSObject* obj = cx_->realm()->getAndClearObjectPendingMetadata();
+  if (!obj) {
+    return;
   }
+
+  MOZ_ASSERT(obj->getClass()->shouldDelayMetadataBuilder());
+
+  if (cx_->isExceptionPending()) {
+    return;
+  }
+
+  // This function is called from a destructor that often runs upon exit from
+  // a function that is returning an unrooted pointer to a Cell. The
+  // allocation metadata callback often allocates; if it causes a GC, then the
+  // Cell pointer being returned won't be traced or relocated.
+  //
+  // The only extant callbacks are those internal to SpiderMonkey that
+  // capture the JS stack. In fact, we're considering removing general
+  // callbacks altogther in bug 1236748. Since it's not running arbitrary
+  // code, it's adequate to simply suppress GC while we run the callback.
+  gc::AutoSuppressGC autoSuppressGC(cx_);
+
+  (void)SetNewObjectMetadata(cx_, obj);
 }
 
 JS_PUBLIC_API void gc::TraceRealm(JSTracer* trc, JS::Realm* realm,
@@ -716,17 +681,17 @@ JS_PUBLIC_API bool JS::MaybeFreezeCtorAndPrototype(JSContext* cx,
 
 JS_PUBLIC_API JSObject* JS::GetRealmObjectPrototype(JSContext* cx) {
   CHECK_THREAD(cx);
-  return GlobalObject::getOrCreateObjectPrototype(cx, cx->global());
+  return &cx->global()->getObjectPrototype();
 }
 
 JS_PUBLIC_API JS::Handle<JSObject*> JS::GetRealmObjectPrototypeHandle(
     JSContext* cx) {
-  return GlobalObject::getOrCreateObjectPrototypeHandle(cx, cx->global());
+  return cx->global()->getObjectPrototypeHandle();
 }
 
 JS_PUBLIC_API JSObject* JS::GetRealmFunctionPrototype(JSContext* cx) {
   CHECK_THREAD(cx);
-  return GlobalObject::getOrCreateFunctionPrototype(cx, cx->global());
+  return &cx->global()->getFunctionPrototype();
 }
 
 JS_PUBLIC_API JSObject* JS::GetRealmArrayPrototype(JSContext* cx) {
@@ -775,12 +740,10 @@ JS_PUBLIC_API Realm* JS::GetFunctionRealm(JSContext* cx, HandleObject objArg) {
     // Steps 2 and 3. We use a loop instead of recursion to unwrap bound
     // functions.
     if (obj->is<JSFunction>()) {
-      JSFunction* fun = &obj->as<JSFunction>();
-      if (!fun->isBoundFunction()) {
-        return fun->realm();
-      }
-
-      obj = fun->getBoundFunctionTarget();
+      return obj->as<JSFunction>().realm();
+    }
+    if (obj->is<BoundFunctionObject>()) {
+      obj = obj->as<BoundFunctionObject>().getTarget();
       continue;
     }
 

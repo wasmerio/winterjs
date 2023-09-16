@@ -1,6 +1,6 @@
-This directory contains SpiderMonkey 107.
+This directory contains SpiderMonkey 115.
 
-This release is based on a revision of Mozilla 107:
+This release is based on a revision of Mozilla 115:
   https://hg.mozilla.org/releases/
 The changes in the patches/ directory were applied.
 

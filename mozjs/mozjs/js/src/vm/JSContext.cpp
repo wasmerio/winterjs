@@ -30,6 +30,7 @@
 #include "jsexn.h"
 #include "jstypes.h"
 
+#include "frontend/FrontendContext.h"
 #include "gc/GC.h"
 #include "irregexp/RegExpAPI.h"
 #include "jit/Simulator.h"
@@ -50,7 +51,6 @@
 #include "util/Text.h"
 #include "util/WindowsWrapper.h"
 #include "vm/BytecodeUtil.h"  // JSDVG_IGNORE_STACK
-#include "vm/ErrorContext.h"
 #include "vm/ErrorObject.h"
 #include "vm/ErrorReporting.h"
 #include "vm/JSFunction.h"
@@ -293,17 +293,15 @@ void JSContext::onOutOfMemory() {
 JS_PUBLIC_API void js::ReportOutOfMemory(JSContext* cx) {
   MaybeReportOutOfMemoryForDifferentialTesting();
 
-  if (cx->isHelperThreadContext()) {
-    return cx->addPendingOutOfMemory();
-  }
+  MOZ_ASSERT(cx->isMainThreadContext());
 
   cx->onOutOfMemory();
 }
 
-JS_PUBLIC_API void js::ReportOutOfMemory(ErrorContext* ec) {
+JS_PUBLIC_API void js::ReportOutOfMemory(FrontendContext* fc) {
   MaybeReportOutOfMemoryForDifferentialTesting();
 
-  ec->onOutOfMemory();
+  fc->onOutOfMemory();
 }
 
 static void MaybeReportOverRecursedForDifferentialTesting() {
@@ -345,14 +343,15 @@ JS_PUBLIC_API void js::ReportOverRecursed(JSContext* maybecx) {
   if (!maybecx) {
     return;
   }
+  MOZ_ASSERT(maybecx->isMainThreadContext());
 
   maybecx->onOverRecursed();
 }
 
-JS_PUBLIC_API void js::ReportOverRecursed(ErrorContext* ec) {
+JS_PUBLIC_API void js::ReportOverRecursed(FrontendContext* fc) {
   MaybeReportOverRecursedForDifferentialTesting();
 
-  ec->onOverRecursed();
+  fc->onOverRecursed();
 }
 
 void js::ReportOversizedAllocation(JSContext* cx, const unsigned errorNumber) {
@@ -373,6 +372,10 @@ void js::ReportOversizedAllocation(JSContext* cx, const unsigned errorNumber) {
 }
 
 void js::ReportAllocationOverflow(JSContext* cx) {
+  if (js::SupportDifferentialTesting()) {
+    fprintf(stderr, "ReportAllocationOverflow called\n");
+  }
+
   if (!cx) {
     return;
   }
@@ -381,8 +384,8 @@ void js::ReportAllocationOverflow(JSContext* cx) {
   cx->reportAllocationOverflow();
 }
 
-void js::ReportAllocationOverflow(ErrorContext* ec) {
-  ec->onAllocationOverflow();
+void js::ReportAllocationOverflow(FrontendContext* fc) {
+  fc->onAllocationOverflow();
 }
 
 /* |callee| requires a usage string provided by JS_DefineFunctionsWithHelp. */
@@ -693,8 +696,9 @@ JSObject* js::CreateErrorNotesArray(JSContext* cx, JSErrorReport* report) {
     }
 
     RootedValue filenameVal(cx);
-    if (note->filename) {
-      RootedString filenameStr(cx, NewStringCopyZ<CanGC>(cx, note->filename));
+    if (const char* filename = note->filename) {
+      JS::UTF8Chars utf8chars(filename, strlen(filename));
+      Rooted<JSString*> filenameStr(cx, NewStringCopyUTF8N(cx, utf8chars));
       if (!filenameStr) {
         return nullptr;
       }
@@ -724,7 +728,7 @@ JSObject* js::CreateErrorNotesArray(JSContext* cx, JSErrorReport* report) {
 void JSContext::recoverFromOutOfMemory() {
   if (isHelperThreadContext()) {
     // Keep in sync with addPendingOutOfMemory.
-    if (OffThreadFrontendErrors* errors = offThreadFrontendErrors()) {
+    if (FrontendErrors* errors = frontendErrors()) {
       errors->outOfMemory = false;
     }
   } else {
@@ -963,7 +967,7 @@ mozilla::GenericErrorResult<OOM> JSContext::alreadyReportedOOM() {
 #ifdef DEBUG
   if (isHelperThreadContext()) {
     // Keep in sync with addPendingOutOfMemory.
-    if (OffThreadFrontendErrors* errors = offThreadFrontendErrors()) {
+    if (FrontendErrors* errors = frontendErrors()) {
       MOZ_ASSERT(errors->outOfMemory);
     }
   } else {
@@ -980,7 +984,6 @@ mozilla::GenericErrorResult<JS::Error> JSContext::alreadyReportedError() {
 JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
     : runtime_(runtime),
       kind_(ContextKind::Uninitialized),
-      nurserySuppressions_(this),
       options_(this, options),
       freeUnusedMemory(false),
       measuringExecutionTime_(this, false),
@@ -999,6 +1002,10 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
 #endif
       dtoaState(this, nullptr),
       suppressGC(this, 0),
+#ifdef FUZZING_JS_FUZZILLI
+      executionHash(1),
+      executionHashInputs(0),
+#endif
 #ifdef DEBUG
       noNurseryAllocationCheck(this, 0),
       disableStrictProxyCheckingCount(this, 0),
@@ -1027,7 +1034,6 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
 #endif
       generatingError(this, false),
       cycleDetectorVector_(this, this),
-      watchtowerTestingCallback_(this),
       data(nullptr),
       asyncStackForNewActivations_(this),
       asyncCauseForNewActivations(this, nullptr),
@@ -1174,19 +1180,24 @@ void JSContext::setPendingException(HandleValue value,
 
 bool JSContext::getPendingException(MutableHandleValue rval) {
   MOZ_ASSERT(isExceptionPending());
-  rval.set(unwrappedException());
+
+  RootedValue exception(this, unwrappedException());
   if (zone()->isAtomsZone()) {
+    rval.set(exception);
     return true;
   }
+
   Rooted<SavedFrame*> stack(this, unwrappedExceptionStack());
   JS::ExceptionStatus prevStatus = status;
   clearPendingException();
-  if (!compartment()->wrap(this, rval)) {
+  if (!compartment()->wrap(this, &exception)) {
     return false;
   }
-  this->check(rval);
-  setPendingException(rval, stack);
+  this->check(exception);
+  setPendingException(exception, stack);
   status = prevStatus;
+
+  rval.set(exception);
   return true;
 }
 

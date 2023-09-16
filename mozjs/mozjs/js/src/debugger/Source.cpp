@@ -14,8 +14,9 @@
 #include <string.h>  // for memcpy
 #include <utility>   // for move
 
-#include "debugger/Debugger.h"  // for DebuggerSourceReferent, Debugger
-#include "debugger/Script.h"    // for DebuggerScript
+#include "debugger/Debugger.h"         // for DebuggerSourceReferent, Debugger
+#include "debugger/Script.h"           // for DebuggerScript
+#include "frontend/FrontendContext.h"  // for AutoReportFrontendContext
 #include "gc/Tracer.h"  // for TraceManuallyBarrieredCrossCompartmentEdge
 #include "js/CompilationAndEvaluation.h"  // for Compile
 #include "js/ErrorReport.h"  // for JS_ReportErrorASCII,  JS_ReportErrorNumberASCII
@@ -25,7 +26,6 @@
 #include "js/SourceText.h"              // for JS::SourceOwnership
 #include "js/String.h"                  // for JS_CopyStringCharsZ
 #include "vm/BytecodeUtil.h"            // for JSDVG_SEARCH_STACK
-#include "vm/ErrorContext.h"            // for AutoReportFrontendContext
 #include "vm/JSContext.h"               // for JSContext (ptr only)
 #include "vm/JSObject.h"                // for JSObject, RequireObject
 #include "vm/JSScript.h"                // for ScriptSource, ScriptSourceObject
@@ -73,8 +73,8 @@ const JSClass DebuggerSource::class_ = {
 NativeObject* DebuggerSource::initClass(JSContext* cx,
                                         Handle<GlobalObject*> global,
                                         HandleObject debugCtor) {
-  return InitClass(cx, debugCtor, nullptr, &class_, construct, 0, properties_,
-                   methods_, nullptr, nullptr);
+  return InitClass(cx, debugCtor, nullptr, nullptr, "Source", construct, 0,
+                   properties_, methods_, nullptr, nullptr);
 }
 
 /* static */
@@ -95,7 +95,6 @@ DebuggerSource* DebuggerSource::create(JSContext* cx, HandleObject proto,
 }
 
 Debugger* DebuggerSource::owner() const {
-  MOZ_ASSERT(isInstance());
   JSObject* dbgobj = &getReservedSlot(OWNER_SLOT).toObject();
   return Debugger::fromJSObject(dbgobj);
 }
@@ -121,7 +120,9 @@ void DebuggerSource::trace(JSTracer* trc) {
   if (JSObject* referent = getReferentRawObject()) {
     TraceManuallyBarrieredCrossCompartmentEdge(trc, this, &referent,
                                                "Debugger.Source referent");
-    setReservedSlotGCThingAsPrivateUnbarriered(SOURCE_SLOT, referent);
+    if (referent != getReferentRawObject()) {
+      setReservedSlotGCThingAsPrivateUnbarriered(SOURCE_SLOT, referent);
+    }
   }
 }
 
@@ -145,16 +146,7 @@ DebuggerSource* DebuggerSource::check(JSContext* cx, HandleValue thisv) {
     return nullptr;
   }
 
-  DebuggerSource* thisSourceObj = &thisobj->as<DebuggerSource>();
-
-  if (!thisSourceObj->isInstance()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_INCOMPATIBLE_PROTO, "Debugger.Source",
-                              "method", "prototype object");
-    return nullptr;
-  }
-
-  return thisSourceObj;
+  return &thisobj->as<DebuggerSource>();
 }
 
 struct MOZ_STACK_CLASS DebuggerSource::CallData {
@@ -171,6 +163,7 @@ struct MOZ_STACK_CLASS DebuggerSource::CallData {
   bool getBinary();
   bool getURL();
   bool getStartLine();
+  bool getStartColumn();
   bool getId();
   bool getDisplayURL();
   bool getElementProperty();
@@ -220,7 +213,16 @@ class DebuggerSourceGetTextMatcher {
       return NewStringCopyZ<CanGC>(cx_, "[no source]");
     }
 
-    if (ss->isFunctionBody()) {
+    // In case of DOM event handler like <div onclick="foo()" the JS code is
+    // wrapped into
+    //   function onclick() {foo()}
+    // We want to only return `foo()` here.
+    // But only for event handlers, for `new Function("foo()")`, we want to
+    // return:
+    //   function anonymous() {foo()}
+    if (ss->hasIntroductionType() &&
+        strcmp(ss->introductionType(), "eventHandler") == 0 &&
+        ss->isFunctionBody()) {
       return ss->functionBodyString(cx_);
     }
 
@@ -299,8 +301,9 @@ class DebuggerSourceGetURLMatcher {
   ReturnType match(Handle<ScriptSourceObject*> sourceObject) {
     ScriptSource* ss = sourceObject->source();
     MOZ_ASSERT(ss);
-    if (ss->filename()) {
-      JSString* str = NewStringCopyZ<CanGC>(cx_, ss->filename());
+    if (const char* filename = ss->filename()) {
+      JS::UTF8Chars utf8chars(filename, strlen(filename));
+      JSString* str = NewStringCopyUTF8N(cx_, utf8chars);
       return Some(str);
     }
     return Nothing();
@@ -339,6 +342,24 @@ bool DebuggerSource::CallData::getStartLine() {
   DebuggerSourceGetStartLineMatcher matcher;
   uint32_t line = referent.match(matcher);
   args.rval().setNumber(line);
+  return true;
+}
+
+class DebuggerSourceGetStartColumnMatcher {
+ public:
+  using ReturnType = uint32_t;
+
+  ReturnType match(Handle<ScriptSourceObject*> sourceObject) {
+    ScriptSource* ss = sourceObject->source();
+    return ss->startColumn();
+  }
+  ReturnType match(Handle<WasmInstanceObject*> instanceObj) { return 0; }
+};
+
+bool DebuggerSource::CallData::getStartColumn() {
+  DebuggerSourceGetStartColumnMatcher matcher;
+  uint32_t column = referent.match(matcher);
+  args.rval().setNumber(column);
   return true;
 }
 
@@ -527,8 +548,8 @@ bool DebuggerSource::CallData::setSourceMapURL() {
     return false;
   }
 
-  AutoReportFrontendContext ec(cx);
-  if (!ss->setSourceMapURL(cx, &ec, std::move(chars))) {
+  AutoReportFrontendContext fc(cx);
+  if (!ss->setSourceMapURL(&fc, std::move(chars))) {
     return false;
   }
 
@@ -599,6 +620,7 @@ static JSScript* ReparseSource(JSContext* cx, Handle<ScriptSourceObject*> sso) {
   JS::CompileOptions options(cx);
   options.setHideScriptFromDebugger(true);
   options.setFileAndLine(ss->filename(), ss->startLine());
+  options.setColumn(ss->startColumn());
 
   UncompressedSourceCache::AutoHoldEntry holder;
 
@@ -653,6 +675,7 @@ const JSPropertySpec DebuggerSource::properties_[] = {
     JS_DEBUG_PSG("binary", getBinary),
     JS_DEBUG_PSG("url", getURL),
     JS_DEBUG_PSG("startLine", getStartLine),
+    JS_DEBUG_PSG("startColumn", getStartColumn),
     JS_DEBUG_PSG("id", getId),
     JS_DEBUG_PSG("displayURL", getDisplayURL),
     JS_DEBUG_PSG("introductionScript", getIntroductionScript),

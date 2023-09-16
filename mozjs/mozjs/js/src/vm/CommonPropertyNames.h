@@ -22,8 +22,10 @@
 //   * MACRO_: other text
 #define FOR_EACH_COMMON_PROPERTYNAME_(MACRO0, MACRO1, MACRO2, MACRO_)          \
   MACRO_(abort, abort, "abort")                                                \
+  IF_DECORATORS(MACRO_(access, access, "access"))                              \
   IF_DECORATORS(MACRO_(accessor, accessor, "accessor"))                        \
   MACRO_(add, add, "add")                                                      \
+  IF_DECORATORS(MACRO_(addInitializer, addInitializer, "addInitializer"))      \
   MACRO_(allowContentIter, allowContentIter, "allowContentIter")               \
   MACRO_(allowContentIterWith, allowContentIterWith, "allowContentIterWith")   \
   MACRO_(ambiguous, ambiguous, "ambiguous")                                    \
@@ -32,6 +34,7 @@
   MACRO_(apply, apply, "apply")                                                \
   MACRO_(approximatelySign, approximatelySign, "approximatelySign")            \
   MACRO_(arguments, arguments, "arguments")                                    \
+  MACRO_(ArgumentsLength, ArgumentsLength, "ArgumentsLength")                  \
   MACRO_(ArrayBufferSpecies, ArrayBufferSpecies, "$ArrayBufferSpecies")        \
   MACRO_(ArrayIterator, ArrayIterator, "Array Iterator")                       \
   MACRO_(ArrayIteratorNext, ArrayIteratorNext, "ArrayIteratorNext")            \
@@ -60,6 +63,7 @@
   MACRO_(await, await, "await")                                                \
   MACRO_(bigint64, bigint64, "bigint64")                                       \
   MACRO_(biguint64, biguint64, "biguint64")                                    \
+  MACRO_(bound, bound, "bound")                                                \
   MACRO_(boundWithSpace, boundWithSpace, "bound ")                             \
   MACRO_(break, break_, "break")                                               \
   MACRO_(breakdown, breakdown, "breakdown")                                    \
@@ -168,6 +172,7 @@
   MACRO_(extends, extends, "extends")                                          \
   MACRO_(false, false_, "false")                                               \
   MACRO_(few, few, "few")                                                      \
+  IF_DECORATORS(MACRO_(field, field, "field"))                                 \
   MACRO_(fieldOffsets, fieldOffsets, "fieldOffsets")                           \
   MACRO_(fieldTypes, fieldTypes, "fieldTypes")                                 \
   MACRO_(fileName, fileName, "fileName")                                       \
@@ -194,6 +199,7 @@
          "fractionalSecondDigits")                                             \
   MACRO_(frame, frame, "frame")                                                \
   MACRO_(from, from, "from")                                                   \
+  MACRO_(fromAsync, fromAsync, "fromAsync")                                    \
   MACRO_(fulfilled, fulfilled, "fulfilled")                                    \
   MACRO_(futexNotEqual, futexNotEqual, "not-equal")                            \
   MACRO2(futexOK, futexOK, "ok")                                               \
@@ -206,7 +212,9 @@
   MACRO_(GeneratorReturn, GeneratorReturn, "GeneratorReturn")                  \
   MACRO_(GeneratorThrow, GeneratorThrow, "GeneratorThrow")                     \
   MACRO_(get, get, "get")                                                      \
+  IF_DECORATORS(MACRO_(getter, getter, "getter"))                              \
   MACRO_(GetAggregateError, GetAggregateError, "GetAggregateError")            \
+  MACRO_(GetArgument, GetArgument, "GetArgument")                              \
   MACRO_(getBigInt64, getBigInt64, "getBigInt64")                              \
   MACRO_(getBigUint64, getBigUint64, "getBigUint64")                           \
   MACRO_(GetBuiltinConstructor, GetBuiltinConstructor,                         \
@@ -281,11 +289,13 @@
          "InterpretGeneratorResume")                                           \
   MACRO_(InvalidDate, InvalidDate, "Invalid Date")                             \
   MACRO_(isBreakpoint, isBreakpoint, "isBreakpoint")                           \
+  IF_DECORATORS(MACRO_(IsCallable, IsCallable, "IsCallable"))                  \
   MACRO_(isDisjointFrom, isDisjointFrom, "isDisjointFrom")                     \
   MACRO_(isEntryPoint, isEntryPoint, "isEntryPoint")                           \
   MACRO_(isExtensible, isExtensible, "isExtensible")                           \
   MACRO_(isFinite, isFinite, "isFinite")                                       \
   MACRO_(isNaN, isNaN, "isNaN")                                                \
+  MACRO_(IsNullOrUndefined, IsNullOrUndefined, "IsNullOrUndefined")            \
   MACRO_(isPrototypeOf, isPrototypeOf, "isPrototypeOf")                        \
   MACRO_(isStepStart, isStepStart, "isStepStart")                              \
   MACRO_(isSubsetOf, isSubsetOf, "isSubsetOf")                                 \
@@ -295,6 +305,7 @@
   MACRO_(join, join, "join")                                                   \
   MACRO2(js, js, "js")                                                         \
   MACRO_(keys, keys, "keys")                                                   \
+  IF_DECORATORS(MACRO_(kind, kind, "kind"))                                    \
   MACRO_(label, label, "label")                                                \
   MACRO_(language, language, "language")                                       \
   MACRO_(lastIndex, lastIndex, "lastIndex")                                    \
@@ -319,6 +330,7 @@
   MACRO_(maxLine, maxLine, "maxLine")                                          \
   MACRO_(maxOffset, maxOffset, "maxOffset")                                    \
   MACRO_(message, message, "message")                                          \
+  IF_DECORATORS(MACRO_(method, method, "method"))                              \
   MACRO_(meta, meta, "meta")                                                   \
   MACRO_(minColumn, minColumn, "minColumn")                                    \
   MACRO_(minDays, minDays, "minDays")                                          \
@@ -413,6 +425,8 @@
   MACRO_(RegExpFlagsGetter, RegExpFlagsGetter, "$RegExpFlagsGetter")           \
   MACRO_(RegExpStringIterator, RegExpStringIterator, "RegExp String Iterator") \
   MACRO_(RegExpToString, RegExpToString, "$RegExpToString")                    \
+  MACRO_(RegExp_prototype_Exec, RegExp_prototype_Exec,                         \
+         "RegExp_prototype_Exec")                                              \
   MACRO_(region, region, "region")                                             \
   MACRO_(register, register_, "register")                                      \
   MACRO_(Reify, Reify, "Reify")                                                \
@@ -438,6 +452,7 @@
   MACRO_(selfHosted, selfHosted, "self-hosted")                                \
   MACRO_(sensitivity, sensitivity, "sensitivity")                              \
   MACRO_(set, set, "set")                                                      \
+  IF_DECORATORS(MACRO_(setter, setter, "setter"))                              \
   MACRO_(setBigInt64, setBigInt64, "setBigInt64")                              \
   MACRO_(setBigUint64, setBigUint64, "setBigUint64")                           \
   MACRO_(SetCanonicalName, SetCanonicalName, "SetCanonicalName")               \

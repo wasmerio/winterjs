@@ -51,6 +51,7 @@ uint32_t wasm::ObservedCPUFeatures() {
     MIPS64 = 0x5,
     ARM64 = 0x6,
     LOONG64 = 0x7,
+    RISCV64 = 0x8,
     ARCH_BITS = 3
   };
 
@@ -74,6 +75,9 @@ uint32_t wasm::ObservedCPUFeatures() {
 #elif defined(JS_CODEGEN_LOONG64)
   MOZ_ASSERT(jit::GetLOONG64Flags() <= (UINT32_MAX >> ARCH_BITS));
   return LOONG64 | (jit::GetLOONG64Flags() << ARCH_BITS);
+#elif defined(JS_CODEGEN_RISCV64)
+  MOZ_ASSERT(jit::GetRISCV64Flags() <= (UINT32_MAX >> ARCH_BITS));
+  return RISCV64 | (jit::GetRISCV64Flags() << ARCH_BITS);
 #elif defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_WASM32)
   return 0;
 #else
@@ -145,6 +149,22 @@ SharedCompileArgs CompileArgs::build(JSContext* cx,
   target->debugEnabled = debug;
   target->forceTiering = forceTiering;
   target->features = FeatureArgs::build(cx, options);
+
+  return target;
+}
+
+SharedCompileArgs CompileArgs::buildForAsmJS(ScriptedCaller&& scriptedCaller) {
+  CompileArgs* target = js_new<CompileArgs>(std::move(scriptedCaller));
+  if (!target) {
+    return nullptr;
+  }
+
+  // AsmJS is deprecated and doesn't have mechanisms for experimental features,
+  // so we don't need to initialize the FeatureArgs. It also only targets the
+  // Ion backend and does not need WASM debug support since it is de-optimized
+  // to JS in that case.
+  target->ionEnabled = true;
+  target->debugEnabled = false;
 
   return target;
 }
@@ -573,12 +593,10 @@ CompilerEnvironment::CompilerEnvironment(const CompileArgs& args)
     : state_(InitialWithArgs), args_(&args) {}
 
 CompilerEnvironment::CompilerEnvironment(CompileMode mode, Tier tier,
-                                         OptimizedBackend optimizedBackend,
                                          DebugEnabled debugEnabled)
     : state_(InitialWithModeTierDebug),
       mode_(mode),
       tier_(tier),
-      optimizedBackend_(optimizedBackend),
       debug_(debugEnabled) {}
 
 void CompilerEnvironment::computeParameters() {
@@ -623,8 +641,6 @@ void CompilerEnvironment::computeParameters(Decoder& d) {
     mode_ = CompileMode::Once;
     tier_ = hasSecondTier ? Tier::Optimized : Tier::Baseline;
   }
-
-  optimizedBackend_ = OptimizedBackend::Ion;
 
   debug_ = debugEnabled ? DebugEnabled::True : DebugEnabled::False;
 
@@ -678,7 +694,7 @@ static bool DecodeCodeSection(const ModuleEnvironment& env, DecoderT& d,
   }
 
   for (uint32_t funcDefIndex = 0; funcDefIndex < numFuncDefs; funcDefIndex++) {
-    if (!DecodeFunctionBody(d, mg, env.numFuncImports() + funcDefIndex)) {
+    if (!DecodeFunctionBody(d, mg, env.numFuncImports + funcDefIndex)) {
       return false;
     }
   }
@@ -698,7 +714,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   Decoder d(bytecode.bytes, 0, error, warnings);
 
   ModuleEnvironment moduleEnv(args.features);
-  if (!DecodeModuleEnvironment(d, &moduleEnv)) {
+  if (!moduleEnv.init() || !DecodeModuleEnvironment(d, &moduleEnv)) {
     return nullptr;
   }
   CompilerEnvironment compilerEnv(args);
@@ -725,14 +741,12 @@ bool wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
                         UniqueCharsVector* warnings, Atomic<bool>* cancelled) {
   Decoder d(bytecode, 0, error);
 
-  OptimizedBackend optimizedBackend = OptimizedBackend::Ion;
-
   ModuleEnvironment moduleEnv(args.features);
-  if (!DecodeModuleEnvironment(d, &moduleEnv)) {
+  if (!moduleEnv.init() || !DecodeModuleEnvironment(d, &moduleEnv)) {
     return false;
   }
   CompilerEnvironment compilerEnv(CompileMode::Tier2, Tier::Optimized,
-                                  optimizedBackend, DebugEnabled::False);
+                                  DebugEnabled::False);
   compilerEnv.computeParameters(d);
 
   ModuleGenerator mg(args, &moduleEnv, &compilerEnv, cancelled, error,
@@ -835,6 +849,9 @@ SharedModule wasm::CompileStreaming(
     UniqueCharsVector* warnings) {
   CompilerEnvironment compilerEnv(args);
   ModuleEnvironment moduleEnv(args.features);
+  if (!moduleEnv.init()) {
+    return nullptr;
+  }
 
   {
     Decoder d(envBytes, 0, error, warnings);

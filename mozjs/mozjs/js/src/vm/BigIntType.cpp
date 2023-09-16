@@ -102,6 +102,7 @@
 #include "js/StableStringChars.h"
 #include "js/Utility.h"
 #include "util/CheckedArithmetic.h"
+#include "util/DifferentialTesting.h"
 #include "vm/JSContext.h"
 #include "vm/StaticStrings.h"
 
@@ -115,7 +116,6 @@ using JS::AutoStableStringChars;
 using mozilla::Abs;
 using mozilla::AssertedCast;
 using mozilla::BitwiseCast;
-using mozilla::IsFinite;
 using mozilla::Maybe;
 using mozilla::NegativeInfinity;
 using mozilla::Nothing;
@@ -137,7 +137,7 @@ static bool HasLeadingZeroes(BigInt* bi) {
 #endif
 
 BigInt* BigInt::createUninitialized(JSContext* cx, size_t digitLength,
-                                    bool isNegative, gc::InitialHeap heap) {
+                                    bool isNegative, gc::Heap heap) {
   if (digitLength > MaxDigitLength) {
     ReportOversizedAllocation(cx, JSMSG_BIGINT_TOO_LARGE);
     return nullptr;
@@ -208,7 +208,7 @@ size_t BigInt::sizeOfExcludingThisInNursery(
   return mallocSizeOf(heapDigits_);
 }
 
-BigInt* BigInt::zero(JSContext* cx, gc::InitialHeap heap) {
+BigInt* BigInt::zero(JSContext* cx, gc::Heap heap) {
   return createUninitialized(cx, 0, false, heap);
 }
 
@@ -1557,7 +1557,7 @@ template <typename CharT>
 BigInt* BigInt::parseLiteralDigits(JSContext* cx,
                                    const Range<const CharT> chars,
                                    unsigned radix, bool isNegative,
-                                   bool* haveParseError, gc::InitialHeap heap) {
+                                   bool* haveParseError, gc::Heap heap) {
   static_assert(
       std::is_same_v<CharT, JS::Latin1Char> || std::is_same_v<CharT, char16_t>,
       "only the bare minimum character types are supported, to avoid "
@@ -1615,7 +1615,7 @@ BigInt* BigInt::parseLiteralDigits(JSContext* cx,
 // BigInt proposal section 7.2
 template <typename CharT>
 BigInt* BigInt::parseLiteral(JSContext* cx, const Range<const CharT> chars,
-                             bool* haveParseError, js::gc::InitialHeap heap) {
+                             bool* haveParseError, js::gc::Heap heap) {
   RangedPtr<const CharT> start = chars.begin();
   const RangedPtr<const CharT> end = chars.end();
   bool isNegative = false;
@@ -1808,7 +1808,7 @@ BigInt* js::NumberToBigInt(JSContext* cx, double d) {
   return BigInt::createFromDouble(cx, d);
 }
 
-BigInt* BigInt::copy(JSContext* cx, HandleBigInt x, gc::InitialHeap heap) {
+BigInt* BigInt::copy(JSContext* cx, HandleBigInt x, gc::Heap heap) {
   if (x->isZero()) {
     return zero(cx, heap);
   }
@@ -2153,6 +2153,9 @@ BigInt* BigInt::lshByAbsolute(JSContext* cx, HandleBigInt x, HandleBigInt y) {
   if (y->digitLength() > 1 || y->digit(0) > MaxBitLength) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_BIGINT_TOO_LARGE);
+    if (js::SupportDifferentialTesting()) {
+      fprintf(stderr, "ReportOutOfMemory called\n");
+    }
     return nullptr;
   }
   Digit shift = y->digit(0);
@@ -3271,12 +3274,12 @@ bool BigInt::equal(BigInt* lhs, BigInt* rhs) {
 }
 
 int8_t BigInt::compare(BigInt* x, double y) {
-  MOZ_ASSERT(!mozilla::IsNaN(y));
+  MOZ_ASSERT(!std::isnan(y));
 
   constexpr int LessThan = -1, Equal = 0, GreaterThan = 1;
 
   // ±Infinity exceeds a finite bigint value.
-  if (!mozilla::IsFinite(y)) {
+  if (!std::isfinite(y)) {
     return y > 0 ? LessThan : GreaterThan;
   }
 
@@ -3402,7 +3405,7 @@ int8_t BigInt::compare(BigInt* x, double y) {
 }
 
 bool BigInt::equal(BigInt* lhs, double rhs) {
-  if (mozilla::IsNaN(rhs)) {
+  if (std::isnan(rhs)) {
     return false;
   }
   return compare(lhs, rhs) == 0;
@@ -3458,14 +3461,14 @@ JS::Result<bool> BigInt::looselyEqual(JSContext* cx, HandleBigInt lhs,
 bool BigInt::lessThan(BigInt* x, BigInt* y) { return compare(x, y) < 0; }
 
 Maybe<bool> BigInt::lessThan(BigInt* lhs, double rhs) {
-  if (mozilla::IsNaN(rhs)) {
+  if (std::isnan(rhs)) {
     return Maybe<bool>(Nothing());
   }
   return Some(compare(lhs, rhs) < 0);
 }
 
 Maybe<bool> BigInt::lessThan(double lhs, BigInt* rhs) {
-  if (mozilla::IsNaN(lhs)) {
+  if (std::isnan(lhs)) {
     return Maybe<bool>(Nothing());
   }
   return Some(-compare(rhs, lhs) < 0);
@@ -3633,7 +3636,7 @@ BigInt* js::ParseBigIntLiteral(JSContext* cx,
   // This function is only called from the frontend when parsing BigInts. Parsed
   // BigInts are stored in the script's data vector and therefore need to be
   // allocated in the tenured heap.
-  constexpr gc::InitialHeap heap = gc::TenuredHeap;
+  constexpr gc::Heap heap = gc::Heap::Tenured;
 
   bool parseError = false;
   BigInt* res = BigInt::parseLiteral(cx, chars, &parseError, heap);

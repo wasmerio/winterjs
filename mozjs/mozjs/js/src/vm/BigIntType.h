@@ -23,11 +23,15 @@
 #include "js/TypeDecls.h"
 
 namespace js {
+
+namespace gc {
 class TenuringTracer;
+}  // namespace gc
 
 namespace jit {
 class MacroAssembler;
-}
+}  // namespace jit
+
 }  // namespace js
 
 namespace JS {
@@ -35,6 +39,10 @@ namespace JS {
 class JS_PUBLIC_API BigInt;
 
 class BigInt final : public js::gc::CellWithLengthAndFlags {
+  friend class js::gc::CellAllocator;
+
+  BigInt() = default;
+
  public:
   using Digit = uintptr_t;
 
@@ -64,10 +72,6 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
 
  public:
   static const JS::TraceKind TraceKind = JS::TraceKind::BigInt;
-
-  static BigInt* emplace(js::gc::Cell* cell) {
-    return new (mozilla::KnownNotNull, cell) BigInt();
-  }
 
   void fixupAfterMovingGC() {}
 
@@ -111,9 +115,9 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
   size_t sizeOfExcludingThisInNursery(mozilla::MallocSizeOf mallocSizeOf) const;
 
-  static BigInt* createUninitialized(
-      JSContext* cx, size_t digitLength, bool isNegative,
-      js::gc::InitialHeap heap = js::gc::DefaultHeap);
+  static BigInt* createUninitialized(JSContext* cx, size_t digitLength,
+                                     bool isNegative,
+                                     js::gc::Heap heap = js::gc::Heap::Default);
   static BigInt* createFromDouble(JSContext* cx, double d);
   static BigInt* createFromUint64(JSContext* cx, uint64_t n);
   static BigInt* createFromInt64(JSContext* cx, int64_t n);
@@ -121,13 +125,12 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   static BigInt* createFromNonZeroRawUint64(JSContext* cx, uint64_t n,
                                             bool isNegative);
   // FIXME: Cache these values.
-  static BigInt* zero(JSContext* cx,
-                      js::gc::InitialHeap heap = js::gc::DefaultHeap);
+  static BigInt* zero(JSContext* cx, js::gc::Heap heap = js::gc::Heap::Default);
   static BigInt* one(JSContext* cx);
   static BigInt* negativeOne(JSContext* cx);
 
   static BigInt* copy(JSContext* cx, Handle<BigInt*> x,
-                      js::gc::InitialHeap heap = js::gc::DefaultHeap);
+                      js::gc::Heap heap = js::gc::Heap::Default);
   static BigInt* add(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
   static BigInt* sub(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
   static BigInt* mul(JSContext* cx, Handle<BigInt*> x, Handle<BigInt*> y);
@@ -209,12 +212,13 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   static BigInt* parseLiteral(JSContext* cx,
                               const mozilla::Range<const CharT> chars,
                               bool* haveParseError,
-                              js::gc::InitialHeap heap = js::gc::DefaultHeap);
+                              js::gc::Heap heap = js::gc::Heap::Default);
   template <typename CharT>
-  static BigInt* parseLiteralDigits(
-      JSContext* cx, const mozilla::Range<const CharT> chars, unsigned radix,
-      bool isNegative, bool* haveParseError,
-      js::gc::InitialHeap heap = js::gc::DefaultHeap);
+  static BigInt* parseLiteralDigits(JSContext* cx,
+                                    const mozilla::Range<const CharT> chars,
+                                    unsigned radix, bool isNegative,
+                                    bool* haveParseError,
+                                    js::gc::Heap heap = js::gc::Heap::Default);
 
   template <typename CharT>
   static bool literalIsZero(const mozilla::Range<const CharT> chars);
@@ -434,11 +438,7 @@ class BigInt final : public js::gc::CellWithLengthAndFlags {
   static constexpr size_t inlineDigitsLength() { return InlineDigitsLength; }
 
  private:
-  friend class js::TenuringTracer;
-
- protected:
-  // For calling by emplace().
-  BigInt() = default;
+  friend class js::gc::TenuringTracer;
 };
 
 static_assert(

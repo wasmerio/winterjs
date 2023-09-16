@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 from mozboot.base import BaseBootstrapper
 from mozboot.linux_common import LinuxBootstrapper
 
@@ -15,32 +13,14 @@ class GentooBootstrapper(LinuxBootstrapper, BaseBootstrapper):
         self.version = version
         self.dist_id = dist_id
 
-    def install_system_packages(self):
-        self.ensure_system_packages()
-
-    def ensure_system_packages(self):
-        self.run_as_root(
-            ["emerge", "--noreplace", "--quiet", "app-arch/zip", "dev-util/watchman"]
-        )
-
-    def install_browser_packages(self, mozconfig_builder, artifact_mode=False):
-        # TODO: Figure out what not to install for artifact mode
-        self.run_as_root(
-            [
-                "emerge",
-                "--oneshot",
-                "--noreplace",
-                "--quiet",
-                "--newuse",
-                "dev-libs/dbus-glib",
-                "media-sound/pulseaudio",
-                "x11-libs/gtk+:3",
-                "x11-libs/libXt",
-            ]
-        )
-
-    def install_browser_artifact_mode_packages(self, mozconfig_builder):
-        self.install_browser_packages(mozconfig_builder, artifact_mode=True)
+    def install_packages(self, packages):
+        DISAMBIGUATE = {
+            "gzip": "app-arch/gzip",
+            "tar": "app-arch/tar",
+        }
+        # watchman is available but requires messing with USEs.
+        packages = [DISAMBIGUATE.get(p, p) for p in packages if p != "watchman"]
+        self.run_as_root(["emerge", "--noreplace"] + packages)
 
     def _update_package_manager(self):
         self.run_as_root(["emerge", "--sync"])

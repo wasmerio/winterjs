@@ -12,9 +12,9 @@
 
 #include "NamespaceImports.h"
 
+#include "ds/LifoAlloc.h"
 #include "frontend/FunctionSyntaxKind.h"
 #include "js/SourceText.h"
-#include "js/Stack.h"      // JS::NativeStackLimit
 #include "js/UniquePtr.h"  // js::UniquePtr
 
 /*
@@ -104,7 +104,7 @@ namespace js {
 
 class ModuleObject;
 class ScriptSourceObject;
-class ErrorContext;
+class FrontendContext;
 
 namespace frontend {
 
@@ -119,32 +119,30 @@ class TaggedParserAtomIndex;
 class ScopeBindingCache;
 
 // Compile a module of the given source using the given options.
-ModuleObject* CompileModule(JSContext* cx, ErrorContext* ec,
-                            JS::NativeStackLimit stackLimit,
+ModuleObject* CompileModule(JSContext* cx, FrontendContext* fc,
                             const JS::ReadOnlyCompileOptions& options,
                             JS::SourceText<char16_t>& srcBuf);
-ModuleObject* CompileModule(JSContext* cx, ErrorContext* ec,
-                            JS::NativeStackLimit stackLimit,
+ModuleObject* CompileModule(JSContext* cx, FrontendContext* fc,
                             const JS::ReadOnlyCompileOptions& options,
                             JS::SourceText<mozilla::Utf8Unit>& srcBuf);
 
 // Parse a module of the given source.  This is an internal API; if you want to
 // compile a module as a user, use CompileModule above.
 already_AddRefed<CompilationStencil> ParseModuleToStencil(
-    JSContext* cx, ErrorContext* ec, JS::NativeStackLimit stackLimit,
+    JSContext* maybeCx, FrontendContext* fc, js::LifoAlloc& tempLifoAlloc,
     CompilationInput& input, ScopeBindingCache* scopeCache,
     JS::SourceText<char16_t>& srcBuf);
 already_AddRefed<CompilationStencil> ParseModuleToStencil(
-    JSContext* cx, ErrorContext* ec, JS::NativeStackLimit stackLimit,
+    JSContext* maybeCx, FrontendContext* fc, js::LifoAlloc& tempLifoAlloc,
     CompilationInput& input, ScopeBindingCache* scopeCache,
     JS::SourceText<mozilla::Utf8Unit>& srcBuf);
 
 UniquePtr<ExtensibleCompilationStencil> ParseModuleToExtensibleStencil(
-    JSContext* cx, ErrorContext* ec, JS::NativeStackLimit stackLimit,
+    JSContext* cx, FrontendContext* fc, js::LifoAlloc& tempLifoAlloc,
     CompilationInput& input, ScopeBindingCache* scopeCache,
     JS::SourceText<char16_t>& srcBuf);
 UniquePtr<ExtensibleCompilationStencil> ParseModuleToExtensibleStencil(
-    JSContext* cx, ErrorContext* ec, JS::NativeStackLimit stackLimit,
+    JSContext* cx, FrontendContext* fc, js::LifoAlloc& tempLifoAlloc,
     CompilationInput& input, ScopeBindingCache* scopeCache,
     JS::SourceText<mozilla::Utf8Unit>& srcBuf);
 

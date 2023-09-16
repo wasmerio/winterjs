@@ -2,38 +2,22 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, unicode_literals
-
 import os
 import sys
 
 import mozunit
 import pytest
 
-from mozterm import Terminal, NullTerminal
+from mozterm import NullTerminal, Terminal
 
 
 def test_terminal():
-    blessings = pytest.importorskip("blessings")
+    blessed = pytest.importorskip("blessed")
     term = Terminal()
-    assert isinstance(term, blessings.Terminal)
+    assert isinstance(term, blessed.Terminal)
 
     term = Terminal(disable_styling=True)
     assert isinstance(term, NullTerminal)
-
-    del sys.modules["blessings"]
-    orig = sys.path[:]
-    for path in orig:
-        if "blessings" in path:
-            sys.path.remove(path)
-
-    term = Terminal()
-    assert isinstance(term, NullTerminal)
-
-    with pytest.raises(ImportError):
-        term = Terminal(raises=True)
-
-    sys.path = orig
 
 
 def test_null_terminal():

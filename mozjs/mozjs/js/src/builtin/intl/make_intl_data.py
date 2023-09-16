@@ -6,7 +6,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 """ Usage:
-    make_intl_data.py langtags [cldr_core.zip]
+    make_intl_data.py langtags [cldr_common.zip]
     make_intl_data.py tzdata
     make_intl_data.py currency
     make_intl_data.py units
@@ -41,34 +41,35 @@
     simple digit mappings and verifies that it's in sync with ICU/CLDR.
 """
 
-from __future__ import print_function
-import os
-import re
 import io
 import json
+import os
+import re
 import sys
 import tarfile
 import tempfile
-import yaml
 from contextlib import closing
 from functools import partial, total_ordering
 from itertools import chain, groupby, tee
 from operator import attrgetter, itemgetter
 from zipfile import ZipFile
 
+import yaml
+
 if sys.version_info.major == 2:
-    from itertools import (
-        ifilter as filter,
-        ifilterfalse as filterfalse,
-        imap as map,
-        izip_longest as zip_longest,
-    )
-    from urllib2 import urlopen, Request as UrlRequest
+    from itertools import ifilter as filter
+    from itertools import ifilterfalse as filterfalse
+    from itertools import imap as map
+    from itertools import izip_longest as zip_longest
+
+    from urllib2 import Request as UrlRequest
+    from urllib2 import urlopen
     from urlparse import urlsplit
 else:
     from itertools import filterfalse, zip_longest
-    from urllib.request import urlopen, Request as UrlRequest
     from urllib.parse import urlsplit
+    from urllib.request import Request as UrlRequest
+    from urllib.request import urlopen
 
 
 # From https://docs.python.org/3/library/itertools.html
@@ -1429,6 +1430,23 @@ def readSupplementalData(core_file):
             if (language, script) not in default_replacements
         ]
 
+        # Remove redundant mappings.
+        #
+        # For example starting with CLDR 43, the deprecated region "SU" has the
+        # following non-default replacement entries for "GE":
+        # - ('sva', None, 'GE')
+        # - ('sva', 'Cyrl', 'GE')
+        # - ('sva', 'Latn', 'GE')
+        #
+        # The latter two entries are redundant, because they're already handled
+        # by the first entry.
+        non_default_replacements = [
+            (language, script, region)
+            for (language, script, region) in non_default_replacements
+            if script is None
+            or (language, None, region) not in non_default_replacements
+        ]
+
         # If there are no non-default replacements, we can handle the region as
         # part of the simple region mapping.
         if non_default_replacements:
@@ -2051,7 +2069,7 @@ def updateCLDRLangTags(args):
     print("\tCLDR version: %s" % version)
     print("\tDownload url: %s" % url)
     if filename is not None:
-        print("\tLocal CLDR core.zip file: %s" % filename)
+        print("\tLocal CLDR common.zip file: %s" % filename)
     print("\tOutput file: %s" % out)
     print("")
 
@@ -2066,11 +2084,11 @@ def updateCLDRLangTags(args):
 
     print("Processing CLDR data...")
     if filename is not None:
-        print("Always make sure you have the newest CLDR core.zip!")
+        print("Always make sure you have the newest CLDR common.zip!")
         with open(filename, "rb") as cldr_file:
             readFiles(cldr_file)
     else:
-        print("Downloading CLDR core.zip...")
+        print("Downloading CLDR common.zip...")
         with closing(urlopen(url)) as cldr_file:
             cldr_data = io.BytesIO(cldr_file.read())
             readFiles(cldr_data)
@@ -3577,11 +3595,10 @@ def writeSanctionedSimpleUnitIdentifiersFiles(all_units, sanctioned_units):
  */"""
         )
 
-        println("/* eslint-disable prettier/prettier */")
+        println("// prettier-ignore")
         println(
             "var sanctionedSimpleUnitIdentifiers = {};".format(sanctioned_units_object)
         )
-        println("/* eslint-enable prettier/prettier */")
 
     sanctioned_h_file = os.path.join(intl_components_src_dir, "MeasureUnitGenerated.h")
     with io.open(sanctioned_h_file, mode="w", encoding="utf-8", newline="") as f:
@@ -4045,7 +4062,7 @@ if __name__ == "__main__":
     parser_cldr_tags.add_argument(
         "--url",
         metavar="URL",
-        default="https://unicode.org/Public/cldr/<VERSION>/core.zip",
+        default="https://unicode.org/Public/cldr/<VERSION>/cldr-common-<VERSION>.0.zip",
         type=EnsureHttps,
         help="Download url CLDR data (default: %(default)s)",
     )
@@ -4057,7 +4074,7 @@ if __name__ == "__main__":
         help="Output file (default: %(default)s)",
     )
     parser_cldr_tags.add_argument(
-        "file", nargs="?", help="Local cldr-core.zip file, if omitted uses <URL>"
+        "file", nargs="?", help="Local cldr-common.zip file, if omitted uses <URL>"
     )
     parser_cldr_tags.set_defaults(func=updateCLDRLangTags)
 
@@ -4091,7 +4108,7 @@ if __name__ == "__main__":
     parser_currency.add_argument(
         "--url",
         metavar="URL",
-        default="https://www.currency-iso.org/dam/downloads/lists/list_one.xml",  # NOQA: E501
+        default="https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml",  # NOQA: E501
         type=EnsureHttps,
         help="Download url for the currency & funds code list (default: "
         "%(default)s)",

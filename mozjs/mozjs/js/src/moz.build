@@ -89,9 +89,6 @@ if CONFIG["FUZZING_JS_FUZZILLI"]:
     # trace-pc instrumentation.
     include("/tools/fuzzing/libfuzzer-config.mozbuild")
 
-CONFIGURE_SUBST_FILES += [
-    "devtools/rootAnalysis/Makefile",
-]
 CONFIGURE_DEFINE_FILES += [
     "js-confdefs.h",
 ]
@@ -173,6 +170,7 @@ EXPORTS.js += [
     "../public/Object.h",
     "../public/OffThreadScriptCompilation.h",
     "../public/Principals.h",
+    "../public/Printer.h",
     "../public/Printf.h",
     "../public/ProfilingCategory.h",
     "../public/ProfilingFrameIterator.h",
@@ -200,7 +198,6 @@ EXPORTS.js += [
     "../public/SourceText.h",
     "../public/StableStringChars.h",
     "../public/Stack.h",
-    "../public/Stream.h",
     "../public/StreamConsumer.h",
     "../public/String.h",
     "../public/StructuredClone.h",
@@ -245,6 +242,7 @@ EXPORTS.js += [
 # We expose them as-is, buyer beware.
 EXPORTS.js.experimental += [
     "../public/experimental/CodeCoverage.h",
+    "../public/experimental/CompileScript.h",
     "../public/experimental/CTypes.h",
     "../public/experimental/Intl.h",
     "../public/experimental/JitInfo.h",
@@ -348,6 +346,7 @@ UNIFIED_SOURCES += [
     "vm/AsyncFunction.cpp",
     "vm/AsyncIteration.cpp",
     "vm/BigIntType.cpp",
+    "vm/BoundFunctionObject.cpp",
     "vm/BuildId.cpp",
     "vm/BuiltinObjectKind.cpp",
     "vm/BytecodeLocation.cpp",
@@ -362,7 +361,6 @@ UNIFIED_SOURCES += [
     "vm/DateTime.cpp",
     "vm/EnvironmentObject.cpp",
     "vm/EqualityOperations.cpp",
-    "vm/ErrorContext.cpp",
     "vm/ErrorMessages.cpp",
     "vm/ErrorObject.cpp",
     "vm/ErrorReporting.cpp",
@@ -413,6 +411,7 @@ UNIFIED_SOURCES += [
     "vm/ShapeZone.cpp",
     "vm/SharedArrayObject.cpp",
     "vm/SharedImmutableStringsCache.cpp",
+    "vm/SharedScriptDataTableHolder.cpp",
     "vm/SourceHook.cpp",
     "vm/Stack.cpp",
     "vm/StaticStrings.cpp",
@@ -559,7 +558,7 @@ if CONFIG["CC_TYPE"] == "clang":
 # Bug 1722102 - This should never be enabled in Release without explicit
 # security and SpiderMonkey review.
 # See https://bugzilla.mozilla.org/show_bug.cgi?id=1722102#c16
-if CONFIG["NIGHTLY_BUILD"] and CONFIG["INTEL_ARCHITECTURE"]:
+if CONFIG["ENABLE_WASM_MOZ_INTGEMM"]:
     DIRS += ["intgemm"]
 
 if CONFIG["JS_JITSPEW"]:
@@ -582,7 +581,6 @@ selfhosted_inputs = [
     "builtin/BigInt.js",
     "builtin/Date.js",
     "builtin/Error.js",
-    "builtin/Function.js",
     "builtin/Generator.js",
     "builtin/Iterator.js",
     "builtin/Map.js",

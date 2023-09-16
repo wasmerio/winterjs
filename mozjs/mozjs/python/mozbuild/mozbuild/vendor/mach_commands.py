@@ -2,14 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
-import sys
 import logging
+import sys
 
-from mach.decorators import CommandArgument, Command, SubCommand
+from mach.decorators import Command, CommandArgument, SubCommand
 
-from mozbuild.vendor.moz_yaml import load_moz_yaml, MozYamlVerifyError
+from mozbuild.vendor.moz_yaml import MozYamlVerifyError, load_moz_yaml
 
 
 # Fun quirk of ./mach - you can specify a default argument as well as subcommands.
@@ -88,6 +86,11 @@ def vendor(
     except MozYamlVerifyError as e:
         print(e)
         sys.exit(1)
+
+    if "vendoring" not in manifest:
+        raise Exception(
+            "Cannot perform update actions if we don't have a 'vendoring' section in the moz.yaml"
+        )
 
     if patch_mode and patch_mode not in ["none", "only"]:
         print(

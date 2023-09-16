@@ -33,6 +33,7 @@ EXPORTS.mozilla.glue += [
 if CONFIG["OS_ARCH"] == "WINNT":
     EXPORTS.mozilla += [
         "GetKnownFolderPath.h",
+        "PreXULSkeletonUI.h",
         "StackWalk_windows.h",
         "StackWalkThread.h",
         "TimeStamp_windows.h",
@@ -74,12 +75,13 @@ if CONFIG["OS_ARCH"] == "WINNT":
     EXPORTS.mozilla += [
         "DynamicallyLinkedFunctionPtr.h",
         "ImportDir.h",
-        "MozProcessMitigationDynamicCodePolicy.h",
         "NativeNt.h",
         "WindowsDpiInitialization.h",
         "WindowsEnumProcessModules.h",
         "WindowsMapRemoteView.h",
         "WindowsProcessMitigations.h",
+        "WindowsStackCookie.h",
+        "WindowsUnwindInfo.h",
     ]
     EXPORTS.mozilla.glue += [
         "WindowsUnicode.h",
@@ -104,11 +106,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
         SOURCES += [
             "/ipc/mscom/COMWrappers.cpp",
             "/ipc/mscom/ProcessRuntime.cpp",
-        ]
-
-    if CONFIG["ACCESSIBILITY"]:
-        SOURCES += [
-            "/ipc/mscom/ActivationContext.cpp",
+            "PreXULSkeletonUI.cpp",
         ]
 
 elif CONFIG["HAVE_CLOCK_MONOTONIC"]:

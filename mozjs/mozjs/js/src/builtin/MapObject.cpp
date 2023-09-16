@@ -36,7 +36,6 @@
 
 using namespace js;
 
-using mozilla::IsNaN;
 using mozilla::NumberEqualsInt32;
 
 /*** HashableValue **********************************************************/
@@ -145,7 +144,7 @@ inline bool SameExtendedPrimitiveType(const PreBarriered<Value>& a,
 }
 #endif
 
-bool HashableValue::operator==(const HashableValue& other) const {
+bool HashableValue::equals(const HashableValue& other) const {
   // Two HashableValues are equal if they have equal bits.
   bool b = (value.asRawBits() == other.value.asRawBits());
 
@@ -172,12 +171,6 @@ bool HashableValue::operator==(const HashableValue& other) const {
   MOZ_ASSERT(same == b);
 #endif
   return b;
-}
-
-HashableValue HashableValue::trace(JSTracer* trc) const {
-  HashableValue hv(*this);
-  TraceEdge(trc, &hv.value, "key");
-  return hv;
 }
 
 /*** MapIterator ************************************************************/
@@ -519,27 +512,9 @@ const JSPropertySpec MapObject::staticProperties[] = {
   return NativeDefineDataProperty(cx, nativeProto, iteratorId, entriesFn, 0);
 }
 
-template <class MutableRange>
-static void TraceKey(MutableRange& r, const HashableValue& key, JSTracer* trc) {
-  HashableValue newKey = key.trace(trc);
-
-  if (newKey.get() != key.get()) {
-    // The hash function must take account of the fact that the thing being
-    // hashed may have been moved by GC. This is only an issue for BigInt as for
-    // other types the hash function only uses the bits of the Value.
-    r.rekeyFront(newKey);
-  }
-
-  // Clear newKey to avoid the barrier in ~PreBarriered.
-  newKey.unbarrieredClear();
-}
-
 void MapObject::trace(JSTracer* trc, JSObject* obj) {
   if (ValueMap* map = obj->as<MapObject>().getTableUnchecked()) {
-    for (auto r = map->mutableAll(); !r.empty(); r.popFront()) {
-      TraceKey(r, r.front().key, trc);
-      TraceEdge(trc, &r.front().value, "value");
-    }
+    map->trace(trc);
   }
 }
 
@@ -683,14 +658,14 @@ inline bool MapObject::setWithHashableKey(JSContext* cx, MapObject* obj,
   bool needsPostBarriers = obj->isTenured();
   if (needsPostBarriers) {
     // Use the ValueMap representation which has post barriers.
-    if (!PostWriteBarrier(obj, key.value()) || !table->put(key, value)) {
+    if (!PostWriteBarrier(obj, key.get()) || !table->put(key.get(), value)) {
       ReportOutOfMemory(cx);
       return false;
     }
   } else {
     // Use the PreBarrieredTable representation which does not.
     auto* preBarriedTable = reinterpret_cast<PreBarrieredTable*>(table);
-    if (!preBarriedTable->put(key, value)) {
+    if (!preBarriedTable->put(key.get(), value.get())) {
       ReportOutOfMemory(cx);
       return false;
     }
@@ -1389,7 +1364,8 @@ bool SetObject::add(JSContext* cx, HandleObject obj, HandleValue k) {
     return false;
   }
 
-  if (!PostWriteBarrier(&obj->as<SetObject>(), key.value()) || !set->put(key)) {
+  if (!PostWriteBarrier(&obj->as<SetObject>(), key.get()) ||
+      !set->put(key.get())) {
     ReportOutOfMemory(cx);
     return false;
   }
@@ -1430,9 +1406,7 @@ SetObject* SetObject::create(JSContext* cx,
 void SetObject::trace(JSTracer* trc, JSObject* obj) {
   SetObject* setobj = static_cast<SetObject*>(obj);
   if (ValueSet* set = setobj->getData()) {
-    for (auto r = set->mutableAll(); !r.empty(); r.popFront()) {
-      TraceKey(r, r.front(), trc);
-    }
+    set->trace(trc);
   }
 }
 
@@ -1515,7 +1489,7 @@ bool SetObject::construct(JSContext* cx, unsigned argc, Value* vp) {
         if (!key.setValue(cx, keyVal)) {
           return false;
         }
-        if (!PostWriteBarrier(obj, key.value()) || !set->put(key)) {
+        if (!PostWriteBarrier(obj, key.get()) || !set->put(key.get())) {
           ReportOutOfMemory(cx);
           return false;
         }
@@ -1616,9 +1590,8 @@ bool SetObject::add_impl(JSContext* cx, const CallArgs& args) {
 
   ValueSet& set = extract(args);
   ARG0_KEY(cx, args, key);
-  if (!PostWriteBarrier(&args.thisv().toObject().as<SetObject>(),
-                        key.value()) ||
-      !set.put(key)) {
+  if (!PostWriteBarrier(&args.thisv().toObject().as<SetObject>(), key.get()) ||
+      !set.put(key.get())) {
     ReportOutOfMemory(cx);
     return false;
   }

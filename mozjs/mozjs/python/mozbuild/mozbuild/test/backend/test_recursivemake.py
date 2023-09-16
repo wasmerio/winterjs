@@ -2,14 +2,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import io
 import os
-import six.moves.cPickle as pickle
-import six
 import unittest
 
+import mozpack.path as mozpath
+import six
+import six.moves.cPickle as pickle
 from mozpack.manifests import InstallManifest
 from mozunit import main
 
@@ -17,10 +16,7 @@ from mozbuild.backend.recursivemake import RecursiveMakeBackend, RecursiveMakeTr
 from mozbuild.backend.test_manifest import TestManifestBackend
 from mozbuild.frontend.emitter import TreeMetadataEmitter
 from mozbuild.frontend.reader import BuildReader
-
 from mozbuild.test.backend.common import BackendTester
-
-import mozpack.path as mozpath
 
 
 class TestRecursiveMakeTraversal(unittest.TestCase):
@@ -998,7 +994,7 @@ class TestRecursiveMakeBackend(BackendTester):
         self.assertEqual(lines, expected)
 
     def test_rust_programs(self):
-        """Test that {HOST_,}RUST_PROGRAMS are written to backend.mk correctly."""
+        """Test that `{HOST_,}RUST_PROGRAMS` are written to backend.mk correctly."""
         env = self._consume("rust-programs", RecursiveMakeBackend)
 
         backend_path = mozpath.join(env.topobjdir, "code/backend.mk")
@@ -1011,10 +1007,10 @@ class TestRecursiveMakeBackend(BackendTester):
 
         expected = [
             "CARGO_FILE := %s/code/Cargo.toml" % env.topsrcdir,
-            "CARGO_TARGET_DIR := .",
-            "RUST_PROGRAMS += i686-pc-windows-msvc/release/target.exe",
+            "CARGO_TARGET_DIR := %s" % env.topobjdir,
+            "RUST_PROGRAMS += $(DEPTH)/i686-pc-windows-msvc/release/target.exe",
             "RUST_CARGO_PROGRAMS += target",
-            "HOST_RUST_PROGRAMS += i686-pc-windows-msvc/release/host.exe",
+            "HOST_RUST_PROGRAMS += $(DEPTH)/i686-pc-windows-msvc/release/host.exe",
             "HOST_RUST_CARGO_PROGRAMS += host",
         ]
 

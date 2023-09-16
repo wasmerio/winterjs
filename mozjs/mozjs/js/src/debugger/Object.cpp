@@ -28,6 +28,7 @@
 #include "gc/Tracer.h"  // for TraceManuallyBarrieredCrossCompartmentEdge
 #include "js/CompilationAndEvaluation.h"  //  for Compile
 #include "js/Conversions.h"               // for ToObject
+#include "js/experimental/JitInfo.h"      // for JSJitInfo
 #include "js/friend/ErrorMessages.h"      // for GetErrorMessage, JSMSG_*
 #include "js/friend/WindowProxy.h"  // for IsWindow, IsWindowProxy, ToWindowIfWindowProxy
 #include "js/HeapAPI.h"             // for IsInsideNursery
@@ -42,6 +43,7 @@
 #include "vm/ArrayObject.h"              // for ArrayObject
 #include "vm/AsyncFunction.h"            // for AsyncGeneratorObject
 #include "vm/AsyncIteration.h"           // for AsyncFunctionGeneratorObject
+#include "vm/BoundFunctionObject.h"      // for BoundFunctionObject
 #include "vm/BytecodeUtil.h"             // for JSDVG_SEARCH_STACK
 #include "vm/Compartment.h"              // for Compartment
 #include "vm/EnvironmentObject.h"        // for GetDebugEnvironmentForFunction
@@ -69,6 +71,7 @@
 #include "vm/WellKnownAtom.h"            // for js_apply_str
 #include "vm/WrapperObject.h"            // for JSObject::is, WrapperObject
 
+#include "gc/StableCellHasher-inl.h"
 #include "vm/Compartment-inl.h"  // for Compartment::wrap
 #include "vm/JSObject-inl.h"  // for GetObjectClassName, InitClass, NewObjectWithGivenProtoAndKind, ToPropertyKey
 #include "vm/NativeObject-inl.h"      // for NativeObject::global
@@ -104,7 +107,9 @@ void DebuggerObject::trace(JSTracer* trc) {
   if (JSObject* referent = maybeReferent()) {
     TraceManuallyBarrieredCrossCompartmentEdge(trc, this, &referent,
                                                "Debugger.Object referent");
-    setReservedSlotGCThingAsPrivateUnbarriered(OBJECT_SLOT, referent);
+    if (referent != maybeReferent()) {
+      setReservedSlotGCThingAsPrivateUnbarriered(OBJECT_SLOT, referent);
+    }
   }
 }
 
@@ -121,16 +126,7 @@ static DebuggerObject* DebuggerObject_checkThis(JSContext* cx,
     return nullptr;
   }
 
-  // Forbid Debugger.Object.prototype, which is of class DebuggerObject::class_
-  // but isn't a real working Debugger.Object.
-  DebuggerObject* nthisobj = &thisobj->as<DebuggerObject>();
-  if (!nthisobj->isInstance()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_INCOMPATIBLE_PROTO, "Debugger.Object",
-                              "method", "prototype object");
-    return nullptr;
-  }
-  return nthisobj;
+  return &thisobj->as<DebuggerObject>();
 }
 
 /* static */
@@ -214,6 +210,7 @@ struct MOZ_STACK_CLASS DebuggerObject::CallData {
   bool makeDebuggeeValueMethod();
   bool makeDebuggeeNativeFunctionMethod();
   bool isSameNativeMethod();
+  bool isNativeGetterWithJitInfo();
   bool unsafeDereferenceMethod();
   bool unwrapMethod();
   bool getPromiseReactionsMethod();
@@ -245,11 +242,6 @@ bool DebuggerObject::CallData::callableGetter() {
 }
 
 bool DebuggerObject::CallData::isBoundFunctionGetter() {
-  if (!object->isDebuggeeFunction()) {
-    args.rval().setUndefined();
-    return true;
-  }
-
   args.rval().setBoolean(object->isBoundFunction());
   return true;
 }
@@ -315,7 +307,7 @@ bool DebuggerObject::CallData::classGetter() {
 }
 
 bool DebuggerObject::CallData::nameGetter() {
-  if (!object->isFunction()) {
+  if (!object->isFunction() && !object->isBoundFunction()) {
     args.rval().setUndefined();
     return true;
   }
@@ -330,7 +322,7 @@ bool DebuggerObject::CallData::nameGetter() {
 }
 
 bool DebuggerObject::CallData::displayNameGetter() {
-  if (!object->isFunction()) {
+  if (!object->isFunction() && !object->isBoundFunction()) {
     args.rval().setUndefined();
     return true;
   }
@@ -430,7 +422,7 @@ bool DebuggerObject::CallData::environmentGetter() {
 }
 
 bool DebuggerObject::CallData::boundTargetFunctionGetter() {
-  if (!object->isDebuggeeFunction() || !object->isBoundFunction()) {
+  if (!object->isDebuggeeBoundFunction()) {
     args.rval().setUndefined();
     return true;
   }
@@ -445,7 +437,7 @@ bool DebuggerObject::CallData::boundTargetFunctionGetter() {
 }
 
 bool DebuggerObject::CallData::boundThisGetter() {
-  if (!object->isDebuggeeFunction() || !object->isBoundFunction()) {
+  if (!object->isDebuggeeBoundFunction()) {
     args.rval().setUndefined();
     return true;
   }
@@ -454,7 +446,7 @@ bool DebuggerObject::CallData::boundThisGetter() {
 }
 
 bool DebuggerObject::CallData::boundArgumentsGetter() {
-  if (!object->isDebuggeeFunction() || !object->isBoundFunction()) {
+  if (!object->isDebuggeeBoundFunction()) {
     args.rval().setUndefined();
     return true;
   }
@@ -1240,6 +1232,15 @@ bool DebuggerObject::CallData::createSource() {
     return false;
   }
 
+  if (!JS_GetProperty(cx, options, "startColumn", &v)) {
+    return false;
+  }
+
+  uint32_t startColumn;
+  if (!ToUint32(cx, v, &startColumn)) {
+    return false;
+  }
+
   if (!JS_GetProperty(cx, options, "sourceMapURL", &v)) {
     return false;
   }
@@ -1260,6 +1261,7 @@ bool DebuggerObject::CallData::createSource() {
 
   JS::CompileOptions compileOptions(cx);
   compileOptions.lineno = startLine;
+  compileOptions.column = startColumn;
 
   if (!JS::StringHasLatin1Chars(url)) {
     JS_ReportErrorASCII(cx, "URL must be a narrow string");
@@ -1285,14 +1287,12 @@ bool DebuggerObject::CallData::createSource() {
     compileOptions.setIntroductionType("inlineScript");
   }
 
-  Vector<char16_t> textChars(cx);
-  if (!CopyStringToVector(cx, text, textChars)) {
+  AutoStableStringChars linearChars(cx);
+  if (!linearChars.initTwoByte(cx, text)) {
     return false;
   }
-
   JS::SourceText<char16_t> srcBuf;
-  if (!srcBuf.init(cx, textChars.begin(), text->length(),
-                   JS::SourceOwnership::Borrowed)) {
+  if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
     return false;
   }
 
@@ -1340,6 +1340,10 @@ bool DebuggerObject::CallData::isSameNativeMethod() {
   }
 
   return DebuggerObject::isSameNative(cx, object, args[0], args.rval());
+}
+
+bool DebuggerObject::CallData::isNativeGetterWithJitInfo() {
+  return DebuggerObject::isNativeGetterWithJitInfo(cx, object, args.rval());
 }
 
 bool DebuggerObject::CallData::unsafeDereferenceMethod() {
@@ -1394,13 +1398,13 @@ struct DebuggerObject::PromiseReactionRecordBuilder
   bool asyncFunction(
       JSContext* cx,
       Handle<AsyncFunctionGeneratorObject*> unwrappedGenerator) override {
-    return pushGenerator(cx, unwrappedGenerator);
+    return maybePushGenerator(cx, unwrappedGenerator);
   }
 
   bool asyncGenerator(
       JSContext* cx,
       Handle<AsyncGeneratorObject*> unwrappedGenerator) override {
-    return pushGenerator(cx, unwrappedGenerator);
+    return maybePushGenerator(cx, unwrappedGenerator);
   }
 
  private:
@@ -1413,9 +1417,14 @@ struct DebuggerObject::PromiseReactionRecordBuilder
     return NewbornArrayPush(cx, records, recordVal);
   }
 
-  bool pushGenerator(JSContext* cx,
-                     Handle<AbstractGeneratorObject*> unwrappedGenerator) {
+  bool maybePushGenerator(JSContext* cx,
+                          Handle<AbstractGeneratorObject*> unwrappedGenerator) {
     Rooted<DebuggerFrame*> frame(cx);
+    if (unwrappedGenerator->isClosed()) {
+      // If the generator is closed, we can't generate a DebuggerFrame for it,
+      // so we ignore it.
+      return true;
+    }
     return dbg->getFrame(cx, unwrappedGenerator, &frame) && push(cx, frame);
   }
 
@@ -1529,6 +1538,7 @@ const JSFunctionSpec DebuggerObject::methods_[] = {
     JS_DEBUG_FN("makeDebuggeeNativeFunction", makeDebuggeeNativeFunctionMethod,
                 1),
     JS_DEBUG_FN("isSameNative", isSameNativeMethod, 1),
+    JS_DEBUG_FN("isNativeGetterWithJitInfo", isNativeGetterWithJitInfo, 1),
     JS_DEBUG_FN("unsafeDereference", unsafeDereferenceMethod, 0),
     JS_DEBUG_FN("unwrap", unwrapMethod, 0),
     JS_DEBUG_FN("getPromiseReactions", getPromiseReactionsMethod, 0),
@@ -1539,8 +1549,8 @@ NativeObject* DebuggerObject::initClass(JSContext* cx,
                                         Handle<GlobalObject*> global,
                                         HandleObject debugCtor) {
   Rooted<NativeObject*> objectProto(
-      cx, InitClass(cx, debugCtor, nullptr, &class_, construct, 0, properties_,
-                    methods_, nullptr, nullptr));
+      cx, InitClass(cx, debugCtor, nullptr, nullptr, "Object", construct, 0,
+                    properties_, methods_, nullptr, nullptr));
 
   if (!objectProto) {
     return nullptr;
@@ -1582,9 +1592,13 @@ bool DebuggerObject::isDebuggeeFunction() const {
 }
 
 bool DebuggerObject::isBoundFunction() const {
-  MOZ_ASSERT(isDebuggeeFunction());
+  return referent()->is<BoundFunctionObject>();
+}
 
-  return referent()->as<JSFunction>().isBoundFunction();
+bool DebuggerObject::isDebuggeeBoundFunction() const {
+  return referent()->is<BoundFunctionObject>() &&
+         owner()->observesGlobal(
+             &referent()->as<BoundFunctionObject>().global());
 }
 
 bool DebuggerObject::isArrowFunction() const {
@@ -1667,23 +1681,54 @@ bool DebuggerObject::getClassName(JSContext* cx, Handle<DebuggerObject*> object,
 }
 
 JSAtom* DebuggerObject::name(JSContext* cx) const {
-  MOZ_ASSERT(isFunction());
-
-  JSAtom* atom = referent()->as<JSFunction>().explicitName();
-  if (atom) {
-    cx->markAtom(atom);
+  if (isFunction()) {
+    JSAtom* atom = referent()->as<JSFunction>().explicitName();
+    if (atom) {
+      cx->markAtom(atom);
+    }
+    return atom;
   }
+
+  MOZ_ASSERT(isBoundFunction());
+
+  // Bound functions have a configurable `name` data property and currently
+  // don't store the original name. Try a pure lookup to get this name and if
+  // this fails use "bound".
+  Rooted<BoundFunctionObject*> bound(cx,
+                                     &referent()->as<BoundFunctionObject>());
+  JSAtom* atom = nullptr;
+  {
+    Maybe<AutoRealm> ar;
+    EnterDebuggeeObjectRealm(cx, ar, bound);
+
+    Value v;
+    bool found;
+    if (GetOwnPropertyPure(cx, bound, NameToId(cx->names().name), &v, &found) &&
+        found && v.isString()) {
+      atom = AtomizeString(cx, v.toString());
+      if (!atom) {
+        return nullptr;
+      }
+    } else {
+      atom = cx->names().bound;
+    }
+  }
+
+  cx->markAtom(atom);
   return atom;
 }
 
 JSAtom* DebuggerObject::displayName(JSContext* cx) const {
-  MOZ_ASSERT(isFunction());
-
-  JSAtom* atom = referent()->as<JSFunction>().displayAtom();
-  if (atom) {
-    cx->markAtom(atom);
+  if (isFunction()) {
+    JSAtom* atom = referent()->as<JSFunction>().displayAtom();
+    if (atom) {
+      cx->markAtom(atom);
+    }
+    return atom;
   }
-  return atom;
+
+  MOZ_ASSERT(isBoundFunction());
+  return name(cx);
 }
 
 JS::PromiseState DebuggerObject::promiseState() const {
@@ -1704,10 +1749,11 @@ bool DebuggerObject::getBoundTargetFunction(
     MutableHandle<DebuggerObject*> result) {
   MOZ_ASSERT(object->isBoundFunction());
 
-  RootedFunction referent(cx, &object->referent()->as<JSFunction>());
+  Rooted<BoundFunctionObject*> referent(
+      cx, &object->referent()->as<BoundFunctionObject>());
   Debugger* dbg = object->owner();
 
-  RootedObject target(cx, referent->getBoundFunctionTarget());
+  RootedObject target(cx, referent->getTarget());
   return dbg->wrapDebuggeeObject(cx, target, result);
 }
 
@@ -1716,10 +1762,11 @@ bool DebuggerObject::getBoundThis(JSContext* cx, Handle<DebuggerObject*> object,
                                   MutableHandleValue result) {
   MOZ_ASSERT(object->isBoundFunction());
 
-  RootedFunction referent(cx, &object->referent()->as<JSFunction>());
+  Rooted<BoundFunctionObject*> referent(
+      cx, &object->referent()->as<BoundFunctionObject>());
   Debugger* dbg = object->owner();
 
-  result.set(referent->getBoundFunctionThis());
+  result.set(referent->getBoundThis());
   return dbg->wrapDebuggeeValue(cx, result);
 }
 
@@ -1729,15 +1776,16 @@ bool DebuggerObject::getBoundArguments(JSContext* cx,
                                        MutableHandle<ValueVector> result) {
   MOZ_ASSERT(object->isBoundFunction());
 
-  RootedFunction referent(cx, &object->referent()->as<JSFunction>());
+  Rooted<BoundFunctionObject*> referent(
+      cx, &object->referent()->as<BoundFunctionObject>());
   Debugger* dbg = object->owner();
 
-  size_t length = referent->getBoundFunctionArgumentCount();
+  size_t length = referent->numBoundArgs();
   if (!result.resize(length)) {
     return false;
   }
   for (size_t i = 0; i < length; i++) {
-    result[i].set(referent->getBoundFunctionArgument(i));
+    result[i].set(referent->getBoundArg(i));
     if (!dbg->wrapDebuggeeValue(cx, result[i])) {
       return false;
     }
@@ -2359,6 +2407,11 @@ Maybe<Completion> DebuggerObject::call(JSContext* cx,
     }
   }
 
+  // Note whether we are in an evaluation that might invoke the OnNativeCall
+  // hook, so that the JITs will be disabled.
+  AutoNoteDebuggerEvaluationWithOnNativeCallHook noteEvaluation(
+      cx, dbg->observesNativeCalls() ? dbg : nullptr);
+
   // Call the function.
   LeaveDebuggeeNoExecute nnx(cx);
 
@@ -2569,7 +2622,23 @@ bool DebuggerObject::isSameNative(JSContext* cx, Handle<DebuggerObject*> object,
   }
 
   RootedFunction referentFun(cx, EnsureNativeFunction(referentValue));
+
   result.setBoolean(referentFun && referentFun->native() == fun->native());
+  return true;
+}
+
+static bool IsNativeGetterWithJitInfo(JSFunction* fun) {
+  return fun->isNativeFun() && fun->hasJitInfo() &&
+         fun->jitInfo()->type() == JSJitInfo::Getter;
+}
+
+/* static */
+bool DebuggerObject::isNativeGetterWithJitInfo(JSContext* cx,
+                                               Handle<DebuggerObject*> object,
+                                               MutableHandleValue result) {
+  RootedValue referentValue(cx, ObjectValue(*object->referent()));
+  RootedFunction referentFun(cx, EnsureNativeFunction(referentValue));
+  result.setBoolean(referentFun && IsNativeGetterWithJitInfo(referentFun));
   return true;
 }
 

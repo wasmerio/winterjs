@@ -294,11 +294,10 @@ void UniqueStacks::StreamNonJITFrame(const FrameKey& aFrame) {
     RELEVANT_FOR_JS = 1,
     INNER_WINDOW_ID = 2,
     IMPLEMENTATION = 3,
-    OPTIMIZATIONS = 4,
-    LINE = 5,
-    COLUMN = 6,
-    CATEGORY = 7,
-    SUBCATEGORY = 8
+    LINE = 4,
+    COLUMN = 5,
+    CATEGORY = 6,
+    SUBCATEGORY = 7
   };
 
   AutoArraySchemaWithStringsWriter writer(mFrameTableWriter, *mUniqueStrings);
@@ -986,7 +985,7 @@ void ProfileBuffer::StreamCountersToJSON(SpliceableJSONWriter& aWriter,
 
     EntryGetter e(*aReader);
 
-    enum Schema : uint32_t { TIME = 0, NUMBER = 1, COUNT = 2 };
+    enum Schema : uint32_t { TIME = 0, COUNT = 1, NUMBER = 2 };
 
     // Stream all counters. We skip other entries, because we process them in
     // StreamSamplesToJSON()/etc.
@@ -1092,16 +1091,25 @@ void ProfileBuffer::StreamCountersToJSON(SpliceableJSONWriter& aWriter,
           continue;
         }
 
+        bool hasNumber = false;
+        for (size_t i = 0; i < size; i++) {
+          if (samples[i].mNumber != 0) {
+            hasNumber = true;
+            break;
+          }
+        }
+
         aWriter.StartObjectElement();
         {
           aWriter.IntProperty("id", static_cast<int64_t>(key));
           aWriter.StartObjectProperty("samples");
           {
-            // XXX Can we assume a missing count means 0?
             JSONSchemaWriter schema(aWriter);
             schema.WriteField("time");
-            schema.WriteField("number");
             schema.WriteField("count");
+            if (hasNumber) {
+              schema.WriteField("number");
+            }
           }
 
           aWriter.StartArrayProperty("data");
@@ -1119,10 +1127,12 @@ void ProfileBuffer::StreamCountersToJSON(SpliceableJSONWriter& aWriter,
 
               AutoArraySchemaWriter writer(aWriter);
               writer.TimeMsElement(TIME, samples[i].mTime);
-              writer.IntElement(
-                  NUMBER,
-                  static_cast<int64_t>(samples[i].mNumber - previousNumber));
               writer.IntElement(COUNT, samples[i].mCount - previousCount);
+              if (hasNumber) {
+                writer.IntElement(
+                    NUMBER,
+                    static_cast<int64_t>(samples[i].mNumber - previousNumber));
+              }
               previousNumber = samples[i].mNumber;
               previousCount = samples[i].mCount;
             }

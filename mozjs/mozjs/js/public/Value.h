@@ -28,6 +28,123 @@ namespace JS {
 class JS_PUBLIC_API Value;
 }
 
+// [SMDOC] JS::Value Boxing Formats
+//
+// JS::Value is a 64-bit value, on all architectures. It is conceptually a
+// discriminated union of all the types of values that can be represented in SM:
+// - Object Pointers
+// - 64 bit IEEE 754 floats
+// - 32-bit integer values
+// - and quite a few more (see JSValueType)
+//
+// The ECMAScript standard specifies that ECMAScript numbers are IEEE 64-bit
+// floating-point values. A JS::Value can represent any JavaScript number
+// value directly, without referring to additional storage, or represent an
+// object, string, or other ECMAScript value, and remember which type it is.
+//
+// This may seem surprising: how can a 64-bit type hold all the 64-bit IEEE
+// values, and still distinguish them from objects, strings, and so on,
+// which have 64-bit addresses ?
+//
+// This is possible for two reasons:
+//
+// - First, ECMAScript implementations aren't required to distinguish all
+//   the values the IEEE 64-bit format can represent.
+//
+//   The IEEE 754 format for floating point numbers specifies that every
+//   floating-point value whose 11-bit exponent field is all ones, and whose
+//   52-bit fraction field is non-zero, has the value NaN. EMCAScript requires
+//   only one NaN value. This means we can use one IEEE NaN to represent
+//   ECMAScript's NaN, and use all the other 2^52-2 NaN bitstrings to
+//   represent the other ECMAScript values.
+//
+// - Second, on the 64 bit architectures we suppport, only the
+//   lower 48 bits of an address are currently significant. The upper sixteen
+//   bits are required to be the sign-extension of bit 48. Furthermore, user
+//   code always runs in "positive addresses": those in which bit 48 is zero. So
+//   we only actually need 47 bits to store all possible object or string
+//   addresses, even on 64-bit platforms.
+//
+//   Our memory initialization system ensures that all pointers we will store in
+//   objects use only 47 bits. See js::gc::MapAlignedPagesRandom.
+//
+//   The introduction of 5-level page tables, supporting 57-bit virtual
+//   addresses, is a potential complication. For now, large addresses are
+//   opt-in, and we simply don't use them.
+//
+// With a 52-bit fraction field, and 47 bits needed for the 'payload', we
+// have up to five bits left to store a 'tag' value, to indicate which
+// branch of our discriminated union is live. (In practice, one of those
+// bits is used up to simplify NaN representation; see micro-optimization 5
+// below.)
+//
+// Thus, we define JS::Value representations in terms of the IEEE 64-bit
+// floating-point format:
+//
+// - Any bitstring that IEEE calls a number or an infinity represents that
+//   ECMAScript number.
+//
+// - Any bitstring that IEEE calls a NaN represents either an ECMAScript NaN
+//   or a non-number ECMAScript value, as determined by a tag field stored
+//   towards the most significant end of the fraction field (exactly where
+//   depends on the address size). If the tag field indicates that this
+//   JS::Value is an object, the fraction field's least significant end
+//   holds the address of a JSObject; if a string, the address of a
+//   JSString; and so on.
+//
+//   To enforce this invariant, anywhere that may provide a numerical value
+//   which may have a non-canonical NaN value (NaN, but not the one we've chosen
+//   for ECMAScript) we must convert that to the canonical NaN. See
+//   JS::CanonicalizeNaN.
+//
+// We have two boxing modes defined: NUNBOX32 and PUNBOX64.The first is
+// "NaN unboxed boxing" (or Nunboxing), as non-Number payload are stored
+// unaltered in the lower bits. The second is "Packed NaN boxing" (or
+// punboxing), which is 'logically like nunboxing, but with all the unused bits
+// sucked out' [1],  as we rely on unused bits of the payload to pack the
+// payload in the lower bits using Nunboxing.
+//
+// - In NUNBOX32 the tag is stored in the least-significant bits of the high
+//   word of the NaN. Since it's used on 32-bit systems, this has the nice
+//   property that boxed values are simply stored in the low-word of the 8-byte
+//   NaN.
+//
+// - In PUNBOX64, since we need to store more pointer bits (47, see above), the
+//   tag is stored in the 5 most significant bits of the fraction adjacent to
+//   the exponent.
+//
+// Tag values are carefully ordered to support a set of micro-optimizations. In
+// particular:
+//
+// 1. Object is the highest tag, to simplify isPrimitive checks. (See
+//    ValueUpperExclPrimitiveTag)
+// 2. Numbers (Double and Int32) are the lowest tags, to simplify isNumber
+//    checks. (See ValueUpperInclNumberTag)
+// 3. Non-GC tags are ordered before GC-tags, to simplify isGCThing checks. (See
+//    ValueLowerInclGCThingTag)
+// 4. The tags for Object and Null differ by a single flipped bit, to simplify
+//    toObjectOrNull. (See ValueObjectOrNullBit)
+// 5. In PUNBOX64, the most significant bit of every non-Double tag is always
+//    set. This is to simplify isDouble checks. Note that the highest bitstring
+//    that corresponds to a non-NaN double is -Infinity:
+//      0xfff0_0000_0000_0000
+//    But the canonical hardware NaN (produced by, for example, 0/0) is:
+//      0x?ff8_0000_0000_0000
+//    on all platforms with JIT support*. (The most significant bit is the sign
+//    bit; it is 1 on x86, but 0 on ARM.) The most significant bit of the
+//    fraction field is set, which corresponds to the most significant of the 5
+//    tag bits. Because we only use tags that have the high bit set, any Value
+//    represented by a bitstring less than or equal to 0xfff8_..._0000 is a
+//    Double. (If we wanted to use all five bits, we could define 0x10 as
+//    JSVAL_TYPE_NAN, and mask off the most significant bit of the tag for
+//    IsDouble checks. This is not yet necessary, because we still have room
+//    left to allocate new tags.)
+//
+//    * But see JS_NONCANONICAL_HARDWARE_NAN below.
+//
+// [1]:
+// https://wingolog.org/archives/2011/05/18/value-representation-in-javascript-implementations#969f63bbe4eb912778c9da85feb0f5763e7a7862
+
 /* JS::Value can store a full int32_t. */
 #define JSVAL_INT_BITS 32
 #define JSVAL_INT_MIN ((int32_t)0x80000000)
@@ -191,6 +308,10 @@ constexpr uint64_t ValueTagMask = 0xFFFF'8000'0000'0000;
 // This should only be used in toGCThing. See the 'Spectre mitigations' comment.
 constexpr uint64_t ValueGCThingPayloadMask = 0x0000'7FFF'FFFF'FFFF;
 
+// Mask used to combine an unbox operation with getting the chunk base.
+constexpr uint64_t ValueGCThingPayloadChunkMask =
+    ValueGCThingPayloadMask & ~js::gc::ChunkMask;
+
 constexpr uint64_t ValueTypeToShiftedTag(JSValueType type) {
   return static_cast<uint64_t>(ValueTypeToTag(type)) << JSVAL_TAG_SHIFT;
 }
@@ -296,9 +417,9 @@ constexpr uint64_t InfinityBits =
     mozilla::InfinityBits<double, detail::InfinitySignBit>::value;
 
 // This is a quiet NaN on IEEE-754[2008] compatible platforms, including X86,
-// ARM, SPARC and modern MIPS.
+// ARM, SPARC, RISC-V and modern MIPS.
 //
-// Note: The default sign bit for a hardware sythesized NaN differs between X86
+// Note: The default sign bit for a hardware synthesized NaN differs between X86
 //       and ARM. Both values are considered compatible values on both
 //       platforms.
 constexpr int CanonicalizedNaNSignBit = 0;
@@ -342,10 +463,15 @@ static MOZ_ALWAYS_INLINE double GenericNaN() {
   return mozilla::BitwiseCast<double>(detail::CanonicalizedNaNBits);
 }
 
+// Return the infinity the engine uses
+static MOZ_ALWAYS_INLINE double Infinity() {
+  return mozilla::BitwiseCast<double>(detail::InfinityBits);
+}
+
 // Convert an arbitrary double to one compatible with JS::Value representation
 // by replacing any NaN value with a canonical one.
 static MOZ_ALWAYS_INLINE double CanonicalizeNaN(double d) {
-  if (MOZ_UNLIKELY(mozilla::IsNaN(d))) {
+  if (MOZ_UNLIKELY(std::isnan(d))) {
     return GenericNaN();
   }
   return d;

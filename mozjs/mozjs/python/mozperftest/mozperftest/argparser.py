@@ -1,23 +1,25 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-from argparse import ArgumentParser, Namespace
-import os
-import mozlog
 import copy
+import os
+from argparse import ArgumentParser, Namespace
+
+import mozlog
 
 here = os.path.abspath(os.path.dirname(__file__))
 try:
-    from mozbuild.base import MozbuildObject, MachCommandConditions as conditions
+    from mozbuild.base import MachCommandConditions as conditions
+    from mozbuild.base import MozbuildObject
 
     build_obj = MozbuildObject.from_environment(cwd=here)
 except Exception:
     build_obj = None
     conditions = None
 
+from mozperftest.metrics import get_layers as metrics_layers  # noqa
 from mozperftest.system import get_layers as system_layers  # noqa
 from mozperftest.test import get_layers as test_layers  # noqa
-from mozperftest.metrics import get_layers as metrics_layers  # noqa
 from mozperftest.utils import convert_day  # noqa
 
 FLAVORS = "desktop-browser", "mobile-browser", "doc", "xpcshell", "webpagetest"
@@ -333,9 +335,126 @@ class SideBySideOptions:
     ]
 
 
+class ChangeDetectorOptions:
+    args = [
+        # TODO: Move the common tool arguments to a common
+        # argument class.
+        [
+            ["--task-name"],
+            {
+                "type": str,
+                "nargs": "*",
+                "default": [],
+                "dest": "task_names",
+                "help": "The full name of the test task to get data from e.g. "
+                "test-android-hw-a51-11-0-aarch64-shippable-qr/opt-"
+                "browsertime-tp6m-geckoview-sina-nofis.",
+            },
+        ],
+        [
+            ["-t", "--test-name"],
+            {
+                "type": str,
+                "default": None,
+                "dest": "test_name",
+                "help": "The name of the test task to get data from e.g. "
+                "browsertime-tp6m-geckoview-sina-nofis.",
+            },
+        ],
+        [
+            ["--platform"],
+            {
+                "type": str,
+                "default": None,
+                "help": "Platform to analyze e.g. "
+                "test-android-hw-a51-11-0-aarch64-shippable-qr/opt.",
+            },
+        ],
+        [
+            ["--new-test-name"],
+            {
+                "type": str,
+                "help": "The name of the test task to get data from in the "
+                "base revision e.g. browsertime-tp6m-geckoview-sina-nofis.",
+            },
+        ],
+        [
+            ["--new-platform"],
+            {
+                "type": str,
+                "help": "Platform to analyze in base revision e.g. "
+                "test-android-hw-a51-11-0-aarch64-shippable-qr/opt.",
+            },
+        ],
+        [
+            ["--depth"],
+            {
+                "type": int,
+                "default": None,
+                "help": "This sets how the change detector should run. "
+                "Default is None, which is a direct comparison between the "
+                "revisions. -1 will autocompute the number of revisions to "
+                "look at between the base, and new. Any other positive integer "
+                "acts as a maximum number to look at.",
+            },
+        ],
+        [
+            ["--base-revision"],
+            {
+                "type": str,
+                "required": True,
+                "help": "The base revision to compare a new revision to.",
+            },
+        ],
+        [
+            ["--new-revision"],
+            {
+                "type": str,
+                "required": True,
+                "help": "The new revision to compare a base revision to.",
+            },
+        ],
+        [
+            ["--base-branch"],
+            {
+                "type": str,
+                "default": "try",
+                "help": "Branch to search for the base revision.",
+            },
+        ],
+        [
+            ["--new-branch"],
+            {
+                "type": str,
+                "default": "try",
+                "help": "Branch to search for the new revision.",
+            },
+        ],
+        [
+            ["--skip-download"],
+            {
+                "action": "store_true",
+                "default": False,
+                "help": "If set, we won't try to download artifacts again and we'll "
+                + "try using what already exists in the output folder.",
+            },
+        ],
+        [
+            ["-o", "--overwrite"],
+            {
+                "action": "store_true",
+                "default": False,
+                "help": "If set, the downloaded task group data will be deleted before "
+                + "it gets re-downloaded.",
+            },
+        ],
+    ]
+
+
 class ToolingOptions:
     args = {
         "side-by-side": SideBySideOptions.args,
+        "change-detector": ChangeDetectorOptions.args,
     }
 
 
