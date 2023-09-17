@@ -116,13 +116,13 @@ ifneq ($(WINDOWS),)
 
 	ifeq ($(findstring x86_64,$(TARGET)),x86_64)
 		# This is the correct target for MSVC builds
-		CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
+		CONFIGURE_FLAGS += --target=x86_64-pc-windows-msvc
 	else ifeq ($(findstring i686,$(TARGET)),i686)
 		# This is the correct target for MSVC builds
-		CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=x86_64-pc-mingw32
+		CONFIGURE_FLAGS += --target=i686-pc-windows-msvc
 	else ifeq ($(findstring aarch64,$(TARGET)),aarch64)
 		# This is the correct target for MSVC builds
-		CONFIGURE_FLAGS += --target=aarch64-windows-mingw32 --host=x86_64-pc-mingw32
+		CONFIGURE_FLAGS += --target=aarch64-pc-windows-msvc
 	endif
 
 	# There's no cygpath in mozilla-build, and we're expecting to

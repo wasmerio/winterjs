@@ -169,6 +169,9 @@ fn build_jsapi(build_dir: &Path) {
         } else if let Some(moztools) = find_moztools() {
             // moztools already in target/dependencies/moztools-*
             moztools
+        } else if let Some(moz_build) = env::var_os("MOZILLABUILD") {
+            // For now we also support mozilla build
+            PathBuf::from(moz_build)
         } else if let Some(moz_build) = env::var_os("MOZILLA_BUILD") {
             // For now we also support mozilla build
             PathBuf::from(moz_build)
@@ -183,6 +186,9 @@ fn build_jsapi(build_dir: &Path) {
         paths.push(moztools.join("bin"));
         paths.extend(env::split_paths(&env::var_os("PATH").unwrap()));
         env::set_var("PATH", &env::join_paths(paths).unwrap());
+
+        // https://searchfox.org/mozilla-esr115/source/python/mozbuild/mozbuild/util.py#1396
+        env::set_var("MOZILLABUILD", moztools);
 
         make = OsStr::new("mozmake").to_os_string();
     }
@@ -463,6 +469,7 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
     "js::AppendUnique",
     "js::SetPropertyIgnoringNamedGetter",
     "JS::FinishOffThreadStencil",
+    "std::.*",
 ];
 
 /// Types that should be treated as an opaque blob of bytes whenever they show
@@ -484,6 +491,7 @@ const OPAQUE_TYPES: &'static [&'static str] = &[
     "mozilla::Hash.*",
     "mozilla::detail::Hash.*",
     "RefPtr_Proxy.*",
+    "std::.*",
 ];
 
 /// Types for which we should NEVER generate bindings, even if it is used within

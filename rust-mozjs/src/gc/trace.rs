@@ -3,8 +3,8 @@ use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
     CallStringTracer, CallSymbolTracer, CallValueTracer,
 };
-use crate::jsapi::{jsid, Heap, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
 use crate::jsapi::JS::{BigInt, JobQueue, Symbol};
+use crate::jsapi::{jsid, Heap, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
 use std::any::TypeId;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell, UnsafeCell};

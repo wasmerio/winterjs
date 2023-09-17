@@ -1098,6 +1098,8 @@ pub mod wrappers {
     use crate::jsapi::CallArgs;
     use crate::jsapi::CloneDataPolicy;
     use crate::jsapi::CompartmentTransplantCallback;
+    use crate::jsapi::Latin1Char;
+    use crate::jsapi::PropertyKey;
     //use jsapi::DynamicImportStatus;
     use crate::jsapi::ESClass;
     use crate::jsapi::ExceptionStackBehavior;
@@ -1264,10 +1266,12 @@ pub mod jsapi_wrapped {
     use crate::jsapi::JSScript;
     use crate::jsapi::JSStructuredCloneData;
     use crate::jsapi::JSType;
+    use crate::jsapi::Latin1Char;
     use crate::jsapi::ModuleErrorBehaviour;
     use crate::jsapi::MutableHandleIdVector;
     use crate::jsapi::PromiseState;
     use crate::jsapi::PromiseUserInputEventHandlingState;
+    use crate::jsapi::PropertyKey;
     use crate::jsapi::ReadOnlyCompileOptions;
     use crate::jsapi::ReadableStreamMode;
     use crate::jsapi::ReadableStreamReaderMode;

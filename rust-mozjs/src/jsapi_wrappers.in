@@ -57,15 +57,18 @@ wrap!(jsapi: pub fn ObjectIsDate(cx: *mut JSContext, obj: HandleObject, isDate: 
 wrap!(jsapi: pub fn StrictlyEqual(cx: *mut JSContext, v1: Handle<Value>, v2: Handle<Value>, equal: *mut bool) -> bool);
 wrap!(jsapi: pub fn LooselyEqual(cx: *mut JSContext, v1: Handle<Value>, v2: Handle<Value>, equal: *mut bool) -> bool);
 wrap!(jsapi: pub fn SameValue(cx: *mut JSContext, v1: Handle<Value>, v2: Handle<Value>, same: *mut bool) -> bool);
+wrap!(jsapi: pub fn ToGetterId(cx: *mut JSContext, id: Handle<PropertyKey>, getterId: MutableHandle<PropertyKey>) -> bool);
+wrap!(jsapi: pub fn ToSetterId(cx: *mut JSContext, id: Handle<PropertyKey>, setterId: MutableHandle<PropertyKey>) -> bool);
 wrap!(jsapi: pub fn ToJSONMaybeSafely(cx: *mut JSContext, input: HandleObject, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void) -> bool);
+wrap!(jsapi: pub fn ToJSON(cx: *mut JSContext, value: Handle<Value>, replacer: HandleObject, space: Handle<Value>, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void) -> bool);
 wrap!(jsapi: pub fn AddSizeOfTab(cx: *mut JSContext, obj: HandleObject, mallocSizeOf: MallocSizeOf, opv: *mut ObjectPrivateVisitor, sizes: *mut TabSizes) -> bool);
 wrap!(jsapi: pub fn FinishDynamicModuleImport(cx: *mut JSContext, evaluationPromise: HandleObject, referencingPrivate: Handle<Value>, moduleRequest: HandleObject, promise: HandleObject) -> bool);
 wrap!(jsapi: pub fn ModuleLink(cx: *mut JSContext, moduleRecord: HandleObject) -> bool);
 wrap!(jsapi: pub fn ModuleEvaluate(cx: *mut JSContext, moduleRecord: HandleObject, rval: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn ThrowOnModuleEvaluationFailure(cx: *mut JSContext, evaluationPromise: HandleObject, errorBehaviour: ModuleErrorBehaviour) -> bool);
-wrap!(jsapi: pub fn GetRequestedModules(cx: *mut JSContext, moduleRecord: HandleObject) -> *mut JSObject);
-wrap!(jsapi: pub fn GetRequestedModuleSpecifier(cx: *mut JSContext, requestedModuleObject: Handle<Value>) -> *mut JSString);
-wrap!(jsapi: pub fn GetRequestedModuleSourcePos(cx: *mut JSContext, requestedModuleObject: Handle<Value>, lineNumber: *mut u32, columnNumber: *mut u32));
+wrap!(jsapi: pub fn GetRequestedModulesCount(cx: *mut JSContext, moduleRecord: HandleObject) -> u32);
+wrap!(jsapi: pub fn GetRequestedModuleSpecifier(cx: *mut JSContext, moduleRecord: HandleObject, index: u32) -> *mut JSString);
+wrap!(jsapi: pub fn GetRequestedModuleSourcePos(cx: *mut JSContext, moduleRecord: HandleObject, index: u32, lineNumber: *mut u32, columnNumber: *mut u32));
 wrap!(jsapi: pub fn GetModuleScript(moduleRecord: HandleObject) -> *mut JSScript);
 wrap!(jsapi: pub fn CreateModuleRequest(cx: *mut JSContext, specifierArg: Handle<*mut JSString>) -> *mut JSObject);
 wrap!(jsapi: pub fn GetModuleRequestSpecifier(cx: *mut JSContext, moduleRequestArg: HandleObject) -> *mut JSString);
@@ -144,6 +147,8 @@ wrap!(jsapi: pub fn ReadableStreamReaderReleaseLock(cx: *mut JSContext, reader: 
 wrap!(jsapi: pub fn ReadableStreamDefaultReaderRead(cx: *mut JSContext, reader: HandleObject) -> *mut JSObject);
 wrap!(jsapi: pub fn IsWasmModuleObject(obj: HandleObject) -> bool);
 wrap!(jsapi: pub fn GetWasmModule(obj: HandleObject) -> RefPtr<WasmModule>);
+wrap!(jsapi: pub fn AbortIncrementalEncoding(script: Handle<*mut JSScript>));
+wrap!(jsapi: pub fn AbortIncrementalEncoding1(module: HandleObject));
 wrap!(jsapi: pub fn Call(cx: *mut JSContext, thisv: Handle<Value>, fun: Handle<Value>, args: *const HandleValueArray, rval: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn Construct(cx: *mut JSContext, fun: Handle<Value>, newTarget: HandleObject, args: *const HandleValueArray, objp: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn Construct1(cx: *mut JSContext, fun: Handle<Value>, args: *const HandleValueArray, objp: MutableHandleObject) -> bool);
@@ -186,6 +191,7 @@ wrap!(jsapi: pub fn JS_ExecuteScript3(cx: *mut JSContext, envChain: HandleObject
 wrap!(jsapi: pub fn JS_Stringify(cx: *mut JSContext, value: MutableHandle<Value>, replacer: HandleObject, space: Handle<Value>, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON(cx: *mut JSContext, chars: *const u16, len: u32, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON1(cx: *mut JSContext, str_: Handle<*mut JSString>, vp: MutableHandle<Value>) -> bool);
+wrap!(jsapi: pub fn JS_ParseJSON2(cx: *mut JSContext, chars: *const Latin1Char, len: u32, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSONWithReviver(cx: *mut JSContext, chars: *const u16, len: u32, reviver: Handle<Value>, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSONWithReviver1(cx: *mut JSContext, str_: Handle<*mut JSString>, reviver: Handle<Value>, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_EncodeStringToUTF8(cx: *mut JSContext, str_: Handle<*mut JSString>) -> UniqueChars);
@@ -325,7 +331,7 @@ wrap!(jsapi: pub fn JS_DefineProfilingFunctions(cx: *mut JSContext, obj: HandleO
 wrap!(jsapi: pub fn JS_ValueToId(cx: *mut JSContext, v: HandleValue, idp: MutableHandleId) -> bool);
 wrap!(jsapi: pub fn JS_StringToId(cx: *mut JSContext, s: HandleString, idp: MutableHandleId) -> bool);
 wrap!(jsapi: pub fn JS_IdToValue(cx: *mut JSContext, id: jsid, vp: MutableHandle<Value>) -> bool);
-wrap!(jsapi: pub fn JS_InitClass(cx: *mut JSContext, obj: HandleObject, parent_proto: HandleObject, clasp: *const JSClass, constructor: JSNative, nargs: ::std::os::raw::c_uint, ps: *const JSPropertySpec, fs: *const JSFunctionSpec, static_ps: *const JSPropertySpec, static_fs: *const JSFunctionSpec) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_InitClass(cx: *mut JSContext, obj: HandleObject, protoClass: *const JSClass, protoProto: HandleObject, name: *const ::std::os::raw::c_char, constructor: JSNative, nargs: ::std::os::raw::c_uint, ps: *const JSPropertySpec, fs: *const JSFunctionSpec, static_ps: *const JSPropertySpec, static_fs: *const JSFunctionSpec) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_LinkConstructorAndPrototype(cx: *mut JSContext, ctor: HandleObject, proto: HandleObject) -> bool);
 wrap!(jsapi: pub fn JS_InstanceOf(cx: *mut JSContext, obj: HandleObject, clasp: *const JSClass, args: *mut CallArgs) -> bool);
 wrap!(jsapi: pub fn JS_HasInstance(cx: *mut JSContext, obj: HandleObject, v: Handle<Value>, bp: *mut bool) -> bool);
