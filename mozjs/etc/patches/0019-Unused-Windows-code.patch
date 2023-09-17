@@ -1,5 +1,5 @@
 diff --git a/mozglue/misc/moz.build b/mozglue/misc/moz.build
-index 1b79cbaf6a..4bb8f5a110 100644
+index 2e6669c2b..8a1ff7bc2 100644
 --- a/mozglue/misc/moz.build
 +++ b/mozglue/misc/moz.build
 @@ -33,7 +33,6 @@ EXPORTS.mozilla.glue += [
@@ -10,11 +10,11 @@ index 1b79cbaf6a..4bb8f5a110 100644
          "StackWalk_windows.h",
          "StackWalkThread.h",
          "TimeStamp_windows.h",
-@@ -105,7 +104,6 @@ if CONFIG["OS_ARCH"] == "WINNT":
+@@ -106,7 +105,6 @@ if CONFIG["OS_ARCH"] == "WINNT":
          SOURCES += [
              "/ipc/mscom/COMWrappers.cpp",
              "/ipc/mscom/ProcessRuntime.cpp",
 -            "PreXULSkeletonUI.cpp",
          ]
  
-     if CONFIG["ACCESSIBILITY"]:
+ elif CONFIG["HAVE_CLOCK_MONOTONIC"]:

@@ -1,8 +1,8 @@
 diff --git a/build/moz.configure/android-ndk.configure b/build/moz.configure/android-ndk.configure
-index b6d198b149..9982b0a615 100644
+index 333a5ea499..8be5bc9052 100644
 --- a/build/moz.configure/android-ndk.configure
 +++ b/build/moz.configure/android-ndk.configure
-@@ -21,6 +21,10 @@ option(
+@@ -22,6 +22,10 @@ option(
      help="location where the Android NDK can be found{|}",
  )
  
@@ -13,8 +13,8 @@ index b6d198b149..9982b0a615 100644
  option("--with-android-toolchain", nargs=1, help="location of the Android toolchain")
  
  option(
-@@ -88,17 +92,20 @@ set_config("ANDROID_NDK", ndk)
- add_old_configure_assignment("android_ndk", ndk)
+@@ -89,17 +93,20 @@ def ndk(value):
+ set_config("ANDROID_NDK", ndk)
  
  
 -@depends(ndk)
@@ -36,31 +36,32 @@ index b6d198b149..9982b0a615 100644
      try:
          major, minor, human = get_ndk_version(ndk)
      except GetNdkVersionError as e:
-@@ -120,13 +127,16 @@ set_config("ANDROID_NDK_MAJOR_VERSION", ndk_version.major)
- set_config("ANDROID_NDK_MINOR_VERSION", ndk_version.minor)
+@@ -152,14 +159,16 @@ def android_toolchain(host, ndk, toolchain):
+         return toolchain
+     die("You have to specify --with-android-toolchain=" "/path/to/ndk/toolchain.")
  
- 
--@depends(target, android_version, ndk)
-+@depends("--with-android-platform", target, android_version, ndk)
- @checking("for android platform directory")
+-
+-@depends(target, android_toolchain)
++@depends("--with-android-platform", target, android_toolchain)
+ @checking("for android sysroot directory")
  @imports(_from="os.path", _import="isdir")
--def android_platform(target, android_version, ndk):
-+def android_platform(value, target, android_version, ndk):
+-def android_sysroot(target, android_toolchain):
++def android_sysroot(value, target, android_toolchain):
      if target.os != "Android":
          return
  
 +    if value:
 +        return value[0]
 +
-     if "aarch64" == target.cpu:
-         target_dir_name = "arm64"
-     else:
-@@ -267,7 +277,7 @@ option(
- @imports(_from="os.path", _import="isdir")
- def stlport_cppflags(value, ndk):
+     search_dirs = [
+         os.path.join(android_toolchain, "sysroot"),
+     ]
+@@ -234,7 +243,7 @@ option(
+ @imports(_from="os.path", _import="isfile")
+ def stlport_libs(value, ndk):
      if value and len(value):
 -        return value.split()
 +        return value[0].split()
      if not ndk:
          return
- 
+

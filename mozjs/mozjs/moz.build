@@ -183,8 +183,6 @@ if CONFIG["MOZ_BUILD_APP"]:
 else:
     include("/toolkit/toolkit.mozbuild")
 
-OBJDIR_PP_FILES[".cargo"] += [".cargo/config.in"]
-
 DEFINES["top_srcdir"] = TOPSRCDIR
 
 SPHINX_TREES["contributing"] = "docs/contributing"

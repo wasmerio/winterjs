@@ -41,7 +41,7 @@ class MOZ_STACK_CLASS WrapperOptions : public ProxyOptions {
 
 // Base class for proxy handlers that want to forward all operations to an
 // object stored in the proxy's private slot.
-class JS_PUBLIC_API ForwardingProxyHandler : public BaseProxyHandler {
+class JS_PUBLIC_API __attribute__ ((__packed__)) ForwardingProxyHandler : public BaseProxyHandler {
  public:
   using BaseProxyHandler::BaseProxyHandler;
 
@@ -130,7 +130,7 @@ class JS_PUBLIC_API ForwardingProxyHandler : public BaseProxyHandler {
  * to add an override in CrossCompartmentWrapper. If you don't, you risk
  * compartment mismatches. See bug 945826 comment 0.
  */
-class JS_PUBLIC_API Wrapper : public ForwardingProxyHandler {
+class JS_PUBLIC_API __attribute__ ((__packed__)) Wrapper : public ForwardingProxyHandler {
   unsigned mFlags;
 
  public:

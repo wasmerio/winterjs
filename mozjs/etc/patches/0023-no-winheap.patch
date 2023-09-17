@@ -1,16 +1,18 @@
 diff --git a/memory/mozalloc/moz.build b/memory/mozalloc/moz.build
-index 2d13c6cf14..5ce2ccf751 100644
+index c5cd78460..bf7319981 100644
 --- a/memory/mozalloc/moz.build
 +++ b/memory/mozalloc/moz.build
-@@ -21,12 +21,6 @@ if CONFIG["WRAP_STL_INCLUDES"]:
+@@ -21,14 +21,6 @@ if CONFIG["WRAP_STL_INCLUDES"]:
              "msvc_raise_wrappers.cpp",
          ]
- 
+
 -if CONFIG["OS_TARGET"] == "WINNT":
--    # Keep this file separate to avoid #include'ing windows.h everywhere.
--    SOURCES += [
--        "winheap.cpp",
--    ]
+-    # Don't build winheap.cpp when mozglue is a static library.
+-    if CONFIG["MOZ_MEMORY"] or not CONFIG["JS_STANDALONE"]:
+-        # Keep this file separate to avoid #include'ing windows.h everywhere.
+-        SOURCES += [
+-            "winheap.cpp",
+-        ]
 -
  UNIFIED_SOURCES += [
      "mozalloc.cpp",

@@ -39,6 +39,7 @@ if CONFIG["JS_SHARED_LIBRARY"]:
         SYMBOLS_FILE = "!symverscript"
 else:
     Library("js")
+    USE_LIBS += ["mozglue"]
 
 FORCE_STATIC_LIB = True
 STATIC_LIBRARY_NAME = "js_static"
@@ -101,7 +102,6 @@ GeneratedFile(
     script="/config/run_spidermonkey_checks.py",
     inputs=[
         "!%sjs_static.%s" % (CONFIG["LIB_PREFIX"], CONFIG["LIB_SUFFIX"]),
-        "/config/check_spidermonkey_style.py",
         "/config/check_macroassembler_style.py",
         "/config/check_js_opcode.py",
     ],

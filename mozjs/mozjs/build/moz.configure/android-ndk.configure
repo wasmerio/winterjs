@@ -22,6 +22,10 @@ option(
     help="location where the Android NDK can be found{|}",
 )
 
+option("--with-android-ndk-version", nargs=1, help="android NDK version")
+
+option("--with-android-platform", nargs=1, help="location of the Android platform")
+
 option("--with-android-toolchain", nargs=1, help="location of the Android toolchain")
 
 option(
@@ -89,16 +93,19 @@ def ndk(value):
 set_config("ANDROID_NDK", ndk)
 
 
-@depends(ndk)
+@depends("--with-android-ndk-version", ndk)
 @checking("for android ndk version")
 @imports(_from="__builtin__", _import="open")
 @imports(_from="mozboot.android", _import="NDK_VERSION")
 @imports(_from="mozboot.android", _import="get_ndk_version")
 @imports(_from="mozboot.android", _import="GetNdkVersionError")
-def ndk_version(ndk):
+def ndk_version(value, ndk):
     if not ndk:
         # Building 'js/src' for non-Android.
         return
+
+    if value:
+        return value[0]
 
     try:
         major, minor, human = get_ndk_version(ndk)
@@ -152,13 +159,15 @@ def android_toolchain(host, ndk, toolchain):
         return toolchain
     die("You have to specify --with-android-toolchain=" "/path/to/ndk/toolchain.")
 
-
-@depends(target, android_toolchain)
+@depends("--with-android-platform", target, android_toolchain)
 @checking("for android sysroot directory")
 @imports(_from="os.path", _import="isdir")
-def android_sysroot(target, android_toolchain):
+def android_sysroot(value, target, android_toolchain):
     if target.os != "Android":
         return
+
+    if value:
+        return value[0]
 
     search_dirs = [
         os.path.join(android_toolchain, "sysroot"),
@@ -234,7 +243,7 @@ option(
 @imports(_from="os.path", _import="isfile")
 def stlport_libs(value, ndk):
     if value and len(value):
-        return value.split()
+        return value[0].split()
     if not ndk:
         return
 

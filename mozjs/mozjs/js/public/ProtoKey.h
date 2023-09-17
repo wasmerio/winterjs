@@ -111,6 +111,16 @@
   REAL(AsyncFunction, CLASP(AsyncFunction))                                  \
   REAL(GeneratorFunction, CLASP(GeneratorFunction))                          \
   REAL(AsyncGeneratorFunction, CLASP(AsyncGeneratorFunction))                \
+  IF_JS_STREAMS(REAL(ReadableStream, &js::ReadableStream::class_))             \
+  IF_JS_STREAMS(REAL(ReadableStreamDefaultReader,                              \
+                     &js::ReadableStreamDefaultReader::class_))                \
+  IF_JS_STREAMS(REAL(ReadableStreamDefaultController,                          \
+                     &js::ReadableStreamDefaultController::class_))            \
+  IF_JS_STREAMS(REAL(ReadableByteStreamController,                             \
+                     &js::ReadableByteStreamController::class_))               \
+  IF_JS_STREAMS(                                                               \
+      REAL(ByteLengthQueuingStrategy, &js::ByteLengthQueuingStrategy::class_)) \
+  IF_JS_STREAMS(REAL(CountQueuingStrategy, &js::CountQueuingStrategy::class_)) \
   REAL(WebAssembly, OCLASP(WasmNamespace))                                   \
   REAL(WasmModule, OCLASP(WasmModule))                                       \
   REAL(WasmInstance, OCLASP(WasmInstance))                                   \
