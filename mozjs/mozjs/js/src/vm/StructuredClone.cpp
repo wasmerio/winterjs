@@ -1894,6 +1894,9 @@ bool JSStructuredCloneWriter::traverseError(HandleObject obj) {
   // Non-standard: Serialize |stack|.
   // The Error stack property is saved as SavedFrames.
   RootedValue stack(cx, NullValue());
+  // Servo does not support cloning of this non-standard field yet
+  // See https://github.com/servo/mozjs/pull/408#discussion_r1330341613
+  /*
   RootedObject stackObj(cx, unwrapped->stack());
   if (stackObj && stackObj->canUnwrapAs<SavedFrame>()) {
     stack.setObject(*stackObj);
@@ -1901,6 +1904,7 @@ bool JSStructuredCloneWriter::traverseError(HandleObject obj) {
       return false;
     }
   }
+  */
   if (!otherEntries.append(stack)) {
     return false;
   }
