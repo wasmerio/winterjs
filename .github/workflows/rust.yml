@@ -62,6 +62,7 @@ jobs:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
+        target: ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
     env:
       LINKER: "lld-link.exe"
       CC: "clang-cl"
@@ -72,6 +73,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - name: Install deps
         run: |
           curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
@@ -81,7 +84,12 @@ jobs:
       - name: Build Windows
         shell: cmd
         run: |
-          cargo test --verbose ${{ matrix.features }}
+          cargo build --verbose --target ${{ matrix.target }} ${{ matrix.features }}
+      - name: Test Windows
+        if: ${{ !contains(matrix.target, 'aarch64') }}
+        shell: cmd
+        run: |
+          cargo test --verbose --target ${{ matrix.target }} ${{ matrix.features }}
 
   android:
     runs-on: ubuntu-latest
