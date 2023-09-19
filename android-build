@@ -12,7 +12,7 @@ import sys
 from typing import Dict, Optional
 
 
-SUPPORTED_NDK_VERSION = '21'
+SUPPORTED_NDK_VERSION = '25'
 API_LEVEL = '30'
 
 
@@ -44,10 +44,10 @@ def get_target_from_args() -> Optional[str]:
 def set_toolchain_binaries_in_env(toolchain_dir: str, env: Dict[str, str]):
     cc = os.path.join(toolchain_dir, "bin", "clang")
     cxx = os.path.join(toolchain_dir, "bin", "clang++")
-    ar = check_output([cc, "--print-prog-name=ar"])
-    objcopy = check_output([cc, "--print-prog-name=objcopy"])
-    ranlib = check_output([cc, "--print-prog-name=ranlib"])
-    strip = check_output([cc, "--print-prog-name=strip"])
+    ar = check_output([cc, "--print-prog-name=llvm-ar"])
+    objcopy = check_output([cc, "--print-prog-name=llvm-objcopy"])
+    ranlib = check_output([cc, "--print-prog-name=llvm-ranlib"])
+    strip = check_output([cc, "--print-prog-name=llvm-strip"])
     yasm = check_output([cc, "--print-prog-name=yasm"])
     host_cc = env.get('HOST_CC') or shutil.which("clang") or shutil.which("gcc")
     host_cxx = env.get('HOST_CXX') or shutil.which("clang++") or shutil.which("g++")
@@ -62,32 +62,10 @@ def set_toolchain_binaries_in_env(toolchain_dir: str, env: Dict[str, str]):
     env["HOST_CC"] = host_cc
     env["HOST_CXX"] = host_cxx
     env["OBJCOPY"] = objcopy
-    env["PKG_CONFIG"] = "/usr/bin/pkg-config"
     env["RANLIB"] = ranlib
     env["STRIP"] = strip
     env["YASM"] = yasm
 
-
-def set_compiler_flags_in_env(toolchain_dir: str, env: Dict[str, str]):
-    target = get_target_from_args()
-    if target == "armv7-linux-androideabi":
-        ndk_target_name = "armv7a-linux-androideabi"
-    elif target == "aarch64-linux-android":
-        ndk_target_name = "aarch64-linux-androideabi"
-    elif target == "i686-linux-android" or target == "x86_64-linux-android":
-        ndk_target_name = target
-    else:
-        raise Exception(f"Unknown target {target}")
-
-    # Including the api level in the target name means that we will not have to
-    # define the Android API level when calling the compiler.
-    target_arg = f"--target={ndk_target_name}{API_LEVEL}"
-    stl_include_dir = os.path.join(toolchain_dir, "sysroot", "usr", "include", "c++", "v1")
-    stl_arg = f"-I{stl_include_dir}"
-
-    env["CFLAGS"] = target_arg
-    env["CPPFLAGS"] = stl_arg
-    env["CXXFLAGS"] = " ".join([target_arg, stl_arg])
 
 def create_environment_for_build() -> Dict[str, str]:
     env = os.environ.copy()
@@ -117,7 +95,6 @@ def create_environment_for_build() -> Dict[str, str]:
     env['PATH'] = os.pathsep.join([os.path.join(toolchain_dir, "bin"), env["PATH"]])
 
     set_toolchain_binaries_in_env(toolchain_dir, env)
-    set_compiler_flags_in_env(toolchain_dir, env)
 
     # This environment variable is only used by the mozjs build.
     env["ANDROID_API_LEVEL"] = API_LEVEL

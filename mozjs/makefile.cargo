@@ -70,20 +70,14 @@ ifneq ($(HOST),$(TARGET))
 	endif
 
 	ifeq (android,$(findstring android,$(TARGET)))
-		# The target must be suffixed by the Android API level to avoid having
-		# to define it in the compiler arguments.
-		TARGET := $(TARGET)$(ANDROID_API_LEVEL)
-
-		# STLPORT_CPPFLAGS and the toolchain directory are set here just to
-		# make the SpiderMonkey build system happy. rust-mozjs patches have
-		# disabled the actual use of these values, as the NDKs compiler should
-		# take care of setting these flags internally.
+		# Force use of lld on android. Mozilla build system tries to use
+		# gold or bfd linker on Android to support their 'elfhack'functionality in
+		# non-developer builds, but NDK r25c ships with only lld.
 		CONFIGURE_FLAGS += \
 			--without-system-zlib \
 			--with-android-ndk=$(ANDROID_NDK_HOME) \
-			--with-android-platform="$(ANDROID_NDK_HOME)/sysroot" \
 			--with-android-version=$(ANDROID_API_LEVEL) \
-			STLPORT_CPPFLAGS=" " \
+			--enable-linker=lld \
 			$(NULL)
 	endif
 

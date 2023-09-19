@@ -283,6 +283,7 @@ fn build_jsglue(build_dir: &Path) {
         build.flag_if_supported("-std:c++17");
         build.flag("-FI");
     } else {
+        build.flag("-std=c++17");
         build.flag("-include");
     }
     build
