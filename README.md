@@ -13,10 +13,10 @@ are in the [rust-mozjs directory][r-m].
 
 ## Linux
 
-Install Clang and `build-essential`, for example on a Debian-based Linux:
+Install Python, Clang and `build-essential`, for example on a Debian-based Linux:
 
 ```sh
-sudo apt-get install clang build-essential
+sudo apt-get install build-essential python3 python3-distutils llvm libclang-dev clang
 ```
 
 If you have more than one version of Clang installed, you can set the `LIBCLANG_PATH`

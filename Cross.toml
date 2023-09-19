@@ -1,0 +1,5 @@
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/servo/cross-aarch64-unknown-linux-gnu:main"
+
+[target.armv7-unknown-linux-gnueabihf]
+image = "ghcr.io/servo/cross-armv7-unknown-linux-gnueabihf:main"

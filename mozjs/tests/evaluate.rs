@@ -20,6 +20,7 @@ use mozjs_sys::jsapi::JSCLASS_GLOBAL_FLAGS;
 
 use std::mem;
 use std::ptr;
+use core::ffi::c_char;
 
 // The class operations for the global object.
 static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
@@ -37,7 +38,7 @@ static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
 
 // The class of the global object.
 static GLOBAL_CLASS: JSClass = JSClass {
-    name: "global\0" as *const str as *const i8,
+    name: "global\0" as *const str as *const c_char,
     flags: JSCLASS_GLOBAL_FLAGS,
     cOps: &GLOBAL_CLASS_OPS,
     spec: ptr::null(),

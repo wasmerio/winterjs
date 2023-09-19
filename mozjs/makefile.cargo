@@ -45,7 +45,7 @@ endif
 ifneq ($(HOST),$(TARGET))
 
 	ifeq (armv7-linux-androideabi,$(TARGET))
-		# Reset TARGET variable because armv7 target name used by Rust is not 
+		# Reset TARGET variable because armv7 target name used by Rust is not
 		# the same as the target name needed for the CXX toolchain.
 		TARGET = armv7a-linux-androideabi
 		CONFIGURE_FLAGS += \
@@ -54,13 +54,19 @@ ifneq ($(HOST),$(TARGET))
 			$(NULL)
 	endif
 
+	ifeq (armv7-unknown-linux-gnueabihf,$(TARGET))
+		# Reset TARGET variable because armv7 target name used by Rust is not
+		# the same as the target name needed for the CXX toolchain.
+		TARGET = arm-linux-gnueabihf
+		CONFIGURE_FLAGS += \
+			--with-arch=armv7-a \
+			$(NULL)
+	endif
+
 	ifeq (aarch64-unknown-linux-gnu,$(TARGET))
 	    # Reset TARGET variable because aarch64 target name used by Rust is not 
 		# the same as the target name needed for the CXX toolchain.
 		TARGET = aarch64-linux-gnu
-		CONFIGURE_FLAGS += \
-			--with-arch=armv8-a \
-			$(NULL)
 	endif
 
 	ifeq (android,$(findstring android,$(TARGET)))
