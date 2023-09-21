@@ -18,9 +18,9 @@ use mozjs_sys::jsapi::JS;
 use mozjs_sys::jsapi::JS::OnNewGlobalHookOption::FireOnNewGlobalHook;
 use mozjs_sys::jsapi::JSCLASS_GLOBAL_FLAGS;
 
+use core::ffi::c_char;
 use std::mem;
 use std::ptr;
-use core::ffi::c_char;
 
 // The class operations for the global object.
 static GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {

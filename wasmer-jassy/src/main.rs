@@ -9,7 +9,9 @@ use std::str;
 
 use mozjs::glue::EncodeStringToUTF8;
 use mozjs::jsapi::{CallArgs, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value};
-use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject, JS_ReportErrorASCII};
+use mozjs::jsapi::{
+    JS_DefineFunction, JS_NewGlobalObject, JS_ObjectIsFunction, JS_ReportErrorASCII,
+};
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
@@ -17,6 +19,13 @@ use mozjs_sys::jsval::DoubleValue;
 use mozjs_sys::jsval::JSVal;
 
 fn main() {
+    let user_code = r#"
+    performance.now();
+    "#;
+    run_code(user_code).expect("could not execute Javascript code");
+}
+
+fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
     let engine = JSEngine::init().unwrap();
     let runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
@@ -53,24 +62,65 @@ fn main() {
         );
         assert!(!function.is_null());
 
-        let javascript = r#"
+        // Evaluate custom js setup code.
+        {
+            rooted!(in(context) let mut rval = UndefinedValue());
+            assert!(runtime
+                .evaluate_script(global.handle(), JS_SETUP, "test.js", 0, rval.handle_mut())
+                .is_ok());
+        }
 
-        var performance = {
-            now: () => { return __native_performance_now(); }
-        };
-
-        addEventListener('fetch', () => {});
-
-        let x = performance.now();
-
-        "#;
         rooted!(in(context) let mut rval = UndefinedValue());
         assert!(runtime
-            .evaluate_script(global.handle(), javascript, "test.js", 0, rval.handle_mut())
+            .evaluate_script(global.handle(), user_code, "test.js", 0, rval.handle_mut())
             .is_ok());
         eprintln!("done");
     }
+
+    Ok(())
 }
+
+const JS_SETUP: &str = r#"
+
+(function() {
+    // performance
+    if ((typeof __native_performance_now) !== 'function') {
+      throw new Error("setup error: __native_performance_now not found");
+    }
+    globalThis.performance = {
+        now: __native_performance_now,
+    };
+
+    // events
+    const FETCH_HANDLERS = {};
+
+    globalThis.addEventListener = function(ev, callback) {
+      if (ev !== 'fetch') {
+        throw new Error('only the "fetch" event is supported');
+      }
+
+      if ((typeof callback) !== 'function') {
+        throw new Error('callback must be a function');
+      }
+
+      const index = Object.keys(FETCH_HANDLERS).length;
+
+      // We might lift this limitation in the future.
+      if (index > 0) {
+        throw new Error('only one fetch handler is supported');
+      }
+      FETCH_HANDLERS[index] = callback;
+      return index;
+    };
+
+    globalThis.__wasmer_callEventHandlers = function(request) {
+      for (const handler of Object.values(FETCH_HANDLERS)) {
+        handler(request);
+      }
+    };
+})()
+
+"#;
 
 lazy_static::lazy_static! {
     static ref PERFORMANCE_ORIGIN: std::time::Instant = std::time::Instant::now();
@@ -86,34 +136,73 @@ unsafe extern "C" fn performance_now(context: *mut JSContext, argc: u32, vp: *mu
     true
 }
 
-unsafe extern "C" fn add_event_listener(
-    context: *mut JSContext,
-    argc: u32,
-    vp: *mut Value,
-) -> bool {
+fn report_js_error(cx: *mut JSContext, message: impl AsRef<str>) {
+    let c = std::ffi::CString::new(message.as_ref()).unwrap();
+    unsafe {
+        JS_ReportErrorASCII(cx, c.as_ptr());
+    }
+}
+
+macro_rules! fail_msg {
+    ($cx:expr, $msg:expr) => {
+        $crate::report_js_error($cx, $msg);
+        return false;
+    };
+}
+
+macro_rules! js_try {
+    ($cx:expr, $expr:expr) => {
+        match $expr {
+            Ok(v) => v,
+            Err(e) => {
+                let msg = e.to_string();
+                $crate::report_js_error($cx, msg);
+                return false;
+            }
+        }
+    };
+}
+
+fn raw_handle_to_string(
+    cx: *mut JSContext,
+    handle: mozjs::jsapi::JS::Handle<Value>,
+) -> Result<String, anyhow::Error> {
+    unsafe {
+        let arg = mozjs::rust::Handle::from_raw(handle);
+        if !arg.is_string() {
+            anyhow::bail!("supplied argument is not a string");
+        }
+        let js = mozjs::rust::ToString(cx, arg);
+        rooted!(in(cx) let message_root = js);
+
+        let name = mozjs::conversions::jsstr_to_string(cx, message_root.get());
+        // TODO: check if the if the returned string actually uses GC managed memory...
+        // if not, the clone is redundant
+        Ok(name.clone())
+    }
+}
+
+unsafe extern "C" fn add_event_listener(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
     let args = CallArgs::from_vp(vp, argc);
 
     if args.argc_ != 2 {
-        JS_ReportErrorASCII(
-            context,
-            b"addEventListener() requires two arguments\0".as_ptr() as *const i8,
-        );
-        return false;
+        fail_msg!(cx, "addEventListener() requires two arguments");
     }
 
-    let arg = mozjs::rust::Handle::from_raw(args.get(0));
-    let js = mozjs::rust::ToString(context, arg);
-    rooted!(in(context) let message_root = js);
+    let name = js_try!(cx, raw_handle_to_string(cx, args.get(0)));
 
-    let v = mozjs::conversions::jsstr_to_string(context, message_root.get());
-    dbg!(&v);
+    // let arg = mozjs::rust::Handle::from_raw(args.get(0));
+    // let js = mozjs::rust::ToString(cx, arg);
 
-    // EncodeStringToUTF8(context, message_root.handle().into(), |message| {
-    //     let message = CStr::from_ptr(message);
-    //     let message = str::from_utf8(message.to_bytes()).unwrap();
-    //     assert_eq!(message, "Test Iñtërnâtiônàlizætiøn ┬─┬ノ( º _ ºノ) ");
-    //     println!("{}", message);
-    // });
+    let cb_raw = mozjs::rust::Handle::from_raw(args.get(1));
+    let obj = cb_raw.to_object_or_null();
+    if obj.is_null() || !JS_ObjectIsFunction(obj) {
+        fail_msg!(
+            cx,
+            "second argument to addEventListener() must be a function"
+        );
+    }
+    rooted!(in(cx) let cb = obj);
 
     args.rval().set(UndefinedValue());
     true
