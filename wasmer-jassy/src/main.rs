@@ -20,7 +20,8 @@ use mozjs_sys::jsval::JSVal;
 
 fn main() {
     let user_code = r#"
-    performance.now();
+        let x = performance.now();
+        console.log(x);
     "#;
     run_code(user_code).expect("could not execute Javascript code");
 }
@@ -62,6 +63,16 @@ fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
         );
         assert!(!function.is_null());
 
+        let function = JS_DefineFunction(
+            context,
+            global.handle().into(),
+            b"__native_log\0".as_ptr() as *const i8,
+            Some(log),
+            2,
+            0,
+        );
+        assert!(!function.is_null());
+
         // Evaluate custom js setup code.
         {
             rooted!(in(context) let mut rval = UndefinedValue());
@@ -89,6 +100,16 @@ const JS_SETUP: &str = r#"
     }
     globalThis.performance = {
         now: __native_performance_now,
+    };
+
+    // console
+    if ((typeof __native_log) !== 'function') {
+      throw new Error("setup error: __native_log not found");
+    }
+    globalThis.console = {
+        log: function() {
+            __native_log.apply(null, Object.values(arguments).map(JSON.stringify));
+        }
     };
 
     // events
@@ -179,6 +200,21 @@ fn raw_handle_to_string(
         // TODO: check if the if the returned string actually uses GC managed memory...
         // if not, the clone is redundant
         Ok(name.clone())
+    }
+}
+
+unsafe extern "C" fn log(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+    let args = CallArgs::from_vp(vp, argc);
+
+    let strs = (0..args.argc_)
+        .map(|i| raw_handle_to_string(cx, args.get(i)))
+        .collect::<Result<Vec<_>, _>>();
+    match strs {
+        Ok(strs) => {
+            println!("{}", strs.join(" "));
+            true
+        }
+        Err(_) => false,
     }
 }
 
