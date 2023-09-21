@@ -816,6 +816,11 @@ JS_PUBLIC_API void js::StopDrainingJobQueue(JSContext* cx) {
   cx->internalJobQueue->interrupt();
 }
 
+JS_PUBLIC_API bool js::HasJobsPending(JSContext* cx) {
+  MOZ_ASSERT(cx->jobQueue);
+  return !cx->jobQueue->empty();
+}
+
 JS_PUBLIC_API void js::RunJobs(JSContext* cx) {
   MOZ_ASSERT(cx->jobQueue);
   cx->jobQueue->runJobs(cx);
