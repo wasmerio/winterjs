@@ -1,5 +1,5 @@
 [workspace]
-members = ["mozjs", "rust-mozjs"]
+members = ["mozjs", "rust-mozjs", "wasmer-jassy"]
 resolver = "2"
 
 [workspace.package]

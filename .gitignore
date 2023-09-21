@@ -1,6 +1,8 @@
 /doc
 /target
 /Cargo.lock
+.direnv
+.envrc
 
 # Keep this in sync with ignore() in build.rs
 
