@@ -4,10 +4,10 @@ This repository contains Rust bindings for [SpiderMonkey][sm] for use with
 [sm]: https://spidermonkey.dev/
 [s]: https://servo.org/
 
-The bindings are to the raw SpiderMonkey API, higher-level bindings
-are in the [rust-mozjs directory][r-m].
+This repository contains two crates:
 
-[r-m]: https://github.com/servo/mozjs/tree/master/rust-mozjs
+- `mozjs-sys`:  SpiderMonkey and low-level Rust bindings to its C++ API.
+- `mozjs`: Higher-level bindings to the SpiderMonkey API.
 
 # Building
 
@@ -65,8 +65,7 @@ Assuming your local `servo` and `mozjs` directories are siblings, you can build 
 
 ```toml
 [patch."https://github.com/servo/mozjs"]
-mozjs = { path = "../mozjs/rust-mozjs" }
-mozjs_sys = { path = "../mozjs/mozjs" }
+mozjs = { path = "../mozjs/mozjs" }
 ```
 
 # Upgrading
@@ -89,7 +88,7 @@ In order to upgrade to a new version of SpiderMonkey:
 
 5. Update `etc/COMMIT` with the commit number.
 
-6. Run `./rust-mozjs/src/generate_wrappers.sh` to regenerate wrappers.
+6. Run `./mozjs/src/generate_wrappers.sh` to regenerate wrappers.
 
 7. Build and test the bindings as above, then submit a PR!
 

@@ -134,15 +134,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Get mozjs
         run: |
-          bash ./mozjs/etc/get_mozjs.sh
+          bash ./mozjs-sys/etc/get_mozjs.sh
       - name: Apply patch
         run: |
-          python3 ./mozjs/etc/update.py --no-commit mozjs.tar.xz
+          python3 ./mozjs-sys/etc/update.py --no-commit mozjs.tar.xz
           # Run `git add` here to force CRLF converted into LF
           # so that we can check diff properly in next run
           git add --all mozjs
       - name: Check patch integrity
-        working-directory: ./mozjs
+        working-directory: ./mozjs-sys
         # Because we've added files in previous run, we need to
         # check diff with `--staged`.
         run: |

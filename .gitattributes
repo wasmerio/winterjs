@@ -1,3 +1,3 @@
 * text=auto eol=lf
 
-mozjs/mozjs/** linguist-vendored
+mozjs-sys/mozjs/** linguist-vendored

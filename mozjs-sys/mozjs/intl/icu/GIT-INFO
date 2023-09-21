@@ -1,0 +1,5 @@
+commit 5861e1fd52f1d7673eee38bc3c965aa18b336062
+Author: Peter Edberg <pedberg@unicode.org>
+Date:   Tue Apr 11 10:32:35 2023 -0700
+
+    ICU-22221 update cldr-icu instructions, and ICU tag for integration
