@@ -10,5 +10,9 @@ edition.workspace = true
 [dependencies]
 lazy_static = "1.4.0"
 anyhow = "1.0.75"
-mozjs = { path = "../rust-mozjs" }
-mozjs_sys = { path = "../mozjs" }
+mozjs = { path = "../mozjs" }
+mozjs_sys = { path = "../mozjs-sys" }
+hyper = { version = "0.14.27", features = ["server"] }
+tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }
