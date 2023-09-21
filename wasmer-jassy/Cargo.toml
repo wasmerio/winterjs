@@ -8,5 +8,6 @@ edition.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+lazy_static = "1.4.0"
 mozjs = { path = "../rust-mozjs" }
 mozjs_sys = { path = "../mozjs" }

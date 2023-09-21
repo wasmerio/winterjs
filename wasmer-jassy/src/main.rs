@@ -3,6 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use std::ffi::CStr;
+use std::mem::MaybeUninit;
 use std::ptr;
 use std::str;
 
@@ -12,6 +13,8 @@ use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject, JS_ReportErrorASCII};
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
+use mozjs_sys::jsval::DoubleValue;
+use mozjs_sys::jsval::JSVal;
 
 fn main() {
     let engine = JSEngine::init().unwrap();
@@ -40,9 +43,25 @@ fn main() {
         );
         assert!(!function.is_null());
 
+        let function = JS_DefineFunction(
+            context,
+            global.handle().into(),
+            b"__native_performance_now\0".as_ptr() as *const i8,
+            Some(performance_now),
+            2,
+            0,
+        );
+        assert!(!function.is_null());
+
         let javascript = r#"
 
+        var performance = {
+            now: () => { return __native_performance_now(); }
+        };
+
         addEventListener('fetch', () => {});
+
+        let x = performance.now();
 
         "#;
         rooted!(in(context) let mut rval = UndefinedValue());
@@ -53,7 +72,25 @@ fn main() {
     }
 }
 
-unsafe extern "C" fn add_event_listener(context: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+lazy_static::lazy_static! {
+    static ref PERFORMANCE_ORIGIN: std::time::Instant = std::time::Instant::now();
+}
+
+unsafe extern "C" fn performance_now(context: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+    let args = CallArgs::from_vp(vp, argc);
+
+    args.rval().set(DoubleValue(
+        PERFORMANCE_ORIGIN.elapsed().as_secs_f64() * 1_000_000.0,
+    ));
+
+    true
+}
+
+unsafe extern "C" fn add_event_listener(
+    context: *mut JSContext,
+    argc: u32,
+    vp: *mut Value,
+) -> bool {
     let args = CallArgs::from_vp(vp, argc);
 
     if args.argc_ != 2 {
@@ -81,5 +118,3 @@ unsafe extern "C" fn add_event_listener(context: *mut JSContext, argc: u32, vp: 
     args.rval().set(UndefinedValue());
     true
 }
-
-
