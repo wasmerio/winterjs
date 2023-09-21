@@ -1,82 +1,59 @@
-#![allow(
-    non_upper_case_globals,
-    non_camel_case_types,
-    non_snake_case,
-    improper_ctypes
-)]
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-//! # Running scripts
-//! Here is the code under "Running scripts" in the MDN User Guide[1] translated into Rust. This
-//! only shows the ``run()`` function's contents because the original does as well.
-//!
-//! The actual code that is run is designed to be testable, unlike the example given.
-//! [1]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/JSAPI_User_Guide
-//!
+use std::ffi::CStr;
+use std::ptr;
+use std::str;
 
-use ::std::{ffi::CStr, ptr, str};
+use mozjs::glue::EncodeStringToUTF8;
+use mozjs::jsapi::{CallArgs, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value};
+use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject, JS_ReportErrorASCII};
+use mozjs::jsval::UndefinedValue;
+use mozjs::rooted;
+use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
-use mozjs::{
-    glue::EncodeStringToUTF8,
-    jsapi::*,
-    jsval::UndefinedValue,
-    rooted,
-    rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS},
-};
-use mozjs::conversions::{FromJSValConvertible, ConversionResult};
+fn main() {
+    let engine = JSEngine::init().unwrap();
+    let runtime = Runtime::new(engine.handle());
+    let context = runtime.cx();
+    let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
+    let c_option = RealmOptions::default();
 
-const ADD_EVENT_LISTENER: &[u8] = b"addEventListener\0";
+    unsafe {
+        rooted!(in(context) let global = JS_NewGlobalObject(
+            context,
+            &SIMPLE_GLOBAL_CLASS,
+            ptr::null_mut(),
+            h_option,
+            &*c_option,
+        ));
+        let _ac = JSAutoRealm::new(context, global.get());
 
-fn run(rt: Runtime) {
-    let options = RealmOptions::default();
-    rooted!(in(rt.cx()) let global = unsafe {
-        JS_NewGlobalObject(rt.cx(), &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
-                           OnNewGlobalHookOption::FireOnNewGlobalHook,
-                           &*options)
-    });
+        let function = JS_DefineFunction(
+            context,
+            global.handle().into(),
+            b"addEventListener\0".as_ptr() as *const i8,
+            Some(add_event_listener),
+            2,
+            0,
+        );
+        assert!(!function.is_null());
 
-    let function = unsafe { JS_DefineFunction(
-        rt.cx(),
-        global.handle().into(),
-        b"addEventListener\0".as_ptr() as *const i8,
-        Some(add_event_listener),
-        2,
-        0,
-    )
-    };
-    assert!(!function.is_null());
+        let javascript = r#"
 
-    /* These should indicate source location for diagnostics. */
-    let filename: &'static str = "inline.js";
-    let lineno: u32 = 1;
+        addEventListener('fetch', () => {});
 
-    /*
-     * The return value comes back here. If it could be a GC thing, you must add it to the
-     * GC's "root set" with the rooted! macro.
-     */
-    rooted!(in(rt.cx()) let mut rval = UndefinedValue());
-
-    /*
-     * Some example source in a string. This is equivalent to JS_EvaluateScript in C++.
-     */
-    let source: &'static str = r#"
-        addEventListener("fetch", () => {});
-
-    "#;
-
-    let res = rt.evaluate_script(global.handle(), source, filename, lineno, rval.handle_mut());
-
-    if res.is_ok() {
-        /* Should get a number back from the example source. */
-        assert!(rval.get().is_int32());
-        assert_eq!(rval.get().to_int32(), 42);
+        "#;
+        rooted!(in(context) let mut rval = UndefinedValue());
+        assert!(runtime
+            .evaluate_script(global.handle(), javascript, "test.js", 0, rval.handle_mut())
+            .is_ok());
+        eprintln!("done");
     }
 }
 
-unsafe extern "C" fn add_event_listener(
-    context: *mut JSContext,
-    argc: u32,
-    vp: *mut Value,
-) -> bool {
+unsafe extern "C" fn add_event_listener(context: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
     let args = CallArgs::from_vp(vp, argc);
 
     if args.argc_ != 2 {
@@ -87,34 +64,22 @@ unsafe extern "C" fn add_event_listener(
         return false;
     }
 
-    let arg1 = mozjs::rust::Handle::from_raw(args.get(0));
+    let arg = mozjs::rust::Handle::from_raw(args.get(0));
+    let js = mozjs::rust::ToString(context, arg);
+    rooted!(in(context) let message_root = js);
 
-    // let js = mozjs::rust::ToString(context, arg);
+    let v = mozjs::conversions::jsstr_to_string(context, message_root.get());
+    dbg!(&v);
 
-    let name = match String::from_jsval(context, arg1, ()).unwrap() {
-        ConversionResult::Success(v) => v,
-        ConversionResult::Failure(msg) => {
-            panic!("expected a string");
-        }
-    };
-
-    dbg!(&name);
-
-    // let name: String;
     // EncodeStringToUTF8(context, message_root.handle().into(), |message| {
     //     let message = CStr::from_ptr(message);
-    //     name = String::from_utf8(message.to_bytes().to_vec()).expect("non-utf8 string");
+    //     let message = str::from_utf8(message.to_bytes()).unwrap();
+    //     assert_eq!(message, "Test Iñtërnâtiônàlizætiøn ┬─┬ノ( º _ ºノ) ");
+    //     println!("{}", message);
     // });
-
-    eprintln!("name: {name}");
 
     args.rval().set(UndefinedValue());
     true
 }
 
-fn main() {
-    let engine = JSEngine::init().expect("failed to initalize JS engine");
-    let runtime = Runtime::new(engine.handle());
-    assert!(!runtime.cx().is_null(), "failed to create JSContext");
-    run(runtime);
-}
+
