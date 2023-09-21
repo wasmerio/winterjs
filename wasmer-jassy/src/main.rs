@@ -7,10 +7,11 @@ use std::mem::MaybeUninit;
 use std::ptr;
 use std::str;
 
+use anyhow::bail;
 use mozjs::glue::EncodeStringToUTF8;
-use mozjs::jsapi::{CallArgs, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value};
 use mozjs::jsapi::{
-    JS_DefineFunction, JS_NewGlobalObject, JS_ObjectIsFunction, JS_ReportErrorASCII,
+    CallArgs, JSAutoRealm, JSContext, JS_DefineFunction, JS_IsExceptionPending, JS_NewGlobalObject,
+    JS_ObjectIsFunction, JS_ReportErrorASCII, OnNewGlobalHookOption, Value,
 };
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
@@ -26,25 +27,26 @@ fn main() {
     run_code(user_code).expect("could not execute Javascript code");
 }
 
+/// Run Javascript code in a context with Winter CG APIs.
 fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
     let engine = JSEngine::init().unwrap();
     let runtime = Runtime::new(engine.handle());
-    let context = runtime.cx();
+    let cx = runtime.cx();
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        rooted!(in(cx) let global = JS_NewGlobalObject(
+            cx,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(cx, global.get());
 
         let function = JS_DefineFunction(
-            context,
+            cx,
             global.handle().into(),
             b"addEventListener\0".as_ptr() as *const i8,
             Some(add_event_listener),
@@ -54,7 +56,7 @@ fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
         assert!(!function.is_null());
 
         let function = JS_DefineFunction(
-            context,
+            cx,
             global.handle().into(),
             b"__native_performance_now\0".as_ptr() as *const i8,
             Some(performance_now),
@@ -64,7 +66,7 @@ fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
         assert!(!function.is_null());
 
         let function = JS_DefineFunction(
-            context,
+            cx,
             global.handle().into(),
             b"__native_log\0".as_ptr() as *const i8,
             Some(log),
@@ -75,24 +77,56 @@ fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
 
         // Evaluate custom js setup code.
         {
-            rooted!(in(context) let mut rval = UndefinedValue());
-            assert!(runtime
-                .evaluate_script(global.handle(), JS_SETUP, "test.js", 0, rval.handle_mut())
-                .is_ok());
+            rooted!(in(cx) let mut rval = UndefinedValue());
+
+            let res =
+                runtime.evaluate_script(global.handle(), JS_SETUP, "test.js", 0, rval.handle_mut());
+            if res.is_err() {
+                return Err(read_runtime_exception(cx));
+            }
         }
 
-        rooted!(in(context) let mut rval = UndefinedValue());
-        assert!(runtime
-            .evaluate_script(global.handle(), user_code, "test.js", 0, rval.handle_mut())
-            .is_ok());
-        eprintln!("done");
+        rooted!(in(cx) let mut rval = UndefinedValue());
+
+        let res =
+            runtime.evaluate_script(global.handle(), user_code, "test.js", 0, rval.handle_mut());
+        if res.is_ok() {
+            eprintln!("done");
+            Ok(())
+        } else {
+            Err(read_runtime_exception(cx))
+        }
+    }
+}
+
+fn read_runtime_exception(cx: *mut JSContext) -> anyhow::Error {
+    if !unsafe { JS_IsExceptionPending(cx) } {
+        return anyhow::anyhow!("no exception pending - unknown error occurred");
     }
 
-    Ok(())
+    rooted!(in(cx) let mut rval = UndefinedValue());
+    let ok = unsafe { mozjs::rust::wrappers::JS_GetPendingException(cx, rval.handle_mut()) };
+    if !ok {
+        return anyhow::anyhow!("could not retrieve exception details");
+    }
+
+    // JS::ExceptionStack exception(cx);
+    // if (!JS::GetPendingExceptionStack(cx, &exception)) {
+    //   fprintf(stderr,
+    //           "Error: exception pending after %s, but got another error "
+    //           "when trying to retrieve it. Aborting.\n",
+    //           description);
+    // } else {
+    //   fprintf(stderr, "Exception while %s: ", description);
+    //   dump_value(cx, exception.exception(), stderr);
+    //   print_stack(cx, exception.stack(), stderr);
+    // }
+
+    // FIXME: implement reading exception details
+    anyhow::anyhow!("unknown exception occured (reading not implemented yet)")
 }
 
 const JS_SETUP: &str = r#"
-
 (function() {
     // performance
     if ((typeof __native_performance_now) !== 'function') {
@@ -126,7 +160,7 @@ const JS_SETUP: &str = r#"
 
       const index = Object.keys(FETCH_HANDLERS).length;
 
-      // We might lift this limitation in the future.
+      // TODO: support multiple handlers
       if (index > 0) {
         throw new Error('only one fetch handler is supported');
       }
@@ -140,7 +174,6 @@ const JS_SETUP: &str = r#"
       }
     };
 })()
-
 "#;
 
 lazy_static::lazy_static! {
@@ -191,7 +224,7 @@ fn raw_handle_to_string(
     unsafe {
         let arg = mozjs::rust::Handle::from_raw(handle);
         if !arg.is_string() {
-            anyhow::bail!("supplied argument is not a string");
+            bail!("supplied argument is not a string");
         }
         let js = mozjs::rust::ToString(cx, arg);
         rooted!(in(cx) let message_root = js);
