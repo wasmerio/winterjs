@@ -1,0 +1,34 @@
+schema: 1
+
+bugzilla:
+  product: Core
+  component: "General"
+
+origin:
+  name: rlbox_wasm2c_sandbox
+  description: rlbox integration for the wasm2c sandboxed code
+  url: https://github.com/PLSysSec/rlbox_wasm2c_sandbox/tree/upstream-wasm2c
+
+  release: 7e4ff0ebca2c7644a297bfe51a53b9904f0999b2 (2023-04-13T05:07:28Z).
+  revision: 7e4ff0ebca2c7644a297bfe51a53b9904f0999b2
+
+  license: MIT
+  license-file: LICENSE
+
+vendoring:
+  url: https://github.com/PLSysSec/rlbox_wasm2c_sandbox
+  source-hosting: github
+  vendor-directory: third_party/rlbox_wasm2c_sandbox
+
+  exclude:
+    # dirs
+    - test
+    # files
+    - .clang-format
+    - .clang-tidy
+    - .gitignore
+    - .travis.yml
+    - AppSandbox.md
+    - CMakeLists.txt
+    - LibrarySandbox.md
+    - README.md

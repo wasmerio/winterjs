@@ -1,0 +1,7 @@
+This directory contains SpiderMonkey 115.
+
+This release is based on a revision of Mozilla 115:
+  https://hg.mozilla.org/releases/
+The changes in the patches/ directory were applied.
+
+See https://spidermonkey.dev/ for documentation, examples, and release notes.

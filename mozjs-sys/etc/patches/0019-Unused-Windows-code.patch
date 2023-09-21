@@ -1,0 +1,20 @@
+diff --git a/mozglue/misc/moz.build b/mozglue/misc/moz.build
+index 2e6669c2b..8a1ff7bc2 100644
+--- a/mozglue/misc/moz.build
++++ b/mozglue/misc/moz.build
+@@ -33,7 +33,6 @@ EXPORTS.mozilla.glue += [
+ if CONFIG["OS_ARCH"] == "WINNT":
+     EXPORTS.mozilla += [
+         "GetKnownFolderPath.h",
+-        "PreXULSkeletonUI.h",
+         "StackWalk_windows.h",
+         "StackWalkThread.h",
+         "TimeStamp_windows.h",
+@@ -106,7 +105,6 @@ if CONFIG["OS_ARCH"] == "WINNT":
+         SOURCES += [
+             "/ipc/mscom/COMWrappers.cpp",
+             "/ipc/mscom/ProcessRuntime.cpp",
+-            "PreXULSkeletonUI.cpp",
+         ]
+ 
+ elif CONFIG["HAVE_CLOCK_MONOTONIC"]:

@@ -1,2 +1,0 @@
-vendored:third_party/python/glean_parser
-pth:third_party/python/vsdownload

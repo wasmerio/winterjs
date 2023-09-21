@@ -1,0 +1,47 @@
+schema: 1
+
+bugzilla:
+  product: Core
+  component: "General"
+
+origin:
+  name: wasm2c_sandbox_compiler
+  description: wasm2c fork used for rlbox sandboxing
+  url: https://github.com/WebAssembly/wabt
+
+  release: d24691ba62c371fb8dc2634956030e7102302174 (2023-05-05T23:57:24Z).
+  revision: d24691ba62c371fb8dc2634956030e7102302174
+
+  license: Apache-2.0
+  license-file: LICENSE
+
+vendoring:
+  url: https://github.com/WebAssembly/wabt
+  source-hosting: github
+  vendor-directory: third_party/wasm2c
+  exclude:
+    # dirs
+    - cmake
+    - docs
+    - fuzz-in
+    - include/wabt/interp
+    - man
+    - scripts
+    - src/interp
+    - src/template
+    - test
+    - third_party
+    - wasm2c/examples
+    # files
+    - .*
+    - CMakeLists.txt
+    - Contributing.md
+    - Makefile
+    - README.md
+    - ubsan.blacklist
+    - src/tools/s*
+    - src/tools/wasm-*
+    - src/tools/wast*
+    - src/tools/wat*
+    - src/tools/wasm2w*
+    - wasm2c/wasm-rt-exceptions*

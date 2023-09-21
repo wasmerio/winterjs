@@ -1,0 +1,18 @@
+{
+  "serve": {
+    "path": "serve.py",
+    "script": "run",
+    "parser": "get_parser",
+    "help": "Run wptserve server",
+    "virtualenv": true,
+    "requirements": ["../webtransport/requirements.txt"]
+  },
+  "serve-wave": {
+    "path": "wave.py",
+    "script": "run",
+    "parser": "get_parser",
+    "help": "Run wptserve server for WAVE",
+    "virtualenv": true,
+    "requirements": ["../wave/requirements.txt"]
+  }
+}

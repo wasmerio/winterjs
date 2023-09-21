@@ -1,0 +1,13 @@
+diff --git a/s_nearbyint.cpp b/s_nearbyint.cpp
+--- a/s_nearbyint.cpp
++++ b/s_nearbyint.cpp
+@@ -54,9 +54,8 @@ fn(type x)			\
+ 	fegetenv(&env);		\
+ 	ret = rint(x);		\
+ 	fesetenv(&env);		\
+ 	return (ret);		\
+ }
+ 
+ DECL(double, nearbyint, rint)
+ DECL(float, nearbyintf, rintf)
+-DECL(long double, nearbyintl, rintl)

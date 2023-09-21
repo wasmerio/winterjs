@@ -1,0 +1,1362 @@
+diff --git a/e_acos.cpp b/e_acos.cpp
+--- a/e_acos.cpp
++++ b/e_acos.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_acos(x)
+  * Method :                  
+  *	acos(x)  = pi/2 - asin(x)
+  *	acos(-x) = pi/2 + asin(x)
+  * For |x|<=0.5
+  *	acos(x) = pi/2 - (x + x*x^2*R(x^2))	(see asin.c)
+  * For x>0.5
+diff --git a/e_acosh.cpp b/e_acosh.cpp
+--- a/e_acosh.cpp
++++ b/e_acosh.cpp
+@@ -7,18 +7,18 @@
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  *
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_acosh(x)
+  * Method :
+  *	Based on 
+  *		acosh(x) = log [ x + sqrt(x*x-1) ]
+  *	we have
+  *		acosh(x) := log(x)+ln2,	if x is large; else
+  *		acosh(x) := log(2x-1/(sqrt(x*x-1)+x)) if x>2; else
+diff --git a/e_asin.cpp b/e_asin.cpp
+--- a/e_asin.cpp
++++ b/e_asin.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_asin(x)
+  * Method :                  
+  *	Since  asin(x) = x + x^3/6 + x^5*3/40 + x^7*15/336 + ...
+  *	we approximate asin(x) on [0,0.5] by
+  *		asin(x) = x + x*x^2*R(x^2)
+  *	where
+  *		R(x^2) is a rational approximation of (asin(x)-x)/x^3 
+diff --git a/e_atan2.cpp b/e_atan2.cpp
+--- a/e_atan2.cpp
++++ b/e_atan2.cpp
+@@ -7,18 +7,18 @@
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  *
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_atan2(y,x)
+  * Method :
+  *	1. Reduce y to positive by atan2(y,x)=-atan2(-y,x).
+  *	2. Reduce x to positive by (if x and y are unexceptional): 
+  *		ARG (x+iy) = arctan(y/x)   	   ... if x > 0,
+  *		ARG (x+iy) = pi - arctan[y/(-x)]   ... if x < 0,
+  *
+diff --git a/e_atanh.cpp b/e_atanh.cpp
+--- a/e_atanh.cpp
++++ b/e_atanh.cpp
+@@ -7,18 +7,18 @@
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  *
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_atanh(x)
+  * Method :
+  *    1.Reduced x to positive by atanh(-x) = -atanh(x)
+  *    2.For x>=0.5
+  *                  1              2x                          x
+  *	atanh(x) = --- * log(1 + -------) = 0.5 * log1p(2 * --------)
+  *                  2             1 - x                      1 - x
+diff --git a/e_cosh.cpp b/e_cosh.cpp
+--- a/e_cosh.cpp
++++ b/e_cosh.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_cosh(x)
+  * Method : 
+  * mathematically cosh(x) if defined to be (exp(x)+exp(-x))/2
+  *	1. Replace x by |x| (cosh(x) = cosh(-x)). 
+  *	2. 
+  *		                                        [ exp(x) - 1 ]^2 
+  *	    0        <= x <= ln2/2  :  cosh(x) := 1 + -------------------
+diff --git a/e_exp.cpp b/e_exp.cpp
+--- a/e_exp.cpp
++++ b/e_exp.cpp
+@@ -5,18 +5,18 @@
+  * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+  *
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_exp(x)
+  * Returns the exponential of x.
+  *
+  * Method
+  *   1. Argument reduction:
+  *      Reduce x to an r so that |r| <= 0.5*ln2 ~ 0.34658.
+  *	Given x, find r and integer k such that
+diff --git a/e_hypot.cpp b/e_hypot.cpp
+--- a/e_hypot.cpp
++++ b/e_hypot.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_hypot(x,y)
+  *
+  * Method :                  
+  *	If (assume round-to-nearest) z=x*x+y*y 
+  *	has error less than sqrt(2)/2 ulp, than 
+  *	sqrt(z) has error less than 1 ulp (exercise).
+  *
+diff --git a/e_log.cpp b/e_log.cpp
+--- a/e_log.cpp
++++ b/e_log.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_log(x)
+  * Return the logrithm of x
+  *
+  * Method :                  
+  *   1. Argument Reduction: find k and f such that 
+  *			x = 2^k * (1+f), 
+  *	   where  sqrt(2)/2 < 1+f < sqrt(2) .
+diff --git a/e_log10.cpp b/e_log10.cpp
+--- a/e_log10.cpp
++++ b/e_log10.cpp
+@@ -6,32 +6,32 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * Return the base 10 logarithm of x.  See e_log.c and k_log.h for most
+  * comments.
+  *
+  *    log10(x) = (f - 0.5*f*f + k_log1p(f)) / ln10 + k * log10(2)
+  * in not-quite-routine extra precision.
+  */
+ 
+ #include <float.h>
+ 
+ #include "math_private.h"
+ #include "k_log.h"
+-
++ 
+ static const double
+ two54      =  1.80143985094819840000e+16, /* 0x43500000, 0x00000000 */
+ ivln10hi   =  4.34294481878168880939e-01, /* 0x3fdbcb7b, 0x15200000 */
+ ivln10lo   =  2.50829467116452752298e-11, /* 0x3dbb9438, 0xca9aadd5 */
+ log10_2hi  =  3.01029995663611771306e-01, /* 0x3FD34413, 0x509F6000 */
+ log10_2lo  =  3.69423907715893078616e-13; /* 0x3D59FEF3, 0x11F12B36 */
+ 
+ static const double zero   =  0.0;
+diff --git a/e_log2.cpp b/e_log2.cpp
+--- a/e_log2.cpp
++++ b/e_log2.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * Return the base 2 logarithm of x.  See e_log.c and k_log.h for most
+  * comments.
+  *
+  * This reduces x to {k, 1+f} exactly as in e_log.c, then calls the kernel,
+  * then does the combining and scaling steps
+  *    log2(x) = (f - 0.5*f*f + k_log1p(f)) / ln2 + k
+diff --git a/e_pow.cpp b/e_pow.cpp
+--- a/e_pow.cpp
++++ b/e_pow.cpp
+@@ -4,18 +4,18 @@
+  * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+  *
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_pow(x,y) return x**y
+  *
+  *		      n
+  * Method:  Let x =  2   * (1+f)
+  *	1. Compute and return log2(x) in two pieces:
+  *		log2(x) = w1 + w2,
+  *	   where w1 has 53-24 = 29 bit trailing zeros.
+diff --git a/e_rem_pio2.cpp b/e_rem_pio2.cpp
+--- a/e_rem_pio2.cpp
++++ b/e_rem_pio2.cpp
+@@ -8,18 +8,18 @@
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  *
+  * Optimized by Bruce D. Evans.
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_rem_pio2(x,y)
+  * 
+  * return the remainder of x rem pi/2 in y[0]+y[1] 
+  * use __kernel_rem_pio2()
+  */
+ 
+ #include <float.h>
+diff --git a/e_sinh.cpp b/e_sinh.cpp
+--- a/e_sinh.cpp
++++ b/e_sinh.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_sinh(x)
+  * Method : 
+  * mathematically sinh(x) if defined to be (exp(x)-exp(-x))/2
+  *	1. Replace x by |x| (sinh(-x) = -sinh(x)). 
+  *	2. 
+  *		                                    E + E/(E+1)
+  *	    0        <= x <= 22     :  sinh(x) := --------------, E=expm1(x)
+diff --git a/k_cos.cpp b/k_cos.cpp
+--- a/k_cos.cpp
++++ b/k_cos.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * __kernel_cos( x,  y )
+  * kernel cos function on [-pi/4, pi/4], pi/4 ~ 0.785398164
+  * Input x is assumed to be bounded by ~pi/4 in magnitude.
+  * Input y is the tail of x. 
+  *
+  * Algorithm
+diff --git a/k_exp.cpp b/k_exp.cpp
+--- a/k_exp.cpp
++++ b/k_exp.cpp
+@@ -21,22 +21,22 @@
+  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+  * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  * SUCH DAMAGE.
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <complex.h>
+ 
+-#include "math_private.h"
++ #include "math_private.h"
+ 
+ static const uint32_t k = 1799;		/* constant for reduction */
+ static const double kln2 =  1246.97177782734161156;	/* k * ln2 */
+ 
+ /*
+  * Compute exp(x), scaled to avoid spurious overflow.  An exponent is
+  * returned separately in 'expt'.
+  *
+diff --git a/k_log.h b/k_log.h
+--- a/k_log.h
++++ b/k_log.h
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * k_log1p(f):
+  * Return log(1+f) - f for 1+f in ~[sqrt(2)/2, sqrt(2)].
+  *
+  * The following describes the overall strategy for computing
+  * logarithms in base e.  The argument reduction and adding the final
+  * term of the polynomial are done by the caller for increased accuracy
+diff --git a/k_rem_pio2.cpp b/k_rem_pio2.cpp
+--- a/k_rem_pio2.cpp
++++ b/k_rem_pio2.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * __kernel_rem_pio2(x,y,e0,nx,prec)
+  * double x[],y[]; int e0,nx,prec;
+  * 
+  * __kernel_rem_pio2 return the last three digits of N with 
+  *		y = x - N*pi/2
+  * so that |y| < pi/2.
+diff --git a/k_sin.cpp b/k_sin.cpp
+--- a/k_sin.cpp
++++ b/k_sin.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Developed at SunSoft, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice 
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __kernel_sin( x, y, iy)
+  * kernel sin function on ~[-pi/4, pi/4] (except on -0), pi/4 ~ 0.7854
+  * Input x is assumed to be bounded by ~pi/4 in magnitude.
+  * Input y is the tail of x.
+  * Input iy indicates whether y is 0. (if iy=0, y assume to be 0). 
+  *
+  * Algorithm
+diff --git a/k_tan.cpp b/k_tan.cpp
+--- a/k_tan.cpp
++++ b/k_tan.cpp
+@@ -6,18 +6,18 @@
+  *
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+ /* INDENT OFF */
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __kernel_tan( x, y, k )
+  * kernel tan function on ~[-pi/4, pi/4] (except on -0), pi/4 ~ 0.7854
+  * Input x is assumed to be bounded by ~pi/4 in magnitude.
+  * Input y is the tail of x.
+  * Input k indicates whether tan (if k = 1) or -1/tan (if k = -1) is returned.
+  *
+  * Algorithm
+diff --git a/s_asinh.cpp b/s_asinh.cpp
+--- a/s_asinh.cpp
++++ b/s_asinh.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* asinh(x)
+  * Method :
+  *	Based on
+  *		asinh(x) = sign(x) * log [ |x| + sqrt(x*x+1) ]
+  *	we have
+  *	asinh(x) := x  if  1+x*x=1,
+  *		 := sign(x)*(log(x)+ln2)) for large |x|, else
+diff --git a/s_atan.cpp b/s_atan.cpp
+--- a/s_atan.cpp
++++ b/s_atan.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* atan(x)
+  * Method
+  *   1. Reduce x to positive by atan(x) = -atan(-x).
+  *   2. According to the integer k=4t+0.25 chopped, t=x, the argument
+  *      is further reduced to one of the following intervals and the
+  *      arctangent of t is evaluated by the corresponding formula:
+  *
+diff --git a/s_cbrt.cpp b/s_cbrt.cpp
+--- a/s_cbrt.cpp
++++ b/s_cbrt.cpp
+@@ -7,18 +7,18 @@
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  *
+  * Optimized by Bruce D. Evans.
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <float.h>
+ #include "math_private.h"
+ 
+ /* cbrt(x)
+  * Return cube root of x
+  */
+ static const u_int32_t
+diff --git a/s_ceil.cpp b/s_ceil.cpp
+--- a/s_ceil.cpp
++++ b/s_ceil.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * ceil(x)
+  * Return x rounded toward -inf to integral value
+  * Method:
+  *	Bit twiddling.
+  * Exception:
+  *	Inexact flag raised if x not equal to ceil(x).
+diff --git a/s_ceilf.cpp b/s_ceilf.cpp
+--- a/s_ceilf.cpp
++++ b/s_ceilf.cpp
+@@ -8,18 +8,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include "math_private.h"
+ 
+ static const float huge = 1.0e30;
+ 
+ float
+ ceilf(float x)
+ {
+diff --git a/s_copysign.cpp b/s_copysign.cpp
+--- a/s_copysign.cpp
++++ b/s_copysign.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * copysign(double x, double y)
+  * copysign(x,y) returns a value with the magnitude of x and
+  * with the sign bit of y.
+  */
+ 
+ #include "math_private.h"
+diff --git a/s_cos.cpp b/s_cos.cpp
+--- a/s_cos.cpp
++++ b/s_cos.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* cos(x)
+  * Return cosine function of x.
+  *
+  * kernel function:
+  *	__kernel_sin		... sine function on [-pi/4,pi/4]
+  *	__kernel_cos		... cosine function on [-pi/4,pi/4]
+  *	__ieee754_rem_pio2	... argument reduction routine
+diff --git a/s_expm1.cpp b/s_expm1.cpp
+--- a/s_expm1.cpp
++++ b/s_expm1.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* expm1(x)
+  * Returns exp(x)-1, the exponential of x minus 1.
+  *
+  * Method
+  *   1. Argument reduction:
+  *	Given x, find r and integer k such that
+  *
+diff --git a/s_fabs.cpp b/s_fabs.cpp
+--- a/s_fabs.cpp
++++ b/s_fabs.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * fabs(x) returns the absolute value of x.
+  */
+ 
+ #include "math_private.h"
+ 
+ double
+diff --git a/s_floor.cpp b/s_floor.cpp
+--- a/s_floor.cpp
++++ b/s_floor.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * floor(x)
+  * Return x rounded toward -inf to integral value
+  * Method:
+  *	Bit twiddling.
+  * Exception:
+  *	Inexact flag raised if x not equal to floor(x).
+diff --git a/s_floorf.cpp b/s_floorf.cpp
+--- a/s_floorf.cpp
++++ b/s_floorf.cpp
+@@ -8,18 +8,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * floorf(x)
+  * Return x rounded toward -inf to integral value
+  * Method:
+  *	Bit twiddling.
+  * Exception:
+  *	Inexact flag raised if x not equal to floorf(x).
+diff --git a/s_log1p.cpp b/s_log1p.cpp
+--- a/s_log1p.cpp
++++ b/s_log1p.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* double log1p(double x)
+  *
+  * Method :
+  *   1. Argument Reduction: find k and f such that
+  *			1+x = 2^k * (1+f),
+  *	   where  sqrt(2)/2 < 1+f < sqrt(2) .
+  *
+diff --git a/s_nearbyint.cpp b/s_nearbyint.cpp
+--- a/s_nearbyint.cpp
++++ b/s_nearbyint.cpp
+@@ -21,18 +21,18 @@
+  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+  * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  * SUCH DAMAGE.
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <fenv.h>
+ 
+ #include "math_private.h"
+ 
+ /*
+  * We save and restore the floating-point environment to avoid raising
+  * an inexact exception.  We can get away with using fesetenv()
+diff --git a/s_rint.cpp b/s_rint.cpp
+--- a/s_rint.cpp
++++ b/s_rint.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * rint(x)
+  * Return x rounded to integral value according to the prevailing
+  * rounding mode.
+  * Method:
+  *	Using floating addition.
+  * Exception:
+diff --git a/s_rintf.cpp b/s_rintf.cpp
+--- a/s_rintf.cpp
++++ b/s_rintf.cpp
+@@ -8,18 +8,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <float.h>
+ #include <stdint.h>
+ 
+ #include "math_private.h"
+ 
+ static const float
+ TWO23[2]={
+diff --git a/s_sin.cpp b/s_sin.cpp
+--- a/s_sin.cpp
++++ b/s_sin.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* sin(x)
+  * Return sine function of x.
+  *
+  * kernel function:
+  *	__kernel_sin		... sine function on [-pi/4,pi/4]
+  *	__kernel_cos		... cose function on [-pi/4,pi/4]
+  *	__ieee754_rem_pio2	... argument reduction routine
+diff --git a/s_tan.cpp b/s_tan.cpp
+--- a/s_tan.cpp
++++ b/s_tan.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* tan(x)
+  * Return tangent function of x.
+  *
+  * kernel function:
+  *	__kernel_tan		... tangent function on [-pi/4,pi/4]
+  *	__ieee754_rem_pio2	... argument reduction routine
+  *
+diff --git a/s_tanh.cpp b/s_tanh.cpp
+--- a/s_tanh.cpp
++++ b/s_tanh.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* Tanh(x)
+  * Return the Hyperbolic Tangent of x
+  *
+  * Method :
+  *				       x    -x
+  *				      e  - e
+  *	0. tanh(x) is defined to be -----------
+diff --git a/s_trunc.cpp b/s_trunc.cpp
+--- a/s_trunc.cpp
++++ b/s_trunc.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * trunc(x)
+  * Return x rounded toward 0 to integral value
+  * Method:
+  *	Bit twiddling.
+  * Exception:
+  *	Inexact flag raised if x not equal to trunc(x).
+diff --git a/s_truncf.cpp b/s_truncf.cpp
+--- a/s_truncf.cpp
++++ b/s_truncf.cpp
+@@ -5,18 +5,18 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * truncf(x)
+  * Return x rounded toward 0 to integral value
+  * Method:
+  *	Bit twiddling.
+  * Exception:
+  *	Inexact flag raised if x not equal to truncf(x).
+--- a/e_acosf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/e_acosf.cpp_new	2022-12-11 21:23:31.863880382 -0500
+@@ -9,16 +9,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include "math_private.h"
+ 
+ static const float
+ one =  1.0000000000e+00, /* 0x3F800000 */
+ pi =  3.1415925026e+00, /* 0x40490fda */
+ pio2_hi =  1.5707962513e+00; /* 0x3fc90fda */
+--- a/e_asinf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/e_asinf.cpp_new	2022-12-11 21:23:31.875880502 -0500
+@@ -9,16 +9,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include "math_private.h"
+ 
+ static const float
+ one =  1.0000000000e+00, /* 0x3F800000 */
+ huge =  1.000e+30,
+ 	/* coefficient for R(x^2) */
+--- a/e_expf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/e_expf.cpp_new	2022-12-11 21:23:31.895880703 -0500
+@@ -9,16 +9,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <float.h>
+ 
+ #include "math_private.h"
+ 
+ static const float
+ one	= 1.0,
+--- a/e_logf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/e_logf.cpp_new	2022-12-11 21:23:31.935881104 -0500
+@@ -9,16 +9,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include "math_private.h"
+ 
+ static const float
+ ln2_hi =   6.9313812256e-01,	/* 0x3f317180 */
+ ln2_lo =   9.0580006145e-06,	/* 0x3717f7d1 */
+ two25 =    3.355443200e+07,	/* 0x4c000000 */
+--- a/e_powf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/e_powf.cpp_new	2022-12-11 21:23:31.971881465 -0500
+@@ -9,16 +9,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include "math_private.h"
+ 
+ static const float
+ bp[] = {1.0, 1.5,},
+ dp_h[] = { 0.0, 5.84960938e-01,}, /* 0x3f15c000 */
+ dp_l[] = { 0.0, 1.56322085e-06,}, /* 0x35d1cfdc */
+--- a/e_rem_pio2f.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/e_rem_pio2f.cpp_new	2022-12-11 21:23:32.015881905 -0500
+@@ -10,16 +10,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /* __ieee754_rem_pio2f(x,y)
+  *
+  * return the remainder of x rem pi/2 in *y
+  * use double precision for everything except passing x
+  * use __kernel_rem_pio2() for large x
+  */
+--- b/k_cosf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/k_cosf.cpp_new	2022-12-11 21:23:32.051882266 -0500
+@@ -11,16 +11,16 @@
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+ #ifndef INLINE_KERNEL_COSDF
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ #endif
+ 
+ #include "math_private.h"
+ 
+ /* |cos(x) - c(x)| < 2**-34.1 (~[-5.37e-11, 5.295e-11]). */
+ static const double
+ one =  1.0,
+--- b/k_expf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/k_expf.cpp_new	2022-12-11 21:23:32.087882627 -0500
+@@ -22,16 +22,16 @@
+  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+  * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  * SUCH DAMAGE.
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <complex.h>
+ 
+ #include "math_private.h"
+ 
+ static const uint32_t k = 235;			/* constant for reduction */
+ static const float kln2 =  162.88958740F;	/* k * ln2 */
+--- b/k_sinf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/k_sinf.cpp_new	2022-12-11 21:23:32.119882948 -0500
+@@ -11,16 +11,16 @@
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+ #ifndef INLINE_KERNEL_SINDF
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ #endif
+ 
+ #include "math_private.h"
+ 
+ /* |sin(x)/x - s(x)| < 2**-37.5 (~[-4.89e-12, 4.824e-12]). */
+ static const double
+ S1 = -0x15555554cbac77.0p-55,	/* -0.166666666416265235595 */
+--- b/k_tanf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/k_tanf.cpp_new	2022-12-11 21:23:32.155883308 -0500
+@@ -10,16 +10,16 @@
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+ #ifndef INLINE_KERNEL_TANDF
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ #endif
+ 
+ #include "math_private.h"
+ 
+ /* |tan(x)/x - t(x)| < 2**-25.5 (~[-2e-08, 2e-08]). */
+ static const double
+ T[] =  {
+--- a/s_atanf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/s_atanf.cpp_new	2022-12-11 21:23:32.199883749 -0500
+@@ -9,16 +9,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include "math_private.h"
+ 
+ static const float atanhi[] = {
+   4.6364760399e-01, /* atan(0.5)hi 0x3eed6338 */
+   7.8539812565e-01, /* atan(1.0)hi 0x3f490fda */
+   9.8279368877e-01, /* atan(1.5)hi 0x3f7b985e */
+--- a/s_cosf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/s_cosf.cpp_new	2022-12-11 21:23:32.235884110 -0500
+@@ -10,16 +10,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <float.h>
+ 
+ #define	INLINE_KERNEL_COSDF
+ #define	INLINE_KERNEL_SINDF
+ #define INLINE_REM_PIO2F
+ #include "math_private.h"
+--- a/s_exp2.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/s_exp2.cpp_new	2022-12-11 21:23:32.275884511 -0500
+@@ -22,16 +22,16 @@
+  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+  * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  * SUCH DAMAGE.
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <float.h>
+ 
+ #include "math_private.h"
+ 
+ #define	TBLBITS	8
+ #define	TBLSIZE	(1 << TBLBITS)
+--- a/s_exp2f.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/s_exp2f.cpp_new	2022-12-11 21:23:32.311884872 -0500
+@@ -22,16 +22,16 @@
+  * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+  * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  * SUCH DAMAGE.
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <float.h>
+ 
+ #include "math_private.h"
+ 
+ #define	TBLBITS	4
+ #define	TBLSIZE	(1 << TBLBITS)
+--- a/s_fabsf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/s_fabsf.cpp_new	2022-12-11 21:23:32.347885233 -0500
+@@ -9,16 +9,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ /*
+  * fabsf(x) returns the absolute value of x.
+  */
+ 
+ #include "math_private.h"
+ 
+--- a/s_sinf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/s_sinf.cpp_new	2022-12-11 21:23:32.383885594 -0500
+@@ -10,16 +10,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <float.h>
+ 
+ #define	INLINE_KERNEL_COSDF
+ #define	INLINE_KERNEL_SINDF
+ #define INLINE_REM_PIO2F
+ #include "math_private.h"
+--- a/s_tanf.cpp	2022-12-11 21:20:40.290068458 -0500
++++ b/s_tanf.cpp_new	2022-12-11 21:23:32.419885954 -0500
+@@ -10,16 +10,16 @@
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#include <sys/cdefs.h>
+-__FBSDID("$FreeBSD$");
++//#include <sys/cdefs.h>
++//__FBSDID("$FreeBSD$");
+ 
+ #include <float.h>
+ 
+ #define	INLINE_KERNEL_TANDF
+ #define INLINE_REM_PIO2F
+ #include "math_private.h"
+ #include "e_rem_pio2f.c"
+--- a/e_sqrtf.cpp 2022-12-13 14:30:13.113415455 -0500
++++ b/e_sqrtf.cpp 2022-12-13 14:13:15.302434550 -0500
+@@ -8,19 +8,19 @@
+  *
+  * Developed at SunPro, a Sun Microsystems, Inc. business.
+  * Permission to use, copy, modify, and distribute this
+  * software is freely granted, provided that this notice
+  * is preserved.
+  * ====================================================
+  */
+ 
+-#ifndef lint
+-static char rcsid[] = "$FreeBSD$";
+-#endif
++//#ifndef lint
++//static char rcsid[] = "$FreeBSD$";
++//#endif
+ 
+ #include "math_private.h"
+ 
+ #ifdef USE_BUILTIN_SQRTF
+ float
+ __ieee754_sqrtf(float x)
+ {
+  return (__builtin_sqrtf(x));

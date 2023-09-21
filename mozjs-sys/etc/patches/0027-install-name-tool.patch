@@ -1,0 +1,13 @@
+diff --git a/moz.configure b/moz.configure
+index 3a9461200..7dfcdd68d 100755
+--- a/moz.configure
++++ b/moz.configure
+@@ -717,7 +717,7 @@ check_prog(
+ 
+ check_prog(
+     "INSTALL_NAME_TOOL",
+-    plain_llvm_or_prefixed("install-name-tool"),
++    ("install_name_tool", "install-name-tool", "llvm-install-name-tool"),
+     when=compile_environment & target_is_darwin & js_standalone,
+     paths=clang_search_path,
+ )
