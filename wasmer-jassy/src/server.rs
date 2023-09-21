@@ -17,13 +17,13 @@ async fn handle(
     Ok(Response::new(Body::from("Hello World")))
 }
 
-async fn run_server() {
+async fn run_server() -> Result<(), anyhow::Error> {
     let context = AppContext {};
 
     let make_service = make_service_fn(move |conn: &AddrStream| {
         let context = context.clone();
 
-        let _addr = conn.remote_addr();
+        let addr = conn.remote_addr();
 
         // Create a `Service` for responding to the request.
         let service = service_fn(move |req| handle(context.clone(), addr, req));

@@ -6,14 +6,15 @@ use std::str;
 use anyhow::bail;
 use mozjs::glue::EncodeStringToUTF8;
 use mozjs::jsapi::{
-    CallArgs, JSAutoRealm, JSContext, JS_DefineFunction, JS_IsExceptionPending, JS_NewGlobalObject,
-    JS_ObjectIsFunction, JS_ReportErrorASCII, OnNewGlobalHookOption, Value,
+    CallArgs, HasJobsPending, JSAutoRealm, JSContext, JSObject, JS_DefineFunction,
+    JS_IsExceptionPending, JS_NewGlobalObject, JS_NewObject, JS_NewPlainObject,
+    JS_ObjectIsFunction, JS_ReportErrorASCII, OnNewGlobalHookOption, RunJobs, Value,
 };
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
-use mozjs_sys::jsval::DoubleValue;
-use mozjs_sys::jsval::JSVal;
+use mozjs_sys::gc::Handle;
+use mozjs_sys::jsval::{DoubleValue, JSVal};
 
 /// Run Javascript code in a context with Winter CG APIs.
 pub fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
@@ -86,6 +87,15 @@ pub fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
             bail!("unknown javascript error occurred");
         }
     }
+}
+
+/// Run the Javascript promise job queue.
+fn run_jobs(cx: *mut JSContext) -> Result<(), anyhow::Error> {
+    while unsafe { HasJobsPending(cx) } {
+        unsafe { RunJobs(cx) };
+        crate::error::ErrorInfo::check_context(cx)?;
+    }
+    Ok(())
 }
 
 fn read_runtime_exception(cx: *mut JSContext) -> anyhow::Error {
@@ -218,6 +228,14 @@ unsafe extern "C" fn log(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool 
         }
         Err(_) => false,
     }
+}
+
+fn http_request_to_object(
+    cx: *mut JSContext,
+    req: hyper::Request<hyper::Body>,
+    obj: Handle<'_, *mut JSObject>,
+) -> Result<(), anyhow::Error> {
+    Ok(())
 }
 
 // unsafe extern "C" fn add_event_listener(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
