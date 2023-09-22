@@ -113,7 +113,10 @@ impl ErrorInfo {
         ErrorInfo::from_native_error(object, cx)
     }
 
-    unsafe fn from_value(value: HandleValue, cx: *mut JSContext) -> Result<Self, anyhow::Error> {
+    pub unsafe fn from_value(
+        value: HandleValue,
+        cx: *mut JSContext,
+    ) -> Result<Self, anyhow::Error> {
         if value.is_object() {
             rooted!(in(cx) let object = value.to_object());
             return ErrorInfo::from_object(object.handle(), cx);

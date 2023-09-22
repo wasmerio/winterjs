@@ -156,7 +156,7 @@ fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), any
     {
         rooted!(in(cx) let mut rval = UndefinedValue());
 
-        let res = runtime.evaluate_script(global, JS_SETUP, "test.js", 0, rval.handle_mut());
+        let res = runtime.evaluate_script(global, JS_SETUP, "setup.js", 0, rval.handle_mut());
         if res.is_err() {
             ErrorInfo::check_context(cx)?;
             bail!("Unknown exception ocurred");
@@ -259,13 +259,12 @@ pub fn run_request(
             rval.handle_mut().into(),
         )
     };
+    ErrorInfo::check_context(cx)?;
     if !ok {
-        ErrorInfo::check_context(cx)?;
+        bail!("unknown error occurred in request handler");
     }
 
     if !rval.handle().is_string() {
-        dbg!("not a string");
-
         if !rval.handle().is_object() {
             bail!("invalid response data - expected a string or object");
         }
@@ -290,7 +289,30 @@ pub fn run_request(
                 }
                 PromiseState::Rejected => {
                     // TODO: read rejection reason
-                    bail!("response promise failed");
+                    ErrorInfo::check_context(cx)?;
+
+                    unsafe {
+                        mozjs::glue::JS_GetPromiseResult(
+                            obj.handle_mut().into(),
+                            rval.handle_mut().into(),
+                        )
+                    };
+
+                    if let Ok(err) = unsafe { ErrorInfo::from_value(rval.handle(), cx) } {
+                        return Err(err).context("response promise failed");
+                    }
+
+                    // Not a valid exception, so just convert to string.
+                    let res = unsafe {
+                        String::from_jsval(cx, rval.handle(), ())
+                            .map_err(|_| anyhow::anyhow!("could not convert returned response"))?
+                    };
+
+                    let msg = match res {
+                        ConversionResult::Success(v) => v,
+                        ConversionResult::Failure(v) => bail!("could not read promise error"),
+                    };
+                    bail!("promise failed: {msg}");
                 }
             };
         }
@@ -614,42 +636,153 @@ mod tests {
         assert_eq!(body, bytes::Bytes::from(b"hello".to_vec()));
     }
 
-    // #[tokio::test]
-    // async fn test_fetch_handler_plain_object_echo() {
-    //     let code = r#"
-    //         async function handle(req) {
-    //           return {
-    //             headers: req.headers,
-    //             body: req.body,
-    //           };
-    //         }
+    #[tokio::test]
+    async fn test_fetch_handler_response_class() {
+        let code = r#"
+            function handle(req) {
+              return new Response('responseclass');
+            }
 
-    //         addEventListener('fetch', handle);
-    //     "#;
+            addEventListener('fetch', handle);
+        "#;
 
-    //     let req = RequestData {
-    //         index: RequestIndex(0),
-    //         method: "GET".to_string(),
-    //         url: "https://test.com".to_string(),
-    //         headers: vec![("test".to_string(), vec!["test".to_string()])]
-    //             .into_iter()
-    //             .collect(),
-    //         body: b"hello".to_vec().into(),
-    //     };
+        let req = RequestData {
+            index: RequestIndex(0),
+            method: "GET".to_string(),
+            url: "https://test.com".to_string(),
+            headers: vec![("test".to_string(), vec!["test".to_string()])]
+                .into_iter()
+                .collect(),
+            body: b"hello".to_vec().into(),
+        };
 
-    //     let res = run_request(code, req).unwrap();
-    //     assert_eq!(res.status().as_u16(), 301);
+        let res = run_request(code, req).unwrap();
+        assert_eq!(res.status().as_u16(), 200);
 
-    //     assert_eq!(
-    //         res.headers()
-    //             .get("h1")
-    //             .expect("missing 'h1' header")
-    //             .to_str()
-    //             .unwrap(),
-    //         "v1"
-    //     );
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(body, bytes::Bytes::from(b"responseclass".to_vec()));
+    }
 
-    //     let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
-    //     assert_eq!(body, bytes::Bytes::from(b"hello".to_vec()));
-    // }
+    #[tokio::test]
+    async fn test_fetch_handler_response_class_with_status_and_headers() {
+        let code = r#"
+            function handle(req) {
+              return new Response('responseclass', {status: 333, headers: {'h1': 'v1'}});
+            }
+
+            addEventListener('fetch', handle);
+        "#;
+
+        let req = RequestData {
+            index: RequestIndex(0),
+            method: "GET".to_string(),
+            url: "https://test.com".to_string(),
+            headers: vec![("test".to_string(), vec!["test".to_string()])]
+                .into_iter()
+                .collect(),
+            body: b"hello".to_vec().into(),
+        };
+
+        let res = run_request(code, req).unwrap();
+        assert_eq!(res.status().as_u16(), 333);
+
+        assert_eq!(
+            res.headers()
+                .get("h1")
+                .expect("missing 'h1' header")
+                .to_str()
+                .unwrap(),
+            "v1"
+        );
+
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(body, bytes::Bytes::from(b"responseclass".to_vec()));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_handler_echo() {
+        let code = r#"
+            async function handle(req) {
+            console.log('handler called');
+
+               if (!(req.headers instanceof Headers)) {
+                console.log('request.headers is not a Headers class');
+                throw new Error('request.headers is not a Headers class')
+               }
+
+                let headers = req.headers;
+                headers.set('method', req.method);
+                headers.set('url', req.url);
+
+                console.log('out headers:' + JSON.stringify(headers.items));
+
+                console.log('constructing response')
+                console.log('body: ' + req.body);
+                const res = new Response(req.body, {
+                  headers,
+                  status: 123,
+                });
+                console.log('response constructed');
+
+                console.log('handler complete');
+                return res;
+            }
+            addEventListener('fetch', handle);
+        "#;
+
+        let req = RequestData {
+            index: RequestIndex(0),
+            method: "POST".to_string(),
+            url: "https://test.com/lala?blub=123".to_string(),
+            headers: vec![
+                ("h1".to_string(), vec!["v1".to_string()]),
+                ("h2".to_string(), vec!["v2".to_string()]),
+            ]
+            .into_iter()
+            .collect(),
+            body: b"input".to_vec().into(),
+        };
+
+        let res = run_request(code, req).unwrap();
+        assert_eq!(res.status().as_u16(), 123);
+
+        assert_eq!(
+            res.headers()
+                .get("url")
+                .expect("missing 'h1' header")
+                .to_str()
+                .unwrap(),
+            "https://test.com/lala?blub=123",
+        );
+
+        assert_eq!(
+            res.headers()
+                .get("h1")
+                .expect("missing 'h1' header")
+                .to_str()
+                .unwrap(),
+            "v1"
+        );
+
+        assert_eq!(
+            res.headers()
+                .get("h2")
+                .expect("missing 'h2' header")
+                .to_str()
+                .unwrap(),
+            "v2"
+        );
+
+        assert_eq!(
+            res.headers()
+                .get("method")
+                .expect("missing 'method' header")
+                .to_str()
+                .unwrap(),
+            "POST"
+        );
+
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(body, bytes::Bytes::from(b"input".to_vec()));
+    }
 }
