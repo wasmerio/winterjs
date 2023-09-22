@@ -20,7 +20,6 @@ async fn handle(
     let res = match handle_inner(context, addr, req).await {
         Ok(r) => r,
         Err(err) => {
-            dbg!(&err);
             tracing::error!(error = format!("{err:#?}"), "could not process request");
 
             hyper::Response::builder()

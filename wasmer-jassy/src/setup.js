@@ -123,7 +123,6 @@ class Request {
 
   async json() {
     const v = await this.text();
-    console.log(`body: "${v}"`);
     return JSON.parse(v);
   }
 }
@@ -164,15 +163,12 @@ class Response {
     if (body) {
       if (typeof body === 'string') {
         this.body = new TextEncoder().encode(body);
-        console.log('body from text');
       } else if (body instanceof Uint8Array) {
-        console.log('body already Uint8Array');
         this.body = body;
       } else {
         throw new Error('invalid body - must be string or Uint8Array');
       }
     } else {
-      console.log('empty body');
       this.body = new TextEncoder().encode('');
     }
 
@@ -305,7 +301,6 @@ globalThis.Response = Response;
         if (o.body && !(o.body instanceof Uint8Array)) {
           throw new Error('response body must be undefined/null or an Uint8Array');
         }
-        console.log(o);
         return o;
       }
     };

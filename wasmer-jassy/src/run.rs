@@ -317,7 +317,6 @@ pub fn run_request(
 
         let is_promise = unsafe { IsPromiseObject(obj.handle().into()) };
         if is_promise {
-            dbg!("looping for jobs");
             let mut futures = Box::pin(FuturesUnordered::new());
 
             let mut run_jobs = Box::pin(run_jobs(cx));
@@ -447,7 +446,6 @@ fn response_from_obj(
             }
         }
     };
-    dbg!(&headeritems);
 
     let mut headers = http::HeaderMap::new();
     for item in headeritems {
@@ -481,7 +479,6 @@ fn response_from_obj(
     };
 
     let mut res = hyper::Response::builder().status(status).body(body)?;
-    dbg!(&headers);
     *res.headers_mut() = headers;
 
     Ok(res)
@@ -510,8 +507,6 @@ fn build_request(
         ErrorInfo::check_context(cx)?;
         bail!("could not retrieve Request constructor - getProperty failed");
     }
-    dbg!(constructor_raw.is_object());
-    dbg!(constructor_raw.is_null_or_undefined());
 
     if !constructor_raw.is_object() {
         bail!("could not retrieve Request constructor - not an object");
@@ -589,7 +584,6 @@ fn http_headers_to_vec(headers: http::HeaderMap) -> Result<Vec<Vec<String>>, any
         }
     }
 
-    dbg!(&items);
     Ok(items)
 }
 
@@ -1014,7 +1008,7 @@ mod tests {
             });
         "#;
         let req = hyper::Request::new(Body::empty());
-        let res = dbg!(run_request_blocking(code, req).await).unwrap();
+        let res = run_request_blocking(code, req).await.unwrap();
 
         assert_eq!(res.status().as_u16(), 200);
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
@@ -1227,7 +1221,6 @@ mod tests {
         let req = http::Request::builder().body(Body::from(body)).unwrap();
 
         let res = run_request_blocking(code, req).await.unwrap();
-        dbg!(&res);
 
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
         let data2: serde_json::Value = serde_json::from_slice(&body).unwrap();
