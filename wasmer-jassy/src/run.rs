@@ -546,11 +546,12 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_handler_basic_promise_string_response() {
         let code = r#"
-            addEventListener('fetch', (req) => {
-              return new Promise((resolve) => {
-                resolve('promisified');
-              });
-            });
+
+            async function handle(req) {
+              return "asyncfn";
+            }
+
+            addEventListener('fetch', handle);
         "#;
 
         let req = RequestData {
@@ -567,6 +568,6 @@ mod tests {
         assert_eq!(res.status().as_u16(), 200);
 
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
-        assert_eq!(body, bytes::Bytes::from(b"promisified".to_vec()));
+        assert_eq!(body, bytes::Bytes::from(b"asyncfn".to_vec()));
     }
 }
