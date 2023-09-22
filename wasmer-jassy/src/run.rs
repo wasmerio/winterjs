@@ -6,6 +6,7 @@ use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::ptr;
 use std::str;
+use std::str::FromStr;
 use std::task::Poll;
 use std::time::Duration;
 
@@ -22,9 +23,9 @@ use mozjs::gc::Handle;
 use mozjs::glue::EncodeStringToUTF8;
 use mozjs::jsapi::{
     CallArgs, HandleValueArray, HasJobsPending, IsPromiseObject, JSAutoRealm, JSContext, JSObject,
-    JS_CallFunctionName, JS_DefineFunction, JS_IsExceptionPending, JS_NewGlobalObject,
-    JS_NewObject, JS_NewPlainObject, JS_ObjectIsFunction, JS_ReportErrorASCII, JS_SetProperty,
-    OnNewGlobalHookOption, PromiseState, RunJobs, Value,
+    JS_CallFunctionName, JS_CallFunctionValue, JS_DefineFunction, JS_IsExceptionPending,
+    JS_NewGlobalObject, JS_NewObject, JS_NewPlainObject, JS_ObjectIsFunction, JS_ReportErrorASCII,
+    JS_SetProperty, OnNewGlobalHookOption, PromiseState, RunJobs, Value,
 };
 use mozjs::jsval::{ObjectValue, UndefinedValue};
 use mozjs::rooted;
@@ -408,6 +409,58 @@ fn response_from_obj(
     let status: u16 = get_property::<u16>(cx, obj, "status\0", ConversionBehavior::Default)
         .context("could not retrieve response status")?;
 
+    // Headers.
+    rooted!(in(cx) let mut headermap = UndefinedValue());
+    get_property_raw(cx, obj, "headers\0", headermap.handle_mut())?;
+
+    if !headermap.is_object() {
+        bail!("headers must be an object");
+    }
+    rooted!(in(cx) let headermap_obj = headermap.to_object());
+
+    rooted!(in(cx) let mut to_list = UndefinedValue());
+    get_property_raw(cx, headermap_obj.handle(), "toList\0", to_list.handle_mut())
+        .context("could not retrieve Headers.toList function")?;
+
+    rooted!(in(cx) let mut headerlist = UndefinedValue());
+    let args = HandleValueArray::new();
+    let ok = unsafe {
+        JS_CallFunctionValue(
+            cx,
+            headermap_obj.handle().into(),
+            to_list.handle().into(),
+            &args,
+            headerlist.handle_mut().into(),
+        )
+    };
+    if !ok {
+        bail!("could not call Headers.toList()");
+    }
+
+    let headeritems = unsafe {
+        let res = Vec::<Vec<String>>::from_jsval(cx, headerlist.handle(), ())
+            .map_err(|_| anyhow::anyhow!("could not convert Headers.toList() return value"))?;
+        match res {
+            ConversionResult::Success(v) => v,
+            ConversionResult::Failure(err) => {
+                bail!("could not convert Headers.toList() return value: {err}");
+            }
+        }
+    };
+    dbg!(&headeritems);
+
+    let mut headers = http::HeaderMap::new();
+    for item in headeritems {
+        if item.len() != 2 {
+            bail!("invalid header item - expected 2 items");
+        }
+        headers.append(
+            http::HeaderName::from_str(&item[0])?,
+            http::HeaderValue::from_str(&item[1])?,
+        );
+    }
+
+    // Body.
     let body = if has_property(cx, obj, "body\0")? {
         rooted!(in(cx) let mut body = UndefinedValue());
         get_property_raw(cx, obj, "body\0", body.handle_mut())
@@ -427,7 +480,9 @@ fn response_from_obj(
         hyper::Body::empty()
     };
 
-    let res = hyper::Response::builder().status(status).body(body)?;
+    let mut res = hyper::Response::builder().status(status).body(body)?;
+    dbg!(&headers);
+    *res.headers_mut() = headers;
 
     Ok(res)
 }
@@ -510,11 +565,11 @@ fn http_headers_to_vec(headers: http::HeaderMap) -> Result<Vec<Vec<String>>, any
     let mut items = Vec::new();
     let mut header: Option<HeaderName> = None;
     for (key, value) in headers {
-        if header.is_none() {
-            header = key;
+        if let Some(key) = key {
+            header = Some(key);
         }
-
         let key = header.as_ref().unwrap().to_string();
+
         match value.to_str() {
             Ok(v) => {
                 match value.to_str() {
@@ -534,6 +589,7 @@ fn http_headers_to_vec(headers: http::HeaderMap) -> Result<Vec<Vec<String>>, any
         }
     }
 
+    dbg!(&items);
     Ok(items)
 }
 
@@ -1072,8 +1128,8 @@ mod tests {
                 console.log('handler called');
 
                if (!(req.headers instanceof Headers)) {
-                console.log('request.headers is not a Headers class');
-                throw new Error('request.headers is not a Headers class')
+                 console.log('request.headers is not a Headers class');
+                 throw new Error('request.headers is not a Headers class')
                }
 
                 let headers = req.headers;
@@ -1155,7 +1211,7 @@ mod tests {
         let code = r#"
             async function handle(req) {
                 const body = await req.json();
-                return new Response(body, {
+                return new Response(JSON.stringify(body), {
                   headers: {'content-type': 'application/json'},
                 });
             }

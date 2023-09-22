@@ -74,6 +74,18 @@ class Headers {
       this.items[key] = [value];
     }
   }
+
+  toList() {
+    const items = [];
+
+    for (const [name, values] of Object.entries(this.items)) {
+      for (const value of values) {
+        items.push([name, value]);
+      }
+    }
+
+    return items;
+  }
 }
 
 class Request {
