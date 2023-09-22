@@ -571,4 +571,85 @@ mod tests {
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
         assert_eq!(body, bytes::Bytes::from(b"asyncfn".to_vec()));
     }
+
+    #[tokio::test]
+    async fn test_fetch_handler_plain_object_response() {
+        let code = r#"
+            function handle(req) {
+              return {
+                status: 301,
+                headers: {
+                  'h1': ['v1'],
+                },
+                body: 'hello',
+              };
+            }
+
+            addEventListener('fetch', handle);
+        "#;
+
+        let req = RequestData {
+            index: RequestIndex(0),
+            method: "GET".to_string(),
+            url: "https://test.com".to_string(),
+            headers: vec![("test".to_string(), vec!["test".to_string()])]
+                .into_iter()
+                .collect(),
+            body: b"hello".to_vec().into(),
+        };
+
+        let res = run_request(code, req).unwrap();
+        assert_eq!(res.status().as_u16(), 301);
+
+        assert_eq!(
+            res.headers()
+                .get("h1")
+                .expect("missing 'h1' header")
+                .to_str()
+                .unwrap(),
+            "v1"
+        );
+
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(body, bytes::Bytes::from(b"hello".to_vec()));
+    }
+
+    // #[tokio::test]
+    // async fn test_fetch_handler_plain_object_echo() {
+    //     let code = r#"
+    //         async function handle(req) {
+    //           return {
+    //             headers: req.headers,
+    //             body: req.body,
+    //           };
+    //         }
+
+    //         addEventListener('fetch', handle);
+    //     "#;
+
+    //     let req = RequestData {
+    //         index: RequestIndex(0),
+    //         method: "GET".to_string(),
+    //         url: "https://test.com".to_string(),
+    //         headers: vec![("test".to_string(), vec!["test".to_string()])]
+    //             .into_iter()
+    //             .collect(),
+    //         body: b"hello".to_vec().into(),
+    //     };
+
+    //     let res = run_request(code, req).unwrap();
+    //     assert_eq!(res.status().as_u16(), 301);
+
+    //     assert_eq!(
+    //         res.headers()
+    //             .get("h1")
+    //             .expect("missing 'h1' header")
+    //             .to_str()
+    //             .unwrap(),
+    //         "v1"
+    //     );
+
+    //     let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+    //     assert_eq!(body, bytes::Bytes::from(b"hello".to_vec()));
+    // }
 }
