@@ -41,14 +41,14 @@
 
     function convertValueToResponseData(value) {
       let out;
-      if (typeof res === 'string') {
+      if (typeof value === 'string') {
         out = {
           status: 200,
           headers: {},
-          body: res,
+          body: value,
         };
       } else {
-        throw new Error('unsupported response type: ' + JSON.stringify(res));
+        throw new Error('unsupported response type: ' + JSON.stringify(value));
       }
 
       return JSON.stringify(out);
