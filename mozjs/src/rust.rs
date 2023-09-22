@@ -337,6 +337,10 @@ impl Runtime {
         let js_context = JS_NewContext(default_heapsize + (ChunkSize as u32), parent_runtime);
         assert!(!js_context.is_null());
 
+        if !crate::jsapi::UseInternalJobQueues(js_context) {
+            panic!("could not initialize internal job queues");
+        }
+
         // Unconstrain the runtime's threshold on nominal heap size, to avoid
         // triggering GC too often if operating continuously near an arbitrary
         // finite threshold. This leaves the maximum-JS_malloc-bytes threshold
