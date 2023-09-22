@@ -158,7 +158,8 @@ fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), any
 
         let res = runtime.evaluate_script(global, JS_SETUP, "test.js", 0, rval.handle_mut());
         if res.is_err() {
-            return Err(read_runtime_exception(cx));
+            ErrorInfo::check_context(cx)?;
+            bail!("Unknown exception ocurred");
         }
     }
 
