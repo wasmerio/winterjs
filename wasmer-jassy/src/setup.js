@@ -168,6 +168,12 @@ class Response {
         }
     };
 
+    // fetch
+    if ((typeof __native_fetch) !== 'function') {
+      throw new Error("setup error: __native_fetch not found");
+    }
+    globalThis.fetch = __native_fetch;
+
     // events
     const FETCH_HANDLERS = {};
 

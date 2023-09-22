@@ -1,10 +1,16 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
 use std::ffi::CStr;
+use std::future::Future;
 use std::mem::MaybeUninit;
+use std::pin::Pin;
 use std::ptr;
 use std::str;
+use std::task::Poll;
+use std::time::Duration;
 
 use anyhow::{bail, Context as _};
+use futures::stream::FuturesUnordered;
+use futures::{Stream, StreamExt};
 use mozjs::conversions::ConversionResult;
 use mozjs::conversions::FromJSValConvertible;
 use mozjs::gc::Handle;
@@ -20,6 +26,9 @@ use mozjs::rooted;
 use mozjs::rust::JSEngineHandle;
 use mozjs::rust::{IntoHandle, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs_sys::jsval::{DoubleValue, JSVal};
+use tokio::select;
+use tokio::time::sleep;
+use tokio::time::Sleep;
 
 use crate::error::ErrorInfo;
 use crate::fetch::RequestData;
@@ -125,6 +134,16 @@ use crate::fetch::RequestIndex;
 //     }
 // }
 
+thread_local! {
+    pub(super) static FUTURES: RefCell<
+        Option<
+            tokio::sync::mpsc::UnboundedSender<
+                Box<dyn Future<Output = ()> + Send + Sync + Unpin + 'static>
+            >
+        >
+    > = RefCell::new(None);
+}
+
 fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), anyhow::Error> {
     let cx = runtime.cx();
 
@@ -146,6 +165,18 @@ fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), any
             global.into(),
             b"__native_log\0".as_ptr() as *const i8,
             Some(log),
+            2,
+            0,
+        )
+    };
+    assert!(!function.is_null());
+
+    let function = unsafe {
+        JS_DefineFunction(
+            cx,
+            global.into(),
+            b"__native_fetch\0".as_ptr() as *const i8,
+            Some(crate::client_fetch::fetch),
             2,
             0,
         )
@@ -213,80 +244,105 @@ pub fn run_request(
     user_code: &str,
     req: RequestData,
 ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
-    let mut runtime = Runtime::new(ENGINE.clone());
-    let cx = runtime.cx();
-    let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
-    let c_option = RealmOptions::default();
+    let run_request_inner = async move {
+        let mut runtime = Runtime::new(ENGINE.clone());
+        let cx = runtime.cx();
+        let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
+        let c_option = RealmOptions::default();
 
-    rooted!(in(cx) let global = unsafe { JS_NewGlobalObject(
-        cx,
-        &SIMPLE_GLOBAL_CLASS,
-        ptr::null_mut(),
-        h_option,
-        &*c_option,
-    )});
+        let (future_tx, mut future_rx) = tokio::sync::mpsc::unbounded_channel();
+        FUTURES.with(|f| f.borrow_mut().replace(future_tx));
+        let futures_guard = FuturesDropGuard;
 
-    let _ac = JSAutoRealm::new(cx, global.get());
-
-    setup(&mut runtime, global.handle())?;
-
-    rooted!(in(cx) let mut rval = UndefinedValue());
-
-    let res = runtime.evaluate_script(global.handle(), user_code, "test.js", 0, rval.handle_mut());
-
-    if !res.is_ok() {
-        ErrorInfo::check_context(cx)?;
-        bail!("unknown javascript error occurred");
-    }
-
-    let json = serde_json::to_string(&req)?;
-
-    rooted!(in(cx) let mut inval = UndefinedValue());
-    unsafe {
-        mozjs::conversions::ToJSValConvertible::to_jsval(&json, cx, inval.handle_mut());
-    }
-
-    let slice = [inval.get()];
-    let args = unsafe { HandleValueArray::from_rooted_slice(&slice) };
-
-    rooted!(in(cx) let mut rval = UndefinedValue());
-    let ok = unsafe {
-        JS_CallFunctionName(
+        rooted!(in(cx) let global = unsafe { JS_NewGlobalObject(
             cx,
-            global.handle().into(),
-            b"__wasmer_callFetchHandler\0".as_ptr() as *const _,
-            &args,
-            rval.handle_mut().into(),
-        )
-    };
-    ErrorInfo::check_context(cx)?;
-    if !ok {
-        bail!("unknown error occurred in request handler");
-    }
+            &SIMPLE_GLOBAL_CLASS,
+            ptr::null_mut(),
+            h_option,
+            &*c_option,
+        )});
 
-    if !rval.handle().is_string() {
-        if !rval.handle().is_object() {
-            bail!("invalid response data - expected a string or object");
+        let _ac = JSAutoRealm::new(cx, global.get());
+
+        setup(&mut runtime, global.handle())?;
+
+        rooted!(in(cx) let mut rval = UndefinedValue());
+
+        let res =
+            runtime.evaluate_script(global.handle(), user_code, "app.js", 0, rval.handle_mut());
+
+        if !res.is_ok() {
+            ErrorInfo::check_context(cx)?;
+            bail!("unknown javascript error occurred");
         }
-        rooted!(in(cx) let mut obj = rval.handle().to_object());
 
-        dbg!("checking for promise");
-        let is_promise = unsafe { IsPromiseObject(obj.handle().into()) };
-        if !is_promise {
-            bail!("invalid response data");
+        let json = serde_json::to_string(&req)?;
+
+        rooted!(in(cx) let mut inval = UndefinedValue());
+        unsafe {
+            mozjs::conversions::ToJSValConvertible::to_jsval(&json, cx, inval.handle_mut());
+        }
+
+        let slice = [inval.get()];
+        let args = unsafe { HandleValueArray::from_rooted_slice(&slice) };
+
+        rooted!(in(cx) let mut rval = UndefinedValue());
+        let ok = unsafe {
+            JS_CallFunctionName(
+                cx,
+                global.handle().into(),
+                b"__wasmer_callFetchHandler\0".as_ptr() as *const _,
+                &args,
+                rval.handle_mut().into(),
+            )
         };
+        if !ok {
+            ErrorInfo::check_context(cx)?;
+        }
 
-        dbg!("looping for promise");
-        loop {
+        if !rval.handle().is_string() {
+            dbg!("not a string");
+
+            if !rval.handle().is_object() {
+                bail!("invalid response data - expected a string or object");
+            }
+            rooted!(in(cx) let mut obj = rval.handle().to_object());
+
+            dbg!("checking for promise");
+            let is_promise = unsafe { IsPromiseObject(obj.handle().into()) };
+            if !is_promise {
+                bail!("invalid response data");
+            };
+
+            dbg!("looping for jobs");
+
+            let mut futures = Box::pin(FuturesUnordered::new());
+
+            let mut run_jobs = Box::pin(run_jobs(cx));
+            loop {
+                select! {
+                    _ = run_jobs.as_mut() => {
+                        break;
+                    }
+                    _ = futures.next() => {
+                        continue;
+                    }
+                    f = future_rx.recv() => {
+                        if let Some(fut) = f {
+                            futures.push(fut);
+                        }
+                    }
+                }
+            }
+
+            drop(futures_guard);
+
             let state = unsafe { mozjs::rust::wrappers::GetPromiseState(obj.handle().into()) };
             match state {
                 PromiseState::Pending => {
-                    unsafe { RunJobs(cx) };
-                    ErrorInfo::check_context(cx)?;
+                    bail!("No jobs remaining but promise is not resolved");
                 }
-                PromiseState::Fulfilled => {
-                    break;
-                }
+                PromiseState::Fulfilled => {}
                 PromiseState::Rejected => {
                     // TODO: read rejection reason
                     ErrorInfo::check_context(cx)?;
@@ -315,31 +371,37 @@ pub fn run_request(
                     bail!("promise failed: {msg}");
                 }
             };
+
+            unsafe {
+                mozjs::glue::JS_GetPromiseResult(obj.handle_mut().into(), rval.handle_mut().into())
+            };
         }
 
-        unsafe {
-            mozjs::glue::JS_GetPromiseResult(obj.handle_mut().into(), rval.handle_mut().into())
+        if !rval.handle().is_string() {
+            bail!("invalid response data - expected a string");
+        }
+
+        let res = unsafe {
+            String::from_jsval(cx, rval.handle(), ())
+                .map_err(|_| anyhow::anyhow!("could not convert returned response"))?
         };
-    }
+        let raw = match res {
+            ConversionResult::Success(v) => v,
+            ConversionResult::Failure(msg) => bail!("invalid response value:  {msg}"),
+        };
 
-    if !rval.handle().is_string() {
-        bail!("invalid response data - expected a string");
-    }
+        let resdata: crate::fetch::ResponseData =
+            serde_json::from_str(&raw).context("could not deserialize response")?;
 
-    let res = unsafe {
-        String::from_jsval(cx, rval.handle(), ())
-            .map_err(|_| anyhow::anyhow!("could not convert returned response"))?
-    };
-    let raw = match res {
-        ConversionResult::Success(v) => v,
-        ConversionResult::Failure(msg) => bail!("invalid response value:  {msg}"),
+        let out = resdata.to_hyper()?;
+        Ok(out)
     };
 
-    let resdata: crate::fetch::ResponseData =
-        serde_json::from_str(&raw).context("could not deserialize response")?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
 
-    let out = resdata.to_hyper()?;
-    Ok(out)
+    rt.block_on(run_request_inner)
 }
 
 // fn resolve_promise(cx: *mut JSContext, value: Handle<*mut JSValue>) -> Result<(), anyhow::Error> {
@@ -347,12 +409,50 @@ pub fn run_request(
 // }
 
 /// Run the Javascript promise job queue.
-fn run_jobs(cx: *mut JSContext) -> Result<(), anyhow::Error> {
-    while unsafe { HasJobsPending(cx) } {
-        unsafe { RunJobs(cx) };
-        ErrorInfo::check_context(cx)?;
+fn run_jobs(cx: *mut JSContext) -> RunJobs {
+    RunJobs { cx, sleep: None }
+}
+
+struct RunJobs {
+    cx: *mut JSContext,
+    sleep: Option<Pin<Box<Sleep>>>,
+}
+
+impl Future for RunJobs {
+    type Output = Result<(), anyhow::Error>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Self::Output> {
+        unsafe {
+            if HasJobsPending(self.cx) {
+                RunJobs(self.cx);
+                match ErrorInfo::check_context(self.cx) {
+                    Err(f) => Poll::Ready(Err(f)),
+                    Ok(_) => {
+                        let sleep = Box::pin(sleep(Duration::from_millis(1)));
+                        self.as_mut().sleep.replace(sleep);
+                        Pin::new(self.sleep.as_mut().unwrap())
+                            .poll(cx)
+                            .map(|()| Ok(()))
+                    }
+                }
+            } else {
+                Poll::Ready(Ok(()))
+            }
+        }
     }
-    Ok(())
+}
+
+struct FuturesDropGuard;
+
+impl Drop for FuturesDropGuard {
+    fn drop(&mut self) {
+        FUTURES.with(|f| {
+            *f.borrow_mut() = None;
+        })
+    }
 }
 
 fn read_runtime_exception(cx: *mut JSContext) -> anyhow::Error {
@@ -405,7 +505,7 @@ fn report_js_error(cx: *mut JSContext, message: impl AsRef<str>) {
     }
 }
 
-fn raw_handle_to_string(
+pub(super) fn raw_handle_to_string(
     cx: *mut JSContext,
     handle: mozjs::jsapi::JS::Handle<Value>,
 ) -> Result<String, anyhow::Error> {
@@ -540,6 +640,15 @@ mod tests {
         let _info = err.downcast_ref::<ErrorInfo>().unwrap();
     }
 
+    pub async fn run_request_blocking(
+        user_code: &str,
+        req: RequestData,
+    ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
+        let code = user_code.to_string();
+
+        tokio::task::spawn_blocking(move || run_request(&code, req)).await?
+    }
+
     #[tokio::test]
     async fn test_fetch_handler_basic_string_response() {
         let code = r#"
@@ -558,7 +667,7 @@ mod tests {
             body: b"hello".to_vec().into(),
         };
 
-        let res = run_request(code, req).unwrap();
+        let res = run_request_blocking(code, req).await.unwrap();
 
         assert_eq!(res.status().as_u16(), 200);
 
@@ -587,7 +696,7 @@ mod tests {
             body: b"hello".to_vec().into(),
         };
 
-        let res = run_request(code, req).unwrap();
+        let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 200);
 
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
@@ -620,7 +729,7 @@ mod tests {
             body: b"hello".to_vec().into(),
         };
 
-        let res = run_request(code, req).unwrap();
+        let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 301);
 
         assert_eq!(
@@ -656,7 +765,7 @@ mod tests {
             body: b"hello".to_vec().into(),
         };
 
-        let res = run_request(code, req).unwrap();
+        let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 200);
 
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
@@ -683,7 +792,7 @@ mod tests {
             body: b"hello".to_vec().into(),
         };
 
-        let res = run_request(code, req).unwrap();
+        let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 333);
 
         assert_eq!(
@@ -743,7 +852,7 @@ mod tests {
             body: b"input".to_vec().into(),
         };
 
-        let res = run_request(code, req).unwrap();
+        let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 123);
 
         assert_eq!(

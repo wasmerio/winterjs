@@ -24,6 +24,7 @@ macro_rules! js_try {
     };
 }
 
+mod client_fetch;
 mod error;
 mod fetch;
 mod run;
