@@ -40,11 +40,12 @@ async fn handle_inner(
 ) -> Result<Response<Body>, anyhow::Error> {
     let code = context.code.clone();
 
-    let reqdata = crate::fetch::RequestData::from_hyper(crate::fetch::RequestIndex(0), req)
+    let (parts, body) = req.into_parts();
+    let body = hyper::body::to_bytes(body)
         .await
-        .context("could not construct request")?;
+        .context("could not read body")?;
 
-    tokio::task::spawn_blocking(move || crate::run::run_request(&context.code, reqdata))
+    tokio::task::spawn_blocking(move || crate::run::run_request(&context.code, parts, Some(body)))
         .await
         .context("processing task failed")?
         .context("javascript failed")

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::ffi::CStr;
+use std::ffi::CString;
 use std::future::Future;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -9,10 +10,14 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{bail, Context as _};
+use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::{Stream, StreamExt};
+use http::HeaderName;
+use mozjs::conversions::ConversionBehavior;
 use mozjs::conversions::ConversionResult;
 use mozjs::conversions::FromJSValConvertible;
+use mozjs::conversions::ToJSValConvertible;
 use mozjs::gc::Handle;
 use mozjs::glue::EncodeStringToUTF8;
 use mozjs::jsapi::{
@@ -21,10 +26,17 @@ use mozjs::jsapi::{
     JS_NewObject, JS_NewPlainObject, JS_ObjectIsFunction, JS_ReportErrorASCII, JS_SetProperty,
     OnNewGlobalHookOption, PromiseState, RunJobs, Value,
 };
-use mozjs::jsval::UndefinedValue;
+use mozjs::jsval::{ObjectValue, UndefinedValue};
 use mozjs::rooted;
+use mozjs::rust::jsapi_wrapped::JS_GetProperty;
+use mozjs::rust::wrappers::Construct1;
+use mozjs::rust::HandleObject;
+use mozjs::rust::HandleValue;
 use mozjs::rust::JSEngineHandle;
+use mozjs::rust::MutableHandleObject;
+use mozjs::rust::MutableHandleValue;
 use mozjs::rust::{IntoHandle, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
+use mozjs::typedarray::Uint8Array;
 use mozjs_sys::jsval::{DoubleValue, JSVal};
 use tokio::select;
 use tokio::time::sleep;
@@ -242,7 +254,8 @@ pub fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
 
 pub fn run_request(
     user_code: &str,
-    req: RequestData,
+    req: http::request::Parts,
+    body: Option<Bytes>,
 ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
     let run_request_inner = async move {
         let mut runtime = Runtime::new(ENGINE.clone());
@@ -263,7 +276,6 @@ pub fn run_request(
         )});
 
         let _ac = JSAutoRealm::new(cx, global.get());
-
         setup(&mut runtime, global.handle())?;
 
         rooted!(in(cx) let mut rval = UndefinedValue());
@@ -276,14 +288,11 @@ pub fn run_request(
             bail!("unknown javascript error occurred");
         }
 
-        let json = serde_json::to_string(&req)?;
+        rooted!(in(cx) let mut jsreq = unsafe { JS_NewPlainObject(cx) });
+        build_request(cx, global.handle(), req, body, jsreq.handle_mut())?;
+        rooted!(in(cx) let arg1 = ObjectValue(jsreq.get()));
 
-        rooted!(in(cx) let mut inval = UndefinedValue());
-        unsafe {
-            mozjs::conversions::ToJSValConvertible::to_jsval(&json, cx, inval.handle_mut());
-        }
-
-        let slice = [inval.get()];
+        let slice = [arg1.get()];
         let args = unsafe { HandleValueArray::from_rooted_slice(&slice) };
 
         rooted!(in(cx) let mut rval = UndefinedValue());
@@ -300,22 +309,14 @@ pub fn run_request(
             ErrorInfo::check_context(cx)?;
         }
 
-        if !rval.handle().is_string() {
-            dbg!("not a string");
+        if !rval.handle().is_object() {
+            bail!("invalid response data - expected an object");
+        }
+        rooted!(in(cx) let mut obj = rval.handle().to_object());
 
-            if !rval.handle().is_object() {
-                bail!("invalid response data - expected a string or object");
-            }
-            rooted!(in(cx) let mut obj = rval.handle().to_object());
-
-            dbg!("checking for promise");
-            let is_promise = unsafe { IsPromiseObject(obj.handle().into()) };
-            if !is_promise {
-                bail!("invalid response data");
-            };
-
+        let is_promise = unsafe { IsPromiseObject(obj.handle().into()) };
+        if is_promise {
             dbg!("looping for jobs");
-
             let mut futures = Box::pin(FuturesUnordered::new());
 
             let mut run_jobs = Box::pin(run_jobs(cx));
@@ -377,24 +378,13 @@ pub fn run_request(
             };
         }
 
-        if !rval.handle().is_string() {
-            bail!("invalid response data - expected a string");
+        if !rval.handle().is_object() {
+            bail!("invalid response data - expected an object");
         }
+        let res =
+            response_from_obj(cx, rval.handle()).context("could not convert response object")?;
 
-        let res = unsafe {
-            String::from_jsval(cx, rval.handle(), ())
-                .map_err(|_| anyhow::anyhow!("could not convert returned response"))?
-        };
-        let raw = match res {
-            ConversionResult::Success(v) => v,
-            ConversionResult::Failure(msg) => bail!("invalid response value:  {msg}"),
-        };
-
-        let resdata: crate::fetch::ResponseData =
-            serde_json::from_str(&raw).context("could not deserialize response")?;
-
-        let out = resdata.to_hyper()?;
-        Ok(out)
+        Ok(res)
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -402,6 +392,200 @@ pub fn run_request(
         .build()?;
 
     rt.block_on(run_request_inner)
+}
+
+fn response_from_obj(
+    cx: *mut JSContext,
+    value: HandleValue,
+) -> Result<http::Response<hyper::Body>, anyhow::Error> {
+    if !value.is_object() {
+        bail!("response must be an object");
+    }
+    rooted!(in(cx) let obj = value.to_object());
+
+    let obj = obj.handle();
+
+    let status: u16 = get_property::<u16>(cx, obj, "status\0", ConversionBehavior::Default)
+        .context("could not retrieve response status")?;
+
+    let body = if has_property(cx, obj, "body\0")? {
+        rooted!(in(cx) let mut body = UndefinedValue());
+        get_property_raw(cx, obj, "body\0", body.handle_mut())
+            .context("could not retrieve body")?;
+
+        if body.is_null_or_undefined() {
+            hyper::Body::empty()
+        } else if !body.is_object() {
+            bail!("body must be an object");
+        } else {
+            rooted!(in(cx) let body = body.to_object());
+            let body = Uint8Array::from(body.get())
+                .map_err(|_| anyhow::anyhow!("body is not a Uint8Array"))?;
+            unsafe { hyper::Body::from(body.as_slice().to_vec()) }
+        }
+    } else {
+        hyper::Body::empty()
+    };
+
+    let res = hyper::Response::builder().status(status).body(body)?;
+
+    Ok(res)
+}
+
+fn build_request(
+    cx: *mut JSContext,
+    global: HandleObject<'_>,
+    req: http::request::Parts,
+    body: Option<Bytes>,
+    out: MutableHandleObject,
+) -> Result<(), anyhow::Error> {
+    const CLS: &str = "Request\0";
+
+    // Retrieve the constructor.
+    rooted!(in(cx) let mut constructor_raw = UndefinedValue());
+    let ok = unsafe {
+        mozjs::jsapi::JS_GetProperty(
+            cx,
+            global.into(),
+            CLS.as_ptr() as *const _,
+            constructor_raw.handle_mut().into(),
+        )
+    };
+    if !ok {
+        ErrorInfo::check_context(cx)?;
+        bail!("could not retrieve Request constructor - getProperty failed");
+    }
+    dbg!(constructor_raw.is_object());
+    dbg!(constructor_raw.is_null_or_undefined());
+
+    if !constructor_raw.is_object() {
+        bail!("could not retrieve Request constructor - not an object");
+    }
+    rooted!(in(cx) let constructor = constructor_raw.to_object());
+
+    // method
+    rooted!(in(cx) let mut opts = unsafe { JS_NewPlainObject(cx) });
+    set_property(cx, opts.handle(), "method\0", &req.method.to_string())?;
+
+    // url
+    set_property(cx, opts.handle(), "url\0", &req.uri.to_string())?;
+
+    // headers
+    if !req.headers.is_empty() {
+        let items = http_headers_to_vec(req.headers)?;
+        set_property(cx, opts.handle(), "headers\0", &items)?;
+    }
+
+    if let Some(body) = body {
+        rooted!(in(cx) let mut req_body_array = unsafe { JS_NewPlainObject(cx) });
+        unsafe {
+            mozjs::typedarray::Uint8Array::create(
+                cx,
+                mozjs::typedarray::CreateWith::Slice(body.as_ref()),
+                req_body_array.handle_mut(),
+            )
+            .map_err(|_| anyhow::anyhow!("could not construct Uint8Array"))?;
+        }
+
+        rooted!(in(cx) let req_body = mozjs::jsval::ObjectValue(req_body_array.get()));
+
+        set_property(cx, opts.handle(), "body\0", &req_body.get())?;
+    }
+
+    rooted!(in(cx) let opts1 = ObjectValue(opts.get()));
+
+    let slice = [opts1.get()];
+    let args = unsafe { HandleValueArray::from_rooted_slice(&slice) };
+
+    let ok = unsafe { Construct1(cx, constructor_raw.handle(), &args, out) };
+
+    if !ok {
+        bail!("could not call request constructor");
+    }
+
+    Ok(())
+}
+
+fn http_headers_to_vec(headers: http::HeaderMap) -> Result<Vec<Vec<String>>, anyhow::Error> {
+    let mut items = Vec::new();
+    let mut header: Option<HeaderName> = None;
+    for (key, value) in headers {
+        if header.is_none() {
+            header = key;
+        }
+
+        let key = header.as_ref().unwrap().to_string();
+        match value.to_str() {
+            Ok(v) => {
+                match value.to_str() {
+                    Ok(v) => {
+                        items.push(vec![key, v.to_string()]);
+                    }
+                    Err(_) => {
+                        // FIXME: implement non-utf8 header values
+                        tracing::warn!("ignoring non-utf8 header value for header '{key}'");
+                    }
+                }
+            }
+            Err(_) => {
+                // FIXME: support non-utf8 header values
+                tracing::warn!("ignoring non-utf8 header value for header '{key}'");
+            }
+        }
+    }
+
+    Ok(items)
+}
+
+fn http_headers_to_object(
+    cx: *mut JSContext,
+    out: MutableHandleValue,
+    headers: http::HeaderMap,
+) -> Result<(), anyhow::Error> {
+    let mut items = Vec::new();
+    let mut header: Option<HeaderName> = None;
+    for (key, value) in headers {
+        if header.is_none() {
+            header = key;
+        }
+
+        let key = header.as_ref().unwrap().to_string();
+        match value.to_str() {
+            Ok(v) => {
+                match value.to_str() {
+                    Ok(v) => {
+                        items.push(vec![key, v.to_string()]);
+                    }
+                    Err(_) => {
+                        // FIXME: implement non-utf8 header values
+                        tracing::warn!("ignoring non-utf8 header value for header '{key}'");
+                    }
+                }
+            }
+            Err(_) => {
+                // FIXME: support non-utf8 header values
+                tracing::warn!("ignoring non-utf8 header value for header '{key}'");
+            }
+        }
+    }
+
+    unsafe {
+        items.to_jsval(cx, out);
+    }
+
+    Ok(())
+}
+
+fn http_headers_from_object(
+    cx: *mut JSContext,
+    obj: HandleValue,
+) -> Result<hyper::HeaderMap, anyhow::Error> {
+    let mut map = http::HeaderMap::new();
+
+    // headers are stored in the item key
+    // FIXME: implement response header conversion.
+
+    Ok(map)
 }
 
 // fn resolve_promise(cx: *mut JSContext, value: Handle<*mut JSValue>) -> Result<(), anyhow::Error> {
@@ -539,6 +723,119 @@ unsafe extern "C" fn log(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool 
     }
 }
 
+fn has_property(
+    cx: *mut JSContext,
+    obj: HandleObject<'_>,
+    key: &str,
+) -> Result<bool, anyhow::Error> {
+    let mut out = false;
+
+    let ok = if key.ends_with('\0') {
+        unsafe {
+            mozjs::jsapi::JS_HasProperty(
+                cx,
+                obj.into(),
+                key.as_ptr() as *const _,
+                &mut out as *mut bool,
+            )
+        }
+    } else {
+        let name = CString::new(key).context("key contains nulls")?;
+        unsafe {
+            mozjs::jsapi::JS_HasProperty(
+                cx,
+                obj.into(),
+                name.as_ptr() as *const _,
+                &mut out as *mut bool,
+            )
+        }
+    };
+
+    if !ok {
+        bail!("Failed to check if object has property '{key}' - not a valid object?");
+    }
+
+    Ok(out)
+}
+
+fn get_property_raw(
+    cx: *mut JSContext,
+    obj: Handle<'_, *mut JSObject>,
+    key: &str,
+    out: MutableHandleValue<'_>,
+) -> Result<(), anyhow::Error> {
+    let ok = if key.ends_with('\0') {
+        unsafe {
+            mozjs::jsapi::JS_GetProperty(cx, obj.into(), key.as_ptr() as *const _, out.into())
+        }
+    } else {
+        let name = std::ffi::CString::new(key)?;
+        unsafe {
+            mozjs::jsapi::JS_GetProperty(cx, obj.into(), name.as_ptr() as *const _, out.into())
+        }
+    };
+    if !ok {
+        bail!("failed to retrieve property '{key}' - property most likely does not exist");
+    }
+
+    Ok(())
+}
+
+fn get_property<T>(
+    cx: *mut JSContext,
+    obj: Handle<'_, *mut JSObject>,
+    key: &str,
+    opts: T::Config,
+) -> Result<T, anyhow::Error>
+where
+    T: mozjs::conversions::FromJSValConvertible,
+{
+    // JS_GetProperty(
+    //     cx: *mut JSContext,
+    //     obj: Handle<*mut JSObject>,
+    //     name: *const i8,
+    //     vp: MutableHandle<Value>
+    // ) -> bool
+
+    rooted!(in(cx) let mut out = UndefinedValue());
+
+    let ok = if key.ends_with('\0') {
+        unsafe {
+            mozjs::rust::jsapi_wrapped::JS_GetProperty(
+                cx,
+                obj,
+                key.as_ptr() as *const _,
+                &mut out.handle_mut(),
+            )
+        }
+    } else {
+        let name = std::ffi::CString::new(key)?;
+        unsafe {
+            mozjs::rust::jsapi_wrapped::JS_GetProperty(
+                cx,
+                obj,
+                name.as_ptr() as *const _,
+                &mut out.handle_mut(),
+            )
+        }
+    };
+    if !ok {
+        bail!("failed to retrieve property '{key}'");
+    }
+
+    let res = unsafe { T::from_jsval(cx, out.handle(), opts) };
+
+    let res = res.map_err(|_| anyhow::anyhow!("could not convert property '{key}'"))?;
+    let value = match res {
+        ConversionResult::Success(v) => v,
+        ConversionResult::Failure(err) => {
+            bail!("could not convert property '{key}': {err}");
+        }
+    };
+
+    Ok(value)
+}
+
 fn set_property<T>(
     cx: *mut JSContext,
     obj: Handle<'_, *mut JSObject>,
@@ -627,6 +924,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use hyper::{Body, Method};
+
     use crate::{error::ErrorInfo, fetch::ResponseData};
 
     use super::*;
@@ -642,11 +941,13 @@ mod tests {
 
     pub async fn run_request_blocking(
         user_code: &str,
-        req: RequestData,
-    ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
+        req: hyper::Request<Body>,
+    ) -> Result<hyper::Response<Body>, anyhow::Error> {
         let code = user_code.to_string();
+        let (parts, body) = req.into_parts();
+        let body = hyper::body::to_bytes(body).await?;
 
-        tokio::task::spawn_blocking(move || run_request(&code, req)).await?
+        tokio::task::spawn_blocking(move || run_request(&code, parts, Some(body))).await?
     }
 
     #[tokio::test]
@@ -656,21 +957,10 @@ mod tests {
               return "hello";
             });
         "#;
-
-        let req = RequestData {
-            index: RequestIndex(0),
-            method: "GET".to_string(),
-            url: "https://test.com".to_string(),
-            headers: vec![("test".to_string(), vec!["test".to_string()])]
-                .into_iter()
-                .collect(),
-            body: b"hello".to_vec().into(),
-        };
-
-        let res = run_request_blocking(code, req).await.unwrap();
+        let req = hyper::Request::new(Body::empty());
+        let res = dbg!(run_request_blocking(code, req).await).unwrap();
 
         assert_eq!(res.status().as_u16(), 200);
-
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
         assert_eq!(body, bytes::Bytes::from(b"hello".to_vec()));
     }
@@ -686,15 +976,7 @@ mod tests {
             addEventListener('fetch', handle);
         "#;
 
-        let req = RequestData {
-            index: RequestIndex(0),
-            method: "GET".to_string(),
-            url: "https://test.com".to_string(),
-            headers: vec![("test".to_string(), vec!["test".to_string()])]
-                .into_iter()
-                .collect(),
-            body: b"hello".to_vec().into(),
-        };
+        let req = hyper::Request::new(Body::empty());
 
         let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 200);
@@ -719,19 +1001,10 @@ mod tests {
             addEventListener('fetch', handle);
         "#;
 
-        let req = RequestData {
-            index: RequestIndex(0),
-            method: "GET".to_string(),
-            url: "https://test.com".to_string(),
-            headers: vec![("test".to_string(), vec!["test".to_string()])]
-                .into_iter()
-                .collect(),
-            body: b"hello".to_vec().into(),
-        };
+        let req = hyper::Request::new(Body::empty());
 
         let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 301);
-
         assert_eq!(
             res.headers()
                 .get("h1")
@@ -755,15 +1028,7 @@ mod tests {
             addEventListener('fetch', handle);
         "#;
 
-        let req = RequestData {
-            index: RequestIndex(0),
-            method: "GET".to_string(),
-            url: "https://test.com".to_string(),
-            headers: vec![("test".to_string(), vec!["test".to_string()])]
-                .into_iter()
-                .collect(),
-            body: b"hello".to_vec().into(),
-        };
+        let req = http::Request::new(hyper::Body::empty());
 
         let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 200);
@@ -782,15 +1047,7 @@ mod tests {
             addEventListener('fetch', handle);
         "#;
 
-        let req = RequestData {
-            index: RequestIndex(0),
-            method: "GET".to_string(),
-            url: "https://test.com".to_string(),
-            headers: vec![("test".to_string(), vec!["test".to_string()])]
-                .into_iter()
-                .collect(),
-            body: b"hello".to_vec().into(),
-        };
+        let req = http::Request::new(Body::empty());
 
         let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 333);
@@ -812,7 +1069,7 @@ mod tests {
     async fn test_fetch_handler_echo() {
         let code = r#"
             async function handle(req) {
-            console.log('handler called');
+                console.log('handler called');
 
                if (!(req.headers instanceof Headers)) {
                 console.log('request.headers is not a Headers class');
@@ -826,8 +1083,11 @@ mod tests {
                 console.log('out headers:' + JSON.stringify(headers.items));
 
                 console.log('constructing response')
-                console.log('body: ' + req.body);
-                const res = new Response(req.body, {
+
+                const body = await req.text();
+                console.log('body: ' + body);
+
+                const res = new Response(body, {
                   headers,
                   status: 123,
                 });
@@ -839,18 +1099,13 @@ mod tests {
             addEventListener('fetch', handle);
         "#;
 
-        let req = RequestData {
-            index: RequestIndex(0),
-            method: "POST".to_string(),
-            url: "https://test.com/lala?blub=123".to_string(),
-            headers: vec![
-                ("h1".to_string(), vec!["v1".to_string()]),
-                ("h2".to_string(), vec!["v2".to_string()]),
-            ]
-            .into_iter()
-            .collect(),
-            body: b"input".to_vec().into(),
-        };
+        let req = http::Request::builder()
+            .method(Method::POST)
+            .uri("https://test.com/lala?blub=123")
+            .header("h1", "v1")
+            .header("h2", "v2")
+            .body(Body::from("input"))
+            .unwrap();
 
         let res = run_request_blocking(code, req).await.unwrap();
         assert_eq!(res.status().as_u16(), 123);
@@ -893,5 +1148,33 @@ mod tests {
 
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
         assert_eq!(body, bytes::Bytes::from(b"input".to_vec()));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_response_json() {
+        let code = r#"
+            async function handle(req) {
+                const body = await req.json();
+                return new Response(body, {
+                  headers: {'content-type': 'application/json'},
+                });
+            }
+
+            addEventListener('fetch', handle);
+        "#;
+
+        let data = serde_json::json!({
+            "key": "value"
+        });
+        let body = serde_json::to_vec(&data).unwrap();
+
+        let req = http::Request::builder().body(Body::from(body)).unwrap();
+
+        let res = run_request_blocking(code, req).await.unwrap();
+        dbg!(&res);
+
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        let data2: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(data2, data);
     }
 }

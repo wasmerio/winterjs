@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Context;
+use bytes::Bytes;
 
 #[derive(
     serde_derive::Serialize,
@@ -23,7 +24,8 @@ pub struct RequestData {
     pub method: String,
     pub url: String,
     pub headers: HashMap<String, Vec<String>>,
-    pub body: Vec<u8>,
+    #[serde(skip)]
+    pub body: Bytes,
 }
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -31,7 +33,7 @@ pub struct ResponseData {
     pub status: Option<u16>,
     #[serde(default)]
     pub headers: HashMap<String, Vec<String>>,
-    pub body: Option<bytes::Bytes>,
+    pub body: Option<Vec<u8>>,
 }
 
 fn default_status() -> u16 {

@@ -103,7 +103,20 @@ class Request {
     // FIXME: implement body validation / conversion
     this.body = init.body;
   }
+
+
+  async text() {
+    return new TextDecoder().decode(this.body);
+  }
+
+  async json() {
+    const v = await this.text();
+    console.log(`body: "${v}"`);
+    return JSON.parse(v);
+  }
 }
+// Needed to make the class accessible from Rust code.
+globalThis.Request = Request;
 
 // interface ResponseInit {
 //     headers?: HeadersInit;
@@ -135,8 +148,28 @@ class Response {
     }
     this.headers = headers;
 
-    // FIXME: validate headers
-    this.body = body;
+
+    if (body) {
+      if (typeof body === 'string') {
+        this.body = new TextEncoder().encode(body);
+        console.log('body from text');
+      } else if (body instanceof Uint8Array) {
+        console.log('body already Uint8Array');
+        this.body = body;
+      } else {
+        throw new Error('invalid body - must be string or Uint8Array');
+      }
+    } else {
+      console.log('empty body');
+      this.body = new TextEncoder().encode('');
+    }
+
+    // TODO: remove, just for debugging
+    if (this.body) {
+      if (!(this.body instanceof Uint8Array)) {
+        throw new Error('internal error: invalid body');
+      }
+    }
   }
 
   get statusText() {
@@ -147,7 +180,18 @@ class Response {
       default: return 'Unknown';
     }
   }
+
+  async json() {
+    return JSON.parse(this.body);
+  }
+
+  async text() {
+    return this.body;
+  }
 }
+
+// Needed to make the class accessible from Rust code.
+globalThis.Response = Response;
 
 (function() {
     // performance
@@ -198,23 +242,11 @@ class Response {
 
     function convertValueToResponseData(value) {
       const ty = typeof value;
-      let out;
-
       if (value instanceof Response) {
-        out = {
-          status: value.status,
-          headers: value.headers?.items,
-          // FIXME: body conversions!
-          body: value.body,
-        };
+        return value;
       } else if (ty === 'string') {
-        out = {
-          status: 200,
-          headers: {},
-          body: value,
-        };
+        return new Response(value);
       } else if (ty === 'object') {
-
         let status = 200;
         if ('status' in value) {
           if (typeof status !== 'number') {
@@ -227,33 +259,18 @@ class Response {
         if ('headers' in value) {
           headers = value.headers;
         }
-
-        let body = undefined;
-        if ('body' in value) {
-          body = value.body;
-        }
-
-        out = {
-          status,
-          headers,
-          body,
-        };
-
+        return new Response(value.body, {status, headers});
       } else {
         throw new Error('unsupported response type: ' + JSON.stringify(value));
       }
-
-      return JSON.stringify(out);
     }
 
-    globalThis.__wasmer_callFetchHandler = function(rawRequest) {
+    globalThis.__wasmer_callFetchHandler = function(request) {
       // FIXME: add support for multiple handlers?
 
-      if (typeof rawRequest !== 'string') {
-        throw new Error('request must be a string');
+      if (!(request instanceof Request)) {
+        throw new Error('request must be an instance of the Request class');
       }
-      const requestData = JSON.parse(rawRequest);
-      const request = new Request(requestData);
       
       const items = Object.values(FETCH_HANDLERS);
       if (items.length === 0) {
@@ -269,7 +286,113 @@ class Response {
       if (res?.then && (typeof res.then) === 'function') {
         return res.then(convertValueToResponseData);
       } else {
-        return convertValueToResponseData(res);
+        const o = convertValueToResponseData(res);
+        if (!(o instanceof Response)) {
+          throw new Error('internal error: response must be an instance of the Response class');
+        }
+        if (o.body && !(o.body instanceof Uint8Array)) {
+          throw new Error('response body must be undefined/null or an Uint8Array');
+        }
+        console.log(o);
+        return o;
       }
     };
 })()
+
+
+// Taken from.
+//
+//  TODO: this should be implemented in Rust
+//
+// https://gist.githubusercontent.com/Yaffle/5458286/raw/1aa5caa5cdd9938fe0fe202357db6c6b33af24f4/TextEncoderTextDecoder.js
+// TextEncoder/TextDecoder polyfills for utf-8 - an implementation of TextEncoder/TextDecoder APIs
+// Written in 2013 by Viktor Mukhachev <vic99999@yandex.ru>
+// To the extent possible under law, the author(s) have dedicated all copyright and related and neighboring rights to this software to the public domain worldwide. This software is distributed without any warranty.
+// You should have received a copy of the CC0 Public Domain Dedication along with this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+
+// Some important notes about the polyfill below:
+// Native TextEncoder/TextDecoder implementation is overwritten
+// String.prototype.codePointAt polyfill not included, as well as String.fromCodePoint
+// TextEncoder.prototype.encode returns a regular array instead of Uint8Array
+// No options (fatal of the TextDecoder constructor and stream of the TextDecoder.prototype.decode method) are supported.
+// TextDecoder.prototype.decode does not valid byte sequences
+// This is a demonstrative implementation not intended to have the best performance
+
+// http://encoding.spec.whatwg.org/#textencoder
+
+// http://encoding.spec.whatwg.org/#textencoder
+
+function TextEncoder() {
+}
+
+TextEncoder.prototype.encode = function (string) {
+  var octets = [];
+  var length = string.length;
+  var i = 0;
+  while (i < length) {
+    var codePoint = string.codePointAt(i);
+    var c = 0;
+    var bits = 0;
+    if (codePoint <= 0x0000007F) {
+      c = 0;
+      bits = 0x00;
+    } else if (codePoint <= 0x000007FF) {
+      c = 6;
+      bits = 0xC0;
+    } else if (codePoint <= 0x0000FFFF) {
+      c = 12;
+      bits = 0xE0;
+    } else if (codePoint <= 0x001FFFFF) {
+      c = 18;
+      bits = 0xF0;
+    }
+    octets.push(bits | (codePoint >> c));
+    c -= 6;
+    while (c >= 0) {
+      octets.push(0x80 | ((codePoint >> c) & 0x3F));
+      c -= 6;
+    }
+    i += codePoint >= 0x10000 ? 2 : 1;
+  }
+  return Uint8Array.from(octets);
+};
+
+function TextDecoder() {
+}
+
+TextDecoder.prototype.decode = function (octets) {
+  var string = "";
+  var i = 0;
+  while (i < octets.length) {
+    var octet = octets[i];
+    var bytesNeeded = 0;
+    var codePoint = 0;
+    if (octet <= 0x7F) {
+      bytesNeeded = 0;
+      codePoint = octet & 0xFF;
+    } else if (octet <= 0xDF) {
+      bytesNeeded = 1;
+      codePoint = octet & 0x1F;
+    } else if (octet <= 0xEF) {
+      bytesNeeded = 2;
+      codePoint = octet & 0x0F;
+    } else if (octet <= 0xF4) {
+      bytesNeeded = 3;
+      codePoint = octet & 0x07;
+    }
+    if (octets.length - i - bytesNeeded > 0) {
+      var k = 0;
+      while (k < bytesNeeded) {
+        octet = octets[i + k + 1];
+        codePoint = (codePoint << 6) | (octet & 0x3F);
+        k += 1;
+      }
+    } else {
+      codePoint = 0xFFFD;
+      bytesNeeded = octets.length - i;
+    }
+    string += String.fromCodePoint(codePoint);
+    i += bytesNeeded + 1;
+  }
+  return string
+};
