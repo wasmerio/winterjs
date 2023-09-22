@@ -13,7 +13,6 @@ anyhow = "1.0.75"
 mozjs = { path = "../mozjs" }
 mozjs_sys = { path = "../mozjs-sys" }
 hyper = { version = "0.14.27", features = ["server", "http1", "tcp"] }
-tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }
 serde_derive = "1.0.164"
@@ -24,3 +23,13 @@ once_cell = "1.18.0"
 reqwest = { version = "0.11.20", features = ["blocking"] }
 futures = "0.3.28"
 http = "0.2.9"
+
+# NOTE: We need to pin and replace some dependencies to achieve wasix compatibility.
+# tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "=1.24.2", default-features = false, features = ["full"] }
+parking_lot = { version = "=0.12.1", features = ["nightly"] }
+
+[patch.crates-io]
+tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.24.2" }
+socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" }
+libc = { git = "https://github.com/wasix-org/libc.git", branch = "master" }
