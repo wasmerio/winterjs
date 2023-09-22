@@ -28,14 +28,20 @@ pub struct RequestData {
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ResponseData {
-    pub status: u16,
+    pub status: Option<u16>,
+    #[serde(default)]
     pub headers: HashMap<String, Vec<String>>,
-    pub body: bytes::Bytes,
+    pub body: Option<bytes::Bytes>,
+}
+
+fn default_status() -> u16 {
+    200
 }
 
 impl ResponseData {
     pub fn to_hyper(&self) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
-        let mut b = hyper::Response::builder().status(self.status);
+        let status = self.status.unwrap_or(200);
+        let mut b = hyper::Response::builder().status(status);
 
         for (key, values) in &self.headers {
             for value in values {
@@ -43,8 +49,8 @@ impl ResponseData {
             }
         }
 
-        b.body(hyper::Body::from(self.body.clone()))
-            .context("could not construct response")
+        let body = hyper::Body::from(self.body.clone().unwrap_or_default());
+        b.body(body).context("could not construct response")
     }
 }
 
