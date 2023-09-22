@@ -7,18 +7,51 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 
 #[derive(Clone)]
-struct AppContext {}
+struct AppContext {
+    /// Javascript code.
+    code: String,
+}
 
 async fn handle(
     context: AppContext,
     addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
-    Ok(Response::new(Body::from("Hello World")))
+    let res = match handle_inner(context, addr, req).await {
+        Ok(r) => r,
+        Err(err) => {
+            dbg!(&err);
+            tracing::error!(error = format!("{err:#?}"), "could not process request");
+
+            hyper::Response::builder()
+                .status(hyper::StatusCode::INTERNAL_SERVER_ERROR)
+                .body(hyper::Body::from(err.to_string()))
+                .unwrap()
+        }
+    };
+
+    Ok(res)
 }
 
-async fn run_server() -> Result<(), anyhow::Error> {
-    let context = AppContext {};
+async fn handle_inner(
+    context: AppContext,
+    addr: SocketAddr,
+    req: Request<Body>,
+) -> Result<Response<Body>, anyhow::Error> {
+    let code = context.code.clone();
+
+    let reqdata = crate::fetch::RequestData::from_hyper(crate::fetch::RequestIndex(0), req)
+        .await
+        .context("could not construct request")?;
+
+    tokio::task::spawn_blocking(move || crate::run::run_request(&context.code, reqdata))
+        .await
+        .context("processing task failed")?
+        .context("javascript failed")
+}
+
+pub async fn run_server(code: String) -> Result<(), anyhow::Error> {
+    let context = AppContext { code };
 
     let make_service = make_service_fn(move |conn: &AddrStream| {
         let context = context.clone();
@@ -33,6 +66,7 @@ async fn run_server() -> Result<(), anyhow::Error> {
     });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    tracing::info!(listen=%addr, "starting server on {addr}");
 
     Server::bind(&addr)
         .serve(make_service)
