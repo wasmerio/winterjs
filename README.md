@@ -4,7 +4,7 @@ The JavaScript runtime that brings JavaScript to Wasmer Edge via the [Winter Com
 
 The application is [published in Wasmer as `wasmer/winter`](https://wasmer.io/wasmer/winter).
 
-You can run it locally with `wasmer run wasmer/winter --net --mapdir=tests:tests tests/simple.js`.
+You can run the HTTP server locally with `wasmer run wasmer/winter --net --mapdir=tests:tests tests/simple.js`.
 
 Where `simple.js` is:
 
