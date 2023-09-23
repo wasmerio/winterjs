@@ -1,0 +1,20 @@
+[package]
+name = 'wasmer-examples/winter-js-echo'
+version = '0.2.0'
+description = 'Javascript echo server using winter-js.'
+
+# See more keys and definitions at https://docs.wasmer.io/registry/manifest
+
+[[module]]
+name = "wasmer-winter"
+source = "./wasmer-winter.wasm"
+abi = "wasi"
+
+[[command]]
+name = "wasmer-winter"
+module = "wasmer-winter"
+runner = "https://webc.org/runner/wasi"
+annotations = {wasi = {main-args = ["/app/app.js"], env = ["JS_PATH=/app/app.js"]}}
+
+[fs]
+app = "./app"
