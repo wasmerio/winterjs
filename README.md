@@ -1,10 +1,19 @@
 # Wasmer Winter
 
-The JavaScript runtime that brings JavaScript to Wasmer Edge.
+The JavaScript runtime that brings JavaScript to Wasmer Edge via the [Winter Community Group specification](https://wintercg.org/).
 
-The package is [published in Wasmer as `wasmer/winter`](https://wasmer.io/wasmer/winter).
+The application is [published in Wasmer as `wasmer/winter`](https://wasmer.io/wasmer/winter).
 
-You can run it locally with `wasmer run wasmer/winter simple.js --net`.
+You can run it locally with `wasmer run wasmer/winter --net --mapdir=tests:tests tests/simple.js`.
+
+Where `simple.js` is:
+
+```js
+addEventListener('fetch', (req) => {
+  return "hello";
+});
+```
+
 And then access the server in https://localhost:8080/
 
 ## How it works

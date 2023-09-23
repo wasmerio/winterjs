@@ -184,6 +184,7 @@ fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), any
     };
     assert!(!function.is_null());
 
+    #[cfg(feature = "fetch")]
     let function = unsafe {
         JS_DefineFunction(
             cx,
@@ -194,6 +195,7 @@ fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), any
             0,
         )
     };
+    #[cfg(feature = "fetch")]
     assert!(!function.is_null());
 
     // Evaluate custom js setup code.

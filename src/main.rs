@@ -23,7 +23,7 @@ macro_rules! js_try {
         }
     };
 }
-
+#[cfg(feature = "client-fetch")]
 mod client_fetch;
 mod error;
 mod fetch;

@@ -1,0 +1,23 @@
+[package]
+name = 'wasmer/winter'
+version = '0.1.0'
+description = 'The JavaScript runtime that brings JavaScript to Wasmer Edge.'
+license = 'MIT'
+readme = 'README.md'
+repository = 'https://github.com/wasmerio/wasmer-winter/'
+
+# See more keys and definitions at https://docs.wasmer.io/registry/manifest
+
+[dependencies]
+
+[[module]]
+name = 'wasmer-winter'
+source = 'target/wasm32-wasmer-wasi/release/wasmer-winter.wasm'
+abi = 'wasi'
+
+[module.interfaces]
+wasi = '0.1.0-unstable'
+
+[[command]]
+name = 'wasmer-winter'
+module = 'wasmer-winter'
