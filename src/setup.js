@@ -224,7 +224,7 @@ globalThis.Response = Response;
     if ((typeof __native_fetch) !== 'undefined') {
       globalThis.fetch = function (url, params) {
         let result = new Promise((resolve, reject) => {
-          __native_fetch(resolve, reject, url, params);
+          __native_fetch(resolve, reject, url?.toString(), params || {});
         });
         return result;
       };

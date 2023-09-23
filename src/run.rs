@@ -753,6 +753,18 @@ pub(super) fn raw_handle_to_string(
     }
 }
 
+pub(super) fn raw_handle_to_object(
+    handle: mozjs::jsapi::JS::Handle<Value>,
+) -> Result<*mut JSObject, anyhow::Error> {
+    unsafe {
+        let arg = mozjs::rust::Handle::from_raw(handle);
+        if !arg.is_object_or_null() {
+            bail!("supplied argument is not an object");
+        }
+        Ok(arg.to_object_or_null())
+    }
+}
+
 unsafe extern "C" fn log(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
     let args = CallArgs::from_vp(vp, argc);
 
@@ -768,7 +780,7 @@ unsafe extern "C" fn log(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool 
     }
 }
 
-fn has_property(
+pub(super) fn has_property(
     cx: *mut JSContext,
     obj: HandleObject<'_>,
     key: &str,
@@ -803,7 +815,7 @@ fn has_property(
     Ok(out)
 }
 
-fn get_property_raw(
+pub(super) fn get_property_raw(
     cx: *mut JSContext,
     obj: Handle<'_, *mut JSObject>,
     key: &str,
@@ -826,7 +838,7 @@ fn get_property_raw(
     Ok(())
 }
 
-fn get_property<T>(
+pub(super) fn get_property<T>(
     cx: *mut JSContext,
     obj: Handle<'_, *mut JSObject>,
     key: &str,
@@ -881,7 +893,7 @@ where
     Ok(value)
 }
 
-fn set_property<T>(
+pub(super) fn set_property<T>(
     cx: *mut JSContext,
     obj: Handle<'_, *mut JSObject>,
     key: &str,
