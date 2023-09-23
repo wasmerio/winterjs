@@ -3,6 +3,7 @@
 /Cargo.lock
 .direnv
 .envrc
+__pycache__
 
 # Keep this in sync with ignore() in build.rs
 
