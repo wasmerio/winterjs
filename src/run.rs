@@ -27,6 +27,7 @@ use mozjs::jsapi::{
     JS_NewGlobalObject, JS_NewObject, JS_NewPlainObject, JS_ObjectIsFunction, JS_ReportErrorASCII,
     JS_SetProperty, OnNewGlobalHookOption, PromiseState, RunJobs, Value,
 };
+use mozjs::jsval::{DoubleValue, JSVal};
 use mozjs::jsval::{ObjectValue, UndefinedValue};
 use mozjs::rooted;
 use mozjs::rust::jsapi_wrapped::JS_GetProperty;
@@ -38,8 +39,8 @@ use mozjs::rust::MutableHandleObject;
 use mozjs::rust::MutableHandleValue;
 use mozjs::rust::{IntoHandle, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs::typedarray::Uint8Array;
-use mozjs::jsval::{DoubleValue, JSVal};
 use tokio::select;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::time::sleep;
 use tokio::time::Sleep;
 
@@ -151,7 +152,7 @@ thread_local! {
     pub(super) static FUTURES: RefCell<
         Option<
             tokio::sync::mpsc::UnboundedSender<
-                Box<dyn Future<Output = ()> + Send + Sync + Unpin + 'static>
+                Pin<Box<dyn Future<Output = ()> + 'static>>
             >
         >
     > = RefCell::new(None);
@@ -184,19 +185,20 @@ fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), any
     };
     assert!(!function.is_null());
 
-    #[cfg(feature = "fetch")]
-    let function = unsafe {
-        JS_DefineFunction(
-            cx,
-            global.into(),
-            b"__native_fetch\0".as_ptr() as *const i8,
-            Some(crate::client_fetch::fetch),
-            2,
-            0,
-        )
-    };
-    #[cfg(feature = "fetch")]
-    assert!(!function.is_null());
+    #[cfg(feature = "client-fetch")]
+    {
+        let function = unsafe {
+            JS_DefineFunction(
+                cx,
+                global.into(),
+                b"__native_fetch\0".as_ptr() as *const i8,
+                Some(crate::client_fetch::fetch),
+                2,
+                0,
+            )
+        };
+        assert!(!function.is_null());
+    }
 
     // Evaluate custom js setup code.
     {
@@ -321,20 +323,32 @@ pub fn run_request(
         if is_promise {
             let mut futures = Box::pin(FuturesUnordered::new());
 
-            let mut run_jobs = Box::pin(run_jobs(cx));
             loop {
-                select! {
-                    _ = run_jobs.as_mut() => {
-                        break;
+                if unsafe { !HasJobsPending(cx) } && futures.is_empty() {
+                    break;
+                }
+
+                // TODO: is this fair?
+                // First, run jobs as far as possible
+                unsafe {
+                    while HasJobsPending(cx) {
+                        RunJobs(cx);
+                        ErrorInfo::check_context(cx)?;
                     }
-                    _ = futures.next() => {
-                        continue;
+                }
+
+                // Second, wait for new futures from native callbacks
+                loop {
+                    match future_rx.try_recv() {
+                        Ok(f) => futures.push(f),
+                        Err(TryRecvError::Disconnected) => bail!("Futures channel interrupted"),
+                        Err(TryRecvError::Empty) => break,
                     }
-                    f = future_rx.recv() => {
-                        if let Some(fut) = f {
-                            futures.push(fut);
-                        }
-                    }
+                }
+
+                // Last, run one of the existing futures
+                if !futures.is_empty() {
+                    futures.next().await;
                 }
             }
 
@@ -369,7 +383,7 @@ pub fn run_request(
 
                     let msg = match res {
                         ConversionResult::Success(v) => v,
-                        ConversionResult::Failure(v) => bail!("could not read promise error"),
+                        ConversionResult::Failure(_) => bail!("could not read promise error"),
                     };
                     bail!("promise failed: {msg}");
                 }
@@ -644,43 +658,6 @@ fn http_headers_from_object(
 //     todo!()
 // }
 
-/// Run the Javascript promise job queue.
-fn run_jobs(cx: *mut JSContext) -> RunJobs {
-    RunJobs { cx, sleep: None }
-}
-
-struct RunJobs {
-    cx: *mut JSContext,
-    sleep: Option<Pin<Box<Sleep>>>,
-}
-
-impl Future for RunJobs {
-    type Output = Result<(), anyhow::Error>;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Self::Output> {
-        unsafe {
-            if HasJobsPending(self.cx) {
-                RunJobs(self.cx);
-                match ErrorInfo::check_context(self.cx) {
-                    Err(f) => Poll::Ready(Err(f)),
-                    Ok(_) => {
-                        let sleep = Box::pin(sleep(Duration::from_millis(1)));
-                        self.as_mut().sleep.replace(sleep);
-                        Pin::new(self.sleep.as_mut().unwrap())
-                            .poll(cx)
-                            .map(|()| Ok(()))
-                    }
-                }
-            } else {
-                Poll::Ready(Ok(()))
-            }
-        }
-    }
-}
-
 struct FuturesDropGuard;
 
 impl Drop for FuturesDropGuard {
@@ -734,10 +711,26 @@ unsafe extern "C" fn performance_now(context: *mut JSContext, argc: u32, vp: *mu
     true
 }
 
-fn report_js_error(cx: *mut JSContext, message: impl AsRef<str>) {
+pub(super) fn report_js_error(cx: *mut JSContext, message: impl AsRef<str>) {
     let c = std::ffi::CString::new(message.as_ref()).unwrap();
     unsafe {
         JS_ReportErrorASCII(cx, c.as_ptr());
+    }
+}
+
+pub(super) fn check_raw_handle_is_function(
+    handle: mozjs::jsapi::JS::Handle<Value>,
+) -> Result<mozjs::jsapi::JS::Handle<Value>, anyhow::Error> {
+    unsafe {
+        if !handle.is_object() {
+            bail!("supplied argument is not a function");
+        }
+        let obj = handle.to_object();
+        if !JS_ObjectIsFunction(obj) {
+            bail!("supplied argument is not a function");
+        }
+
+        Ok(handle)
     }
 }
 
@@ -975,7 +968,7 @@ where
 // }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use hyper::{Body, Method};
 
     use crate::{error::ErrorInfo, fetch::ResponseData};
