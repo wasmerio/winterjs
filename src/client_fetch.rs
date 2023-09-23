@@ -2,11 +2,12 @@ use crate::run::*;
 use anyhow::{bail, Context};
 use http::{request, Method};
 use mozjs::conversions::ToJSValConvertible;
-use mozjs::jsval::{NullValue, UndefinedValue};
+use mozjs::jsval::{JSVal, NullValue, ObjectValue, UndefinedValue};
 use mozjs::rooted;
 
 use mozjs::jsapi::{
-    CallArgs, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue, JS_GetProperty, Value,
+    CallArgs, HandleObject, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue,
+    JS_GetProperty, JS_NewObject, Value,
 };
 use reqwest::Request;
 
@@ -92,12 +93,12 @@ async fn execute_request(
     cx: *mut JSContext,
     url: &str,
     params: *mut JSObject,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<JSVal> {
     rooted!(in(cx) let params = params);
 
     let method = if has_property(cx, params.handle(), "method")? {
         rooted!(in(cx) let mut val = UndefinedValue());
-        get_property_raw(cx, params.handle(), "method", val.handle_mut());
+        get_property_raw(cx, params.handle(), "method", val.handle_mut())?;
         if val.is_null_or_undefined() {
             Method::GET
         } else {
@@ -127,10 +128,18 @@ async fn execute_request(
         .await
         .context("Failed to execute request")?;
 
-    result
+    let body = result
         .text()
         .await
-        .context("Failed to read response body as text")
+        .context("Failed to read response body as text")?;
+
+    let response_obj = unsafe { JS_NewObject(cx, std::ptr::null()) };
+    rooted!(in(cx) let response = response_obj);
+    let response_handle = response.handle();
+    set_property(cx, response_handle, "body", &body)?;
+
+    rooted!(in(cx) let response = ObjectValue(response_obj));
+    Ok(response.get())
 }
 
 #[cfg(test)]
@@ -145,8 +154,8 @@ mod tests {
               const body = await req.text();
               console.log("Fetching: " + body);
               const fetched = await fetch(body, {method: "POST"});
-              console.log("Fetch result: " + fetched);
-              return new Response(fetched, {headers: new Headers(), status: 200});
+              console.log("Fetch result: " + fetched.body);
+              return new Response(fetched.body, {headers: new Headers(), status: 200});
             });
         "#;
 
