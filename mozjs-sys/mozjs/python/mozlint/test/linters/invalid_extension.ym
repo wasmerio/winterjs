@@ -1,5 +1,0 @@
----
-BadExtensionLinter:
-    description: Has an invalid file extension.
-    type: string
-    payload: foobar

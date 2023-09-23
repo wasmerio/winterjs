@@ -1,4 +1,0 @@
-BROWSER_CHROME_MANIFESTS += [
-    "juniper/browser.ini",
-    "kiwi/browser.ini",
-]

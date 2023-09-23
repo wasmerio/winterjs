@@ -1,1 +1,0 @@
-pth:third_party/python/vsdownload
