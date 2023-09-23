@@ -476,6 +476,12 @@ async function handler(req) {
     <small>
     You can now deploy Javascript apps to Wasmer Edge, powered by Spidermonkey, the Winter-CG spec and serverice workers.
     </small>
+
+    <img src="https://media.tenor.com/cUI5hCKFs50AAAAC/winter-is-coming-night-king.gif" />
+
+    <br />
+    <br />
+
     `;
     tpl = tpl.replace('{{MESSAGE}}', msg);
   } else {
