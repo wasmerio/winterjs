@@ -1,2 +1,0 @@
-enableGeckoProfiling();
-Object.getOwnPropertyNames(this);

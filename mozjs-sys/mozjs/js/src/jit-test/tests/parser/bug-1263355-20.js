@@ -1,2 +1,0 @@
-{ function c() {} }
-class c { }

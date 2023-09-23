@@ -1,20 +1,13 @@
 [workspace]
-members = ["mozjs", "mozjs-sys", "wasmer-jassy"]
+members = ["wasmer-winter"]
 resolver = "2"
 
 [workspace.package]
-repository = "https://github.com/servo/mozjs/"
-license = "MPL-2.0"
+repository = "https://github.com/wasmerio/wasmer-winter/"
+license = "MIT"
 edition = "2021"
 
 [workspace.dependencies]
-cc = "1"
-libc = "0.2"
-bindgen = { version = "0.68", default-features = false, features = [
-    "runtime",
-    "which-rustfmt",
-] }
+libc = "=0.2.139"
 
 [patch.crates-io]
-# until version with https://github.com/rust-lang/libz-sys/pull/157 is released
-libz-sys = { git = "https://github.com/rust-lang/libz-sys", branch = "main" }

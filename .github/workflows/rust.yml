@@ -91,63 +91,6 @@ jobs:
         run: |
           cargo test --verbose --target ${{ matrix.target }} ${{ matrix.features }}
 
-  android:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Install NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r25c
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: armv7-linux-androideabi
-      - name: Build
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: |
-          ./android-build cargo build --target="armv7-linux-androideabi"
-
-  linux-cross-compile:
-    name: linux (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - aarch64-unknown-linux-gnu
-          - armv7-unknown-linux-gnueabihf
-    container: ghcr.io/servo/cross-${{ matrix.target }}:main
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - run: cargo test --target ${{ matrix.target }}
-
-  integrity:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Get mozjs
-        run: |
-          bash ./mozjs-sys/etc/get_mozjs.sh
-      - name: Apply patch
-        run: |
-          python3 ./mozjs-sys/etc/update.py --no-commit mozjs.tar.xz
-          # Run `git add` here to force CRLF converted into LF
-          # so that we can check diff properly in next run
-          git add --all mozjs
-      - name: Check patch integrity
-        working-directory: ./mozjs-sys
-        # Because we've added files in previous run, we need to
-        # check diff with `--staged`.
-        run: |
-          git diff --staged --no-ext-diff --quiet --exit-code
-
   build_result:
     name: Result
     runs-on: ubuntu-latest

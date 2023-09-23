@@ -1,2 +1,0 @@
-eval();
-try {} catch (abc) {};

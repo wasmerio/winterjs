@@ -1,4 +1,0 @@
-function globalPrototypeChainIsMutable()
-{
-  return false;
-}

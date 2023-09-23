@@ -1,3 +1,0 @@
-verifypostbarriers()
-verifyprebarriers()
-verifypostbarriers()

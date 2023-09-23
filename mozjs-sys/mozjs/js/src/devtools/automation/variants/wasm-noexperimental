@@ -1,7 +1,0 @@
-{
-    "configure-args": "--wasm-no-experimental",
-    "debug": true,
-    "skip-tests": {
-        "all": ["jstests", "jsapitests"]
-    }
-}
