@@ -11,8 +11,8 @@ edition = "2021"
 [dependencies]
 lazy_static = "1.4.0"
 anyhow = "1.0.75"
-# mozjs = { git = "https://github.com/wasmerio/mozjs.git", branch="wasi" }
-mozjs = { path = "../mozjs/mozjs" }
+mozjs = { git = "https://github.com/wasmerio/mozjs.git", branch="wasi" }
+# mozjs = { path = "../mozjs/mozjs" }
 hyper = { version = "0.14.27", features = ["server", "http1", "tcp"] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }
