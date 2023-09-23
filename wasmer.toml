@@ -15,9 +15,6 @@ name = 'wasmer-winter'
 source = 'target/wasm32-wasmer-wasi/release/wasmer-winter.wasm'
 abi = 'wasi'
 
-[module.interfaces]
-wasi = '0.1.0-unstable'
-
 [[command]]
 name = 'wasmer-winter'
 module = 'wasmer-winter'
