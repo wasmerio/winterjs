@@ -1,15 +1,16 @@
+use std::str::FromStr;
+
 use crate::run::*;
 use anyhow::{bail, Context};
-use http::{request, Method};
+use http::{HeaderName, HeaderValue, Method};
 use mozjs::conversions::ToJSValConvertible;
 use mozjs::jsval::{JSVal, NullValue, ObjectValue, UndefinedValue};
 use mozjs::rooted;
 
 use mozjs::jsapi::{
-    CallArgs, HandleObject, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue,
-    JS_GetProperty, JS_NewObject, Value,
+    CallArgs, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue, JS_NewObject, Value,
 };
-use reqwest::Request;
+use reqwest::{Request, Response};
 
 pub(super) unsafe extern "C" fn fetch(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
     let args = CallArgs::from_vp(vp, argc);
@@ -94,6 +95,18 @@ async fn execute_request(
     url: &str,
     params: *mut JSObject,
 ) -> anyhow::Result<JSVal> {
+    let request = build_request(cx, url, params)?;
+    let client = reqwest::ClientBuilder::new().build()?;
+
+    let response = client
+        .execute(request)
+        .await
+        .context("Failed to execute request")?;
+
+    build_response(cx, response).await
+}
+
+fn build_request(cx: *mut JSContext, url: &str, params: *mut JSObject) -> anyhow::Result<Request> {
     rooted!(in(cx) let params = params);
 
     let method = if has_property(cx, params.handle(), "method")? {
@@ -119,16 +132,34 @@ async fn execute_request(
         Method::GET
     };
 
-    let request = Request::new(method, url.parse().context("Invalid URL")?);
+    let mut request = Request::new(method, url.parse().context("Invalid URL")?);
 
-    let client = reqwest::ClientBuilder::new().build()?;
+    if has_property(cx, params.handle(), "headers")? {
+        let request_headers = request.headers_mut();
 
-    let result = client
-        .execute(request)
-        .await
-        .context("Failed to execute request")?;
+        rooted!(in(cx) let mut headers_obj = UndefinedValue());
+        get_property_raw(cx, params.handle(), "headers", headers_obj.handle_mut())?;
+        if !headers_obj.is_object() {
+            bail!("Headers should be an object");
+        }
 
-    let body = result
+        let keys = all_keys(cx, headers_obj.handle())?;
+        rooted!(in(cx) let headers_obj = headers_obj.to_object());
+
+        for key in keys {
+            let val = get_property::<String>(cx, headers_obj.handle(), key.as_str(), ())?;
+            request_headers.append(
+                HeaderName::from_str(key.as_str())?,
+                HeaderValue::from_str(val.as_str())?,
+            );
+        }
+    }
+
+    Ok(request)
+}
+
+async fn build_response(cx: *mut JSContext, response: Response) -> anyhow::Result<Value> {
+    let body = response
         .text()
         .await
         .context("Failed to read response body as text")?;
@@ -153,7 +184,12 @@ mod tests {
             addEventListener('fetch', async (req) => {
               const body = await req.text();
               console.log("Fetching: " + body);
-              const fetched = await fetch(body, {method: "POST"});
+              const fetched = await fetch(body, {
+                method: "POST",
+                headers: {
+                  'X-SOME-HEADER': 'Header value'
+                }
+              });
               console.log("Fetch result: " + fetched.body);
               return new Response(fetched.body, {headers: new Headers(), status: 200});
             });

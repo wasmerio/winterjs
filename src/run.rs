@@ -10,6 +10,7 @@ use std::str::FromStr;
 use std::task::Poll;
 use std::time::Duration;
 
+use anyhow::anyhow;
 use anyhow::{bail, Context as _};
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
@@ -21,12 +22,16 @@ use mozjs::conversions::FromJSValConvertible;
 use mozjs::conversions::ToJSValConvertible;
 use mozjs::gc::Handle;
 use mozjs::glue::EncodeStringToUTF8;
+use mozjs::jsapi::JSProtoKey;
+use mozjs::jsapi::JS_GetClassObject;
+use mozjs::jsapi::JS_GetClassPrototype;
 use mozjs::jsapi::{
     CallArgs, HandleValueArray, HasJobsPending, IsPromiseObject, JSAutoRealm, JSContext, JSObject,
     JS_CallFunctionName, JS_CallFunctionValue, JS_DefineFunction, JS_IsExceptionPending,
     JS_NewGlobalObject, JS_NewObject, JS_NewPlainObject, JS_ObjectIsFunction, JS_ReportErrorASCII,
     JS_SetProperty, OnNewGlobalHookOption, PromiseState, RunJobs, Value,
 };
+use mozjs::jsval::NullValue;
 use mozjs::jsval::{DoubleValue, JSVal};
 use mozjs::jsval::{ObjectValue, UndefinedValue};
 use mozjs::rooted;
@@ -777,6 +782,46 @@ unsafe extern "C" fn log(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool 
             true
         }
         Err(_) => false,
+    }
+}
+
+pub(super) fn all_keys(cx: *mut JSContext, obj: HandleValue<'_>) -> anyhow::Result<Vec<String>> {
+    unsafe {
+        rooted!(in(cx) let mut obj_class = JS_NewObject(cx, ptr::null()));
+        if !JS_GetClassObject(
+            cx,
+            JSProtoKey::JSProto_Object,
+            obj_class.handle_mut().into(),
+        ) {
+            bail!("Failed to get Object prototype");
+        }
+
+        rooted!(in(cx) let mut keys_func = UndefinedValue());
+        get_property_raw(cx, obj_class.handle(), "keys", keys_func.handle_mut())?;
+
+        let keys_func = check_raw_handle_is_function(keys_func.handle().into())?;
+
+        let func_args = HandleValueArray::from_rooted_slice(&[*obj]);
+        rooted!(in(cx) let thisval = NullValue().to_object_or_null());
+        rooted!(in(cx) let mut rval = UndefinedValue());
+
+        if !JS_CallFunctionValue(
+            cx,
+            thisval.handle().into(),
+            keys_func,
+            &func_args,
+            rval.handle_mut().into(),
+        ) {
+            bail!("Failed to call Object.keys");
+        }
+
+        let result = Vec::<String>::from_jsval(cx, rval.handle(), ())
+            .map_err(|_| anyhow!("Failed to convert keys to Vec<String>"))?;
+
+        match result {
+            ConversionResult::Success(v) => Ok(v),
+            ConversionResult::Failure(_) => bail!("Failed to convert keys to Vec<String>"),
+        }
     }
 }
 
