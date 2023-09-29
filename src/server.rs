@@ -2,18 +2,31 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 
 use anyhow::Context as _;
+use bytes::Bytes;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 
+pub trait RequestHandler: Send + Clone + 'static {
+    fn handle(
+        &self,
+        user_code: &str,
+        addr: SocketAddr,
+        req: http::request::Parts,
+        body: Option<Bytes>,
+    ) -> Result<hyper::Response<hyper::Body>, anyhow::Error>;
+}
+
 #[derive(Clone)]
-struct AppContext {
+struct AppContext<H: RequestHandler> {
     /// Javascript code.
     code: String,
+
+    handler: H,
 }
 
 async fn handle(
-    context: AppContext,
+    context: AppContext<impl RequestHandler>,
     addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
@@ -33,25 +46,27 @@ async fn handle(
 }
 
 async fn handle_inner(
-    context: AppContext,
+    context: AppContext<impl RequestHandler>,
     addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, anyhow::Error> {
-    let code = context.code.clone();
-
     let (parts, body) = req.into_parts();
     let body = hyper::body::to_bytes(body)
         .await
         .context("could not read body")?;
 
-    tokio::task::spawn_blocking(move || crate::run::run_request(&context.code, parts, Some(body)))
-        .await
-        .context("processing task failed")?
-        .context("javascript failed")
+    tokio::task::spawn_blocking(move || {
+        context
+            .handler
+            .handle(&context.code, addr, parts, Some(body))
+    })
+    .await
+    .context("processing task failed")?
+    .context("javascript failed")
 }
 
-pub async fn run_server(code: String) -> Result<(), anyhow::Error> {
-    let context = AppContext { code };
+pub async fn run_server<H: RequestHandler>(code: String, handler: H) -> Result<(), anyhow::Error> {
+    let context = AppContext { code, handler };
 
     let make_service = make_service_fn(move |conn: &AddrStream| {
         let context = context.clone();

@@ -3,7 +3,12 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use anyhow::{bail, Context};
+use runtime::config::Config;
 
+#[macro_use]
+extern crate ion_proc;
+
+#[allow(unused_macros)]
 macro_rules! fail_msg {
     ($cx:expr, $msg:expr) => {
         $crate::run::report_js_error($cx, $msg);
@@ -11,6 +16,7 @@ macro_rules! fail_msg {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! js_try {
     ($cx:expr, $expr:expr) => {
         match $expr {
@@ -27,6 +33,7 @@ macro_rules! js_try {
 mod client_fetch;
 mod error;
 mod fetch;
+mod ion_runner;
 mod run;
 mod server;
 
@@ -43,8 +50,6 @@ async fn run() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt::init();
 
     tracing::info!("starting webserver");
-
-    let _handle = &crate::run::ENGINE;
 
     let code = if let Ok(v) = std::env::var("JS_CODE") {
         v
@@ -63,5 +68,8 @@ async fn run() -> Result<(), anyhow::Error> {
             .with_context(|| format!("Could not read js file at '{}'", path))?
     };
 
-    crate::server::run_server(code).await
+    runtime::config::CONFIG
+        .set(Config::default().log_level(runtime::config::LogLevel::Error))
+        .unwrap();
+    crate::server::run_server(code, ion_runner::IonRunner).await
 }

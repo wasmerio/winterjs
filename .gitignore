@@ -5,10 +5,10 @@
 .envrc
 __pycache__
 
-# Keep this in sync with ignore() in build.rs
-
 *.pyc
 *.o
 *.so
 *.dll
 *.dylib
+
+.vscode
