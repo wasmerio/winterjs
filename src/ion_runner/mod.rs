@@ -1,5 +1,7 @@
 mod event_listener;
 mod performance;
+mod request;
+mod response;
 mod text_encoder;
 
 use std::{collections::HashMap, path::Path, str::FromStr};
@@ -8,18 +10,9 @@ use bytes::Bytes;
 use http::{header::ToStrError, HeaderName, HeaderValue};
 use ion::{
     conversions::{FromValue, IntoValue},
-    flags::IteratorFlags,
-    Context, ErrorReport, OwnedKey, Promise, Value,
+    ClassDefinition, Context, ErrorReport, Promise, Value,
 };
-use modules::http::{
-    header::{HeaderEntry, HeadersInit},
-    request::{RequestBuilderOptions, RequestOptions},
-    Resource,
-};
-use mozjs::{
-    conversions::ConversionBehavior,
-    rust::{JSEngine, JSEngineHandle},
-};
+use mozjs::rust::{JSEngine, JSEngineHandle};
 use runtime::{
     modules::{init_global_module, init_module, StandardModules},
     script::Script,
@@ -93,39 +86,28 @@ fn build_request<'cx>(
     req: http::request::Parts,
     body: Option<bytes::Bytes>,
 ) -> anyhow::Result<Value<'cx>> {
-    let mut uri = req.uri;
-    if let None = uri.host() {
-        uri = http::Uri::from_str(format!("https://app.wasmer.internal{uri}").as_str())?;
-    }
-
     let body_bytes = body.as_ref().map(|b| b.as_ref());
     let body = match (&req.method, body_bytes) {
         (&http::Method::GET, _) | (&http::Method::HEAD, _) | (_, Some(b"")) | (_, None) => None,
         _ => body,
     };
 
-    let request = modules::http::Request::constructor(
-        Resource::String(uri.to_string()),
-        Some(RequestBuilderOptions {
-            method: Some(req.method.to_string()),
-            options: RequestOptions {
-                body: body,
-                headers: HeadersInit::Array(
-                    req.headers
-                        .iter()
-                        .map(|h| {
-                            Result::<_, ToStrError>::Ok(HeaderEntry {
-                                name: h.0.to_string(),
-                                value: h.1.to_str().map(|x| x.to_string())?,
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                ),
-                ..Default::default()
-            },
-        }),
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to build request: {:?}", e))?;
+    let request = request::FetchRequest {
+        path: req.uri.to_string(),
+        method: req.method.to_string(),
+        headers: request::Headers(
+            req.headers
+                .iter()
+                .map(|h| {
+                    Result::<_, ToStrError>::Ok((
+                        h.0.to_string(),
+                        h.1.to_str().map(|x| x.to_string())?,
+                    ))
+                })
+                .collect::<Result<HashMap<_, _>, _>>()?,
+        ),
+        body: request::Body(body),
+    };
 
     let mut value = Value::undefined(&cx);
     unsafe { Box::new(request).into_value(&cx, &mut value) };
@@ -171,7 +153,7 @@ fn build_response<'cx>(
         return Ok(hyper_response.body(hyper::Body::from(bytes))?);
     }
 
-    let response = unsafe { Response::from_value(cx, &value, true, ()) }
+    let response = unsafe { response::Response::from_value(cx, &value, true, ()) }
         .map_err(|e| anyhow::anyhow!("Failed to read response object: {e:?}"))?;
 
     let mut hyper_response = hyper::Response::builder().status(response.status.unwrap_or(200));
@@ -225,60 +207,6 @@ impl crate::server::RequestHandler for IonRunner {
     }
 }
 
-#[derive(FromValue)]
-struct Response {
-    #[ion(convert = ConversionBehavior::EnforceRange)]
-    status: Option<u16>,
-
-    #[ion(parser = |v| parse_headers(cx, v))]
-    headers: Option<HashMap<String, String>>,
-
-    #[ion(parser = |v| parse_body(cx, v))]
-    body: Option<Bytes>,
-}
-
-fn parse_headers<'cx>(cx: &'cx Context, v: Value<'cx>) -> ion::Result<HashMap<String, String>> {
-    if v.handle().is_null() {
-        return Ok(Default::default());
-    }
-
-    let o = v.to_object(cx);
-    let mut res = HashMap::new();
-    for key in o.keys(cx, Some(IteratorFlags::OWN_ONLY)) {
-        let OwnedKey::String(key_str) = key.to_owned_key(cx) else {
-            return Err(ion::Error::new(
-                "Header keys must be strings",
-                ion::ErrorKind::Type,
-            ));
-        };
-        let val = o.get(cx, key).unwrap();
-        let val_str = unsafe { <String as FromValue>::from_value(cx, &val, false, ()) }?;
-        res.insert(key_str, val_str);
-    }
-    Ok(res)
-}
-
-fn parse_body<'cx>(cx: &'cx Context, v: Value<'cx>) -> ion::Result<Bytes> {
-    if v.handle().is_string() {
-        let str = unsafe { <String as FromValue>::from_value(cx, &v, false, ()) }?;
-        Ok(Bytes::from(str.into_bytes()))
-    } else {
-        let v = v.to_object(cx);
-        if let Ok(arr) = mozjs::typedarray::ArrayBuffer::from(v.handle().get()) {
-            Ok(Bytes::from(unsafe { arr.as_slice() }.to_owned()))
-        } else if let Ok(arr) = mozjs::typedarray::ArrayBufferView::from(v.handle().get()) {
-            Ok(Bytes::from(unsafe { arr.as_slice() }.to_owned()))
-        } else if let Ok(arr) = mozjs::typedarray::Uint8Array::from(v.handle().get()) {
-            Ok(Bytes::from(unsafe { arr.as_slice() }.to_owned()))
-        } else {
-            return Err(ion::Error::new(
-                "Unexpected type for response.body",
-                ion::ErrorKind::Type,
-            ));
-        }
-    }
-}
-
 struct Modules;
 
 impl StandardModules for Modules {
@@ -291,6 +219,7 @@ impl StandardModules for Modules {
             && init_module::<modules::PathM>(cx, global)
             && init_module::<modules::UrlM>(cx, global)
             && event_listener::define(cx, global)
+            && request::FetchRequest::init_class(cx, global).0
     }
 
     fn init_globals<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
@@ -302,5 +231,6 @@ impl StandardModules for Modules {
             && init_global_module::<modules::PathM>(cx, global)
             && init_global_module::<modules::UrlM>(cx, global)
             && event_listener::define(cx, global)
+            && request::FetchRequest::init_class(cx, global).0
     }
 }

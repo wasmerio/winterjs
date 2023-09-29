@@ -1,9 +1,10 @@
 addEventListener('fetch', async req => {
-    // let url = req.body;
-    let url = "https://google.com";
+    let url = req.text();
     console.log("Fetching", url);
+    let h = req.headers['x-wasmer-test'];
+    console.log("Header val:", h);
     let res = await fetch(url);
     let text = await res.text();
-    console.log("Fetched", text);
+    // console.log("Fetched", text);
     return text;
 });
