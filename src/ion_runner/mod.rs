@@ -6,7 +6,9 @@ mod text_encoder;
 
 use std::{collections::HashMap, path::Path, str::FromStr};
 
+use anyhow::bail;
 use bytes::Bytes;
+use futures::future::Either;
 use http::{header::ToStrError, HeaderName, HeaderValue};
 use ion::{
     conversions::{FromValue, IntoValue},
@@ -55,25 +57,23 @@ async fn handle_request(
 
     rt.run_event_loop().await.unwrap();
 
-    let request = build_request(&cx, req, body)?;
+    let request = build_request(req, body)?;
 
-    let result = event_listener::invoke_fetch_event_callback(&cx, &[request]).map_err(|e| {
+    let mut request_value = Value::undefined(&cx);
+    unsafe { Box::new(request).into_value(&cx, &mut request_value) };
+    let request_object = request_value.to_object(&cx);
+
+    event_listener::invoke_fetch_event_callback(&cx, &[request_value]).map_err(|e| {
         e.map(|e| error_report_to_anyhow_error(&cx, e))
             .unwrap_or(anyhow::anyhow!("Script execution failed"))
     })?;
 
-    // We only need to run the event loop if we don't have a result yet
-    let result = if result.handle().is_object()
-        && Promise::is_promise(&result.to_object(&cx).into_local())
-    {
-        let promise = Promise::from(result.to_object(&cx).into_local()).unwrap();
+    let request = <request::FetchRequest as ion::ClassDefinition>::get_private(&request_object);
 
-        rt.run_event_loop().await.unwrap();
+    let result = anyhow::Context::context(request.response.as_ref(), "No response provided")?;
 
-        Promise::result(&promise, &cx)
-    } else {
-        result
-    };
+    // Wait for a potential promise to finish running
+    rt.run_event_loop().await.unwrap();
 
     let response = build_response(&cx, result);
     std::mem::forget(rt);
@@ -82,10 +82,9 @@ async fn handle_request(
 }
 
 fn build_request<'cx>(
-    cx: &'cx Context,
     req: http::request::Parts,
     body: Option<bytes::Bytes>,
-) -> anyhow::Result<Value<'cx>> {
+) -> anyhow::Result<request::FetchRequest> {
     let body_bytes = body.as_ref().map(|b| b.as_ref());
     let body = match (&req.method, body_bytes) {
         (&http::Method::GET, _) | (&http::Method::HEAD, _) | (_, Some(b"")) | (_, None) => None,
@@ -107,74 +106,95 @@ fn build_request<'cx>(
                 .collect::<Result<HashMap<_, _>, _>>()?,
         ),
         body: request::Body(body),
+        response: None,
     };
 
-    let mut value = Value::undefined(&cx);
-    unsafe { Box::new(request).into_value(&cx, &mut value) };
-    Ok(value)
+    Ok(request)
 }
 
 fn build_response<'cx>(
     cx: &'cx Context,
-    value: Value<'cx>,
+    value: &Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
+    let value = match value {
+        Either::Right(obj) if Promise::is_promise(&cx.root_object(*obj)) => {
+            let result = Promise::from(cx.root_object(*obj)).unwrap().result(cx);
+            if result.handle().is_string() {
+                Either::Left(result.handle().to_string())
+            } else if result.handle().is_object() {
+                Either::Right(result.handle().to_object())
+            } else {
+                bail!("Response must be an object or a string")
+            }
+        }
+        _ => value.clone(),
+    };
+
     // First, check if the value is a string or byte array
-    let plain_response = if value.handle().is_string() {
-        let str = unsafe { <String as FromValue>::from_value(cx, &value, false, ()) }
-            .map_err(|_| anyhow::anyhow!("Failed to read response string"))?;
-        Some((Bytes::from(str.into_bytes()), "text/plain; charset=utf-8"))
-    } else {
-        let v = value.to_object(cx);
-        if let Ok(arr) = mozjs::typedarray::ArrayBuffer::from(v.handle().get()) {
-            Some((
-                Bytes::from(unsafe { arr.as_slice() }.to_owned()),
-                "application/octet-stream",
-            ))
-        } else if let Ok(arr) = mozjs::typedarray::ArrayBufferView::from(v.handle().get()) {
-            Some((
-                Bytes::from(unsafe { arr.as_slice() }.to_owned()),
-                "application/octet-stream",
-            ))
-        } else if let Ok(arr) = mozjs::typedarray::Uint8Array::from(v.handle().get()) {
-            Some((
-                Bytes::from(unsafe { arr.as_slice() }.to_owned()),
-                "application/octet-stream",
-            ))
-        } else {
-            None
+    let response = match value {
+        Either::Left(str) => {
+            let str = ion::String::from(cx.root_string(str)).to_owned(cx);
+            Either::Left((Bytes::from(str.into_bytes()), "text/plain; charset=utf-8"))
+        }
+        Either::Right(obj) => {
+            if let Ok(arr) = mozjs::typedarray::ArrayBuffer::from(obj) {
+                Either::Left((
+                    Bytes::from(unsafe { arr.as_slice() }.to_owned()),
+                    "application/octet-stream",
+                ))
+            } else if let Ok(arr) = mozjs::typedarray::ArrayBufferView::from(obj) {
+                Either::Left((
+                    Bytes::from(unsafe { arr.as_slice() }.to_owned()),
+                    "application/octet-stream",
+                ))
+            } else if let Ok(arr) = mozjs::typedarray::Uint8Array::from(obj) {
+                Either::Left((
+                    Bytes::from(unsafe { arr.as_slice() }.to_owned()),
+                    "application/octet-stream",
+                ))
+            } else {
+                Either::Right(Value::object(cx, &cx.root_object(obj).into()))
+            }
         }
     };
 
-    if let Some((bytes, mime_type)) = plain_response {
-        let mut hyper_response = hyper::Response::builder().status(200);
-        let headers =
-            anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
-        headers.append("Content-Type", HeaderValue::from_str(mime_type)?);
-        return Ok(hyper_response.body(hyper::Body::from(bytes))?);
-    }
+    match response {
+        // If it's a simple value, return it directly
+        Either::Left((bytes, mime_type)) => {
+            let mut hyper_response = hyper::Response::builder().status(200);
+            let headers =
+                anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
+            headers.append("Content-Type", HeaderValue::from_str(mime_type)?);
+            Ok(hyper_response.body(hyper::Body::from(bytes))?)
+        }
 
-    let response = unsafe { response::Response::from_value(cx, &value, true, ()) }
-        .map_err(|e| anyhow::anyhow!("Failed to read response object: {e:?}"))?;
+        // Else, construct a response from the response object
+        Either::Right(value) => {
+            let response = unsafe { response::Response::from_value(cx, &value, true, ()) }
+                .map_err(|e| anyhow::anyhow!("Failed to read response object: {e:?}"))?;
 
-    let mut hyper_response = hyper::Response::builder().status(response.status.unwrap_or(200));
+            let mut hyper_response =
+                hyper::Response::builder().status(response.status.unwrap_or(200));
 
-    let headers =
-        anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
-    if let Some(response_headers) = response.headers {
-        for header in response_headers {
-            headers.append(
-                HeaderName::from_str(header.0.as_str())?,
-                HeaderValue::from_str(header.1.as_str())?,
-            );
+            let headers =
+                anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
+            if let Some(response_headers) = response.headers {
+                for header in response_headers {
+                    headers.append(
+                        HeaderName::from_str(header.0.as_str())?,
+                        HeaderValue::from_str(header.1.as_str())?,
+                    );
+                }
+            }
+
+            let body = match response.body {
+                None => hyper::Body::empty(),
+                Some(bytes) => hyper::Body::from(bytes),
+            };
+
+            Ok(hyper_response.body(body)?)
         }
     }
-
-    let body = match response.body {
-        None => hyper::Body::empty(),
-        Some(bytes) => hyper::Body::from(bytes),
-    };
-
-    Ok(hyper_response.body(body)?)
 }
 
 fn error_report_to_anyhow_error(cx: &Context, error_report: ErrorReport) -> anyhow::Error {

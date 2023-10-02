@@ -83,6 +83,8 @@ impl<'cx> ToValue<'cx> for Body {
 
 #[js_class]
 mod class {
+    use futures::future::Either;
+
     use super::{Body, Headers};
 
     #[ion(into_value, no_constructor)]
@@ -91,6 +93,8 @@ mod class {
         pub(crate) method: String,
         pub(crate) headers: Headers,
         pub(crate) body: Body,
+        pub(crate) response:
+            Option<Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>>,
     }
 
     impl FetchRequest {
@@ -119,6 +123,30 @@ mod class {
                 .as_ref()
                 .map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
                 .unwrap_or_else(|| String::new())
+        }
+
+        #[ion(name = "respondWith")]
+        pub fn respond_with(&mut self, response: ion::Value) -> ion::Result<()> {
+            match self.response {
+                None => {
+                    if response.handle().is_object() {
+                        self.response = Some(Either::Right(response.handle().to_object()));
+                        Ok(())
+                    } else if response.handle().is_string() {
+                        self.response = Some(Either::Left(response.handle().to_string()));
+                        Ok(())
+                    } else {
+                        Err(ion::Error::new(
+                            "Response must be an object or a string",
+                            ion::ErrorKind::Type,
+                        ))
+                    }
+                }
+                Some(_) => Err(ion::Error::new(
+                    "Response was already provided once",
+                    ion::ErrorKind::Normal,
+                )),
+            }
         }
     }
 }

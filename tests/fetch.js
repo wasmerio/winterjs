@@ -1,4 +1,8 @@
 addEventListener('fetch', async req => {
+    req.respondWith(handleRequest(req));
+});
+
+async function handleRequest(req) {
     let url = req.text();
     console.log("Fetching", url);
     let h = req.headers['x-wasmer-test'];
@@ -7,4 +11,4 @@ addEventListener('fetch', async req => {
     let text = await res.text();
     // console.log("Fetched", text);
     return text;
-});
+}
