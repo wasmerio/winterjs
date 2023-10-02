@@ -63,14 +63,21 @@ async fn handle_request(
     unsafe { Box::new(request).into_value(&cx, &mut request_value) };
     let request_object = request_value.to_object(&cx);
 
-    event_listener::invoke_fetch_event_callback(&cx, &[request_value]).map_err(|e| {
-        e.map(|e| error_report_to_anyhow_error(&cx, e))
-            .unwrap_or(anyhow::anyhow!("Script execution failed"))
-    })?;
+    let callback_rval = event_listener::invoke_fetch_event_callback(&cx, &[request_value])
+        .map_err(|e| {
+            e.map(|e| error_report_to_anyhow_error(&cx, e))
+                .unwrap_or(anyhow::anyhow!("Script execution failed"))
+        })?;
 
     let request = <request::FetchRequest as ion::ClassDefinition>::get_private(&request_object);
 
-    let result = anyhow::Context::context(request.response.as_ref(), "No response provided")?;
+    let result = if let Some(response) = request.response.as_ref() {
+        response.clone()
+    } else if callback_rval.handle().is_object() || callback_rval.handle().is_string() {
+        value_to_object_or_string(callback_rval)?
+    } else {
+        bail!("No response provided");
+    };
 
     // Wait for a potential promise to finish running
     rt.run_event_loop().await.unwrap();
@@ -114,18 +121,12 @@ fn build_request<'cx>(
 
 fn build_response<'cx>(
     cx: &'cx Context,
-    value: &Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>,
+    value: Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
     let value = match value {
-        Either::Right(obj) if Promise::is_promise(&cx.root_object(*obj)) => {
-            let result = Promise::from(cx.root_object(*obj)).unwrap().result(cx);
-            if result.handle().is_string() {
-                Either::Left(result.handle().to_string())
-            } else if result.handle().is_object() {
-                Either::Right(result.handle().to_object())
-            } else {
-                bail!("Response must be an object or a string")
-            }
+        Either::Right(obj) if Promise::is_promise(&cx.root_object(obj)) => {
+            let result = Promise::from(cx.root_object(obj)).unwrap().result(cx);
+            value_to_object_or_string(result)?
         }
         _ => value.clone(),
     };
@@ -194,6 +195,18 @@ fn build_response<'cx>(
 
             Ok(hyper_response.body(body)?)
         }
+    }
+}
+
+fn value_to_object_or_string(
+    value: Value,
+) -> anyhow::Result<Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>> {
+    if value.handle().is_string() {
+        Ok(Either::Left(value.handle().to_string()))
+    } else if value.handle().is_object() {
+        Ok(Either::Right(value.handle().to_object()))
+    } else {
+        bail!("Value must be an object or a string")
     }
 }
 
