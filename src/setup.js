@@ -201,6 +201,16 @@ class Response {
 // Needed to make the class accessible from Rust code.
 globalThis.Response = Response;
 
+class FetchEvent {
+  constructor(request) {
+    this.request = request;
+  }
+
+  respondWith(response) {
+    this.__response = response;
+  }
+}
+
 (function() {
     // performance
     if ((typeof __native_performance_now) !== 'function') {
@@ -283,13 +293,23 @@ globalThis.Response = Response;
       if (!(request instanceof Request)) {
         throw new Error('request must be an instance of the Request class');
       }
+
+      let event = new FetchEvent(request);
       
       const items = Object.values(FETCH_HANDLERS);
       if (items.length === 0) {
         throw new Error("no fetch handlers registered");
       }
 
-      const res = items[0](request);
+      let res = items[0](event);
+
+      if (event.__response) {
+        if (typeof(event.__response) !== "object" && typeof(event.__response) !== "string") {
+          throw new Error("the argument to FetchEvent.respondWith must be an object or a string");
+        }
+
+        res = event.__response;
+      }
 
       if (!res) {
         throw new Error("fetch handler returned null");

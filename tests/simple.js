@@ -1,4 +1,4 @@
 
 addEventListener('fetch', (req) => {
-  return "hello";
+  req.respondWith("hello!");
 });
