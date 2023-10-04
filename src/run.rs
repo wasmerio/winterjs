@@ -329,10 +329,6 @@ pub fn run_request(
             let mut futures = Box::pin(FuturesUnordered::new());
 
             loop {
-                if unsafe { !HasJobsPending(cx) } && futures.is_empty() {
-                    break;
-                }
-
                 // TODO: is this fair?
                 // First, run jobs as far as possible
                 unsafe {
@@ -354,6 +350,11 @@ pub fn run_request(
                 // Last, run one of the existing futures
                 if !futures.is_empty() {
                     futures.next().await;
+                }
+
+                // If there's nothing left to do, we're done
+                if unsafe { !HasJobsPending(cx) } && futures.is_empty() {
+                    break;
                 }
             }
 
