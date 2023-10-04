@@ -159,15 +159,32 @@ fn build_request(cx: *mut JSContext, url: &str, params: *mut JSObject) -> anyhow
 }
 
 async fn build_response(cx: *mut JSContext, response: Response) -> anyhow::Result<Value> {
+    let resp_headers = response.headers();
+
+    // TODO: how do we get the Headers class?
+    let headers_obj = unsafe { JS_NewObject(cx, std::ptr::null()) };
+    rooted!(in(cx) let headers = headers_obj);
+    let headers_handle = headers.handle();
+    for header in resp_headers {
+        set_property(
+            cx,
+            headers_handle,
+            header.0.as_str(),
+            &header.1.to_str()?.to_string(),
+        )?;
+    }
+
     let body = response
         .text()
         .await
         .context("Failed to read response body as text")?;
+    // TODO: support binary body
 
     let response_obj = unsafe { JS_NewObject(cx, std::ptr::null()) };
     rooted!(in(cx) let response = response_obj);
     let response_handle = response.handle();
     set_property(cx, response_handle, "body", &body)?;
+    set_property(cx, response_handle, "headers", &headers_obj)?;
 
     rooted!(in(cx) let response = ObjectValue(response_obj));
     Ok(response.get())
