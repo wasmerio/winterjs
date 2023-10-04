@@ -240,6 +240,14 @@ class FetchEvent {
       };
     }
 
+    // atob, btoa
+    if ((typeof __native_atob) !== 'undefined') {
+      globalThis.atob = __native_atob;
+    }
+    if ((typeof __native_btoa) !== 'undefined') {
+      globalThis.btoa = __native_btoa;
+    }
+
     // events
     const FETCH_HANDLERS = {};
 

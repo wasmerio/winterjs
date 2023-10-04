@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 use anyhow::{bail, Context as _};
+use base64::Engine;
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
 use futures::{Stream, StreamExt};
@@ -32,6 +33,7 @@ use mozjs::jsapi::{
     JS_SetProperty, OnNewGlobalHookOption, PromiseState, RunJobs, Value,
 };
 use mozjs::jsval::NullValue;
+use mozjs::jsval::StringValue;
 use mozjs::jsval::{DoubleValue, JSVal};
 use mozjs::jsval::{ObjectValue, UndefinedValue};
 use mozjs::rooted;
@@ -170,9 +172,33 @@ fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), any
         JS_DefineFunction(
             cx,
             global.into(),
+            b"__native_atob\0".as_ptr() as *const i8,
+            Some(base64_decode),
+            1,
+            0,
+        )
+    };
+    assert!(!function.is_null());
+
+    let function = unsafe {
+        JS_DefineFunction(
+            cx,
+            global.into(),
+            b"__native_btoa\0".as_ptr() as *const i8,
+            Some(base64_encode),
+            1,
+            0,
+        )
+    };
+    assert!(!function.is_null());
+
+    let function = unsafe {
+        JS_DefineFunction(
+            cx,
+            global.into(),
             b"__native_performance_now\0".as_ptr() as *const i8,
             Some(performance_now),
-            2,
+            0,
             0,
         )
     };
@@ -703,11 +729,53 @@ fn read_runtime_exception(cx: *mut JSContext) -> anyhow::Error {
 
 const JS_SETUP: &str = include_str!("./setup.js");
 
+unsafe extern "C" fn base64_encode(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+    let args = CallArgs::from_vp(vp, argc);
+
+    if args.argc_ < 1 {
+        return false;
+    }
+
+    let source = js_try!(cx, raw_handle_to_string(cx, args.get(0)));
+    let result = base64::engine::general_purpose::STANDARD.encode(source.as_bytes());
+
+    rooted!(in(cx) let mut rval = UndefinedValue());
+    result.to_jsval(cx, rval.handle_mut());
+
+    args.rval().set(rval.get());
+
+    true
+}
+
+unsafe extern "C" fn base64_decode(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+    let args = CallArgs::from_vp(vp, argc);
+
+    if args.argc_ < 1 {
+        return false;
+    }
+
+    let source = js_try!(cx, raw_handle_to_string(cx, args.get(0)));
+    let Ok(result) = base64::engine::general_purpose::STANDARD.decode(source.as_bytes()) else {
+        return false;
+    };
+
+    let Ok(result) = String::from_utf8(result) else {
+        return false;
+    };
+
+    rooted!(in(cx) let mut rval = UndefinedValue());
+    result.to_jsval(cx, rval.handle_mut());
+
+    args.rval().set(rval.get());
+
+    true
+}
+
 lazy_static::lazy_static! {
     static ref PERFORMANCE_ORIGIN: std::time::Instant = std::time::Instant::now();
 }
 
-unsafe extern "C" fn performance_now(context: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn performance_now(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
     let args = CallArgs::from_vp(vp, argc);
 
     args.rval().set(DoubleValue(

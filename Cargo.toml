@@ -33,6 +33,7 @@ libc = "=0.2.139"
 tokio = { version = "=1.24.2", default-features = false, features = ["full"] }
 parking_lot = { version = "=0.12.1", features = ["nightly"] }
 url = "2.4.1"
+base64 = "0.21.4"
 
 [features]
 default = ["client-fetch"]

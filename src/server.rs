@@ -49,8 +49,6 @@ pub async fn run_server(code: String) -> Result<(), anyhow::Error> {
     let make_service = make_service_fn(move |conn: &AddrStream| {
         let context = context.clone();
 
-        let addr = conn.remote_addr();
-
         // Create a `Service` for responding to the request.
         let service = service_fn(move |req| handle(context.clone(), req));
 
