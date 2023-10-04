@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 
-use anyhow::Context as _;
+use anyhow::Context;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
@@ -12,12 +12,8 @@ struct AppContext {
     code: String,
 }
 
-async fn handle(
-    context: AppContext,
-    addr: SocketAddr,
-    req: Request<Body>,
-) -> Result<Response<Body>, Infallible> {
-    let res = match handle_inner(context, addr, req).await {
+async fn handle(context: AppContext, req: Request<Body>) -> Result<Response<Body>, Infallible> {
+    let res = match handle_inner(context, req).await {
         Ok(r) => r,
         Err(err) => {
             tracing::error!(error = format!("{err:#?}"), "could not process request");
@@ -34,11 +30,8 @@ async fn handle(
 
 async fn handle_inner(
     context: AppContext,
-    addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, anyhow::Error> {
-    let code = context.code.clone();
-
     let (parts, body) = req.into_parts();
     let body = hyper::body::to_bytes(body)
         .await
@@ -59,13 +52,21 @@ pub async fn run_server(code: String) -> Result<(), anyhow::Error> {
         let addr = conn.remote_addr();
 
         // Create a `Service` for responding to the request.
-        let service = service_fn(move |req| handle(context.clone(), addr, req));
+        let service = service_fn(move |req| handle(context.clone(), req));
 
         // Return the service to hyper.
         async move { Ok::<_, Infallible>(service) }
     });
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    let port = std::env::var("PORT")
+        .map(|x| {
+            x.parse()
+                .context(format!("Invalid port value {x}"))
+                .unwrap()
+        })
+        .unwrap_or(8080u16);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(listen=%addr, "starting server on {addr}");
 
     Server::bind(&addr)
