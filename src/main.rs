@@ -37,7 +37,7 @@ async fn main() {
 
 async fn run() -> Result<(), anyhow::Error> {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "wasmer_jassy=info,warn");
+        std::env::set_var("RUST_LOG", "wasmer_winter=info,warn");
     }
 
     tracing_subscriber::fmt::init();
