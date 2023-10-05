@@ -248,7 +248,10 @@ class FetchEvent {
       globalThis.fetch = function (url, params) {
         let result = new Promise((resolve, reject) => {
           __native_fetch(resolve, reject, url?.toString(), params || {});
-        }).then(resp => new Response(resp?.body, resp));
+        }).then(resp => {
+          console.log(resp);
+          return new Response(resp?.body, resp);
+        });
         return result;
       };
     }
