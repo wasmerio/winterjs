@@ -4,12 +4,13 @@ use crate::run::*;
 use anyhow::{bail, Context};
 use http::{HeaderName, HeaderValue, Method};
 use mozjs::conversions::ToJSValConvertible;
-use mozjs::jsval::{JSVal, NullValue, ObjectValue, UndefinedValue};
+use mozjs::jsval::{NullValue, ObjectValue, UndefinedValue};
 use mozjs::rooted;
 
 use mozjs::jsapi::{
-    CallArgs, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue, JS_NewObject, Value,
+    CallArgs, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue, JS_NewPlainObject, Value,
 };
+use mozjs::rust::HandleObject;
 use reqwest::{Request, Response};
 
 pub(super) unsafe extern "C" fn fetch(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
@@ -36,12 +37,14 @@ pub(super) unsafe extern "C" fn fetch(cx: *mut JSContext, argc: u32, vp: *mut Va
     };
 
     let fut = Box::pin(async move {
-        match execute_request(cx, url.as_str(), params).await {
-            Ok(text) => {
-                rooted!(in(cx) let mut inval = UndefinedValue());
-                text.to_jsval(cx, inval.handle_mut());
+        rooted!(in(cx) let response_rooted = unsafe { JS_NewPlainObject(cx) });
 
-                let func_args = unsafe { HandleValueArray::from_rooted_slice(&[*inval]) };
+        match execute_request(cx, url.as_str(), params, response_rooted.handle()).await {
+            Ok(()) => {
+                rooted!(in(cx) let arg1 = ObjectValue(response_rooted.get()));
+
+                let slice = [*arg1];
+                let func_args = unsafe { HandleValueArray::from_rooted_slice(&slice) };
 
                 rooted!(in(cx) let thisval = NullValue().to_object_or_null());
                 rooted!(in(cx) let mut rval = UndefinedValue());
@@ -94,7 +97,8 @@ async fn execute_request(
     cx: *mut JSContext,
     url: &str,
     params: *mut JSObject,
-) -> anyhow::Result<JSVal> {
+    out_response: HandleObject<'_>,
+) -> anyhow::Result<()> {
     let request = build_request(cx, url, params)?;
     let client = reqwest::ClientBuilder::new().build()?;
 
@@ -103,7 +107,8 @@ async fn execute_request(
         .await
         .context("Failed to execute request")?;
 
-    build_response(cx, response).await
+    build_response(cx, response, out_response).await?;
+    Ok(())
 }
 
 fn build_request(cx: *mut JSContext, url: &str, params: *mut JSObject) -> anyhow::Result<Request> {
@@ -158,11 +163,15 @@ fn build_request(cx: *mut JSContext, url: &str, params: *mut JSObject) -> anyhow
     Ok(request)
 }
 
-async fn build_response(cx: *mut JSContext, response: Response) -> anyhow::Result<Value> {
+async fn build_response(
+    cx: *mut JSContext,
+    response: Response,
+    response_handle: HandleObject<'_>,
+) -> anyhow::Result<()> {
     let resp_headers = response.headers();
 
     // TODO: how do we get the Headers class?
-    let headers_obj = unsafe { JS_NewObject(cx, std::ptr::null()) };
+    let headers_obj = unsafe { JS_NewPlainObject(cx) };
     rooted!(in(cx) let headers = headers_obj);
     let headers_handle = headers.handle();
     for header in resp_headers {
@@ -180,14 +189,10 @@ async fn build_response(cx: *mut JSContext, response: Response) -> anyhow::Resul
         .context("Failed to read response body as text")?;
     // TODO: support binary body
 
-    let response_obj = unsafe { JS_NewObject(cx, std::ptr::null()) };
-    rooted!(in(cx) let response = response_obj);
-    let response_handle = response.handle();
     set_property(cx, response_handle, "body", &body)?;
     set_property(cx, response_handle, "headers", &headers_obj)?;
 
-    rooted!(in(cx) let response = ObjectValue(response_obj));
-    Ok(response.get())
+    Ok(())
 }
 
 #[cfg(test)]
