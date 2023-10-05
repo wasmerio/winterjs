@@ -10,7 +10,7 @@ use mozjs::rooted;
 use mozjs::jsapi::{
     CallArgs, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue, JS_NewPlainObject, Value,
 };
-use mozjs::rust::Handle;
+use mozjs::rust::HandleObject;
 use reqwest::{Request, Response};
 
 pub(super) unsafe extern "C" fn fetch(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
@@ -37,14 +37,14 @@ pub(super) unsafe extern "C" fn fetch(cx: *mut JSContext, argc: u32, vp: *mut Va
     };
 
     let fut = Box::pin(async move {
-        let response_obj = unsafe { JS_NewPlainObject(cx) };
-        rooted!(in(cx) let response_rooted = response_obj);
+        rooted!(in(cx) let response_rooted = unsafe { JS_NewPlainObject(cx) });
 
         match execute_request(cx, url.as_str(), params, response_rooted.handle()).await {
             Ok(()) => {
                 rooted!(in(cx) let arg1 = ObjectValue(response_rooted.get()));
 
-                let func_args = unsafe { HandleValueArray::from_rooted_slice(&[*arg1]) };
+                let slice = &[*arg1];
+                let func_args = unsafe { HandleValueArray::from_rooted_slice(slice) };
 
                 rooted!(in(cx) let thisval = NullValue().to_object_or_null());
                 rooted!(in(cx) let mut rval = UndefinedValue());
@@ -97,7 +97,7 @@ async fn execute_request(
     cx: *mut JSContext,
     url: &str,
     params: *mut JSObject,
-    out_response: Handle<'_, *mut JSObject>,
+    out_response: HandleObject<'_>,
 ) -> anyhow::Result<()> {
     let request = build_request(cx, url, params)?;
     let client = reqwest::ClientBuilder::new().build()?;
@@ -166,7 +166,7 @@ fn build_request(cx: *mut JSContext, url: &str, params: *mut JSObject) -> anyhow
 async fn build_response(
     cx: *mut JSContext,
     response: Response,
-    response_handle: Handle<'_, *mut JSObject>,
+    response_handle: HandleObject<'_>,
 ) -> anyhow::Result<()> {
     let resp_headers = response.headers();
 
