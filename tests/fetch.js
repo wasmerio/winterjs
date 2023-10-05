@@ -5,9 +5,9 @@ addEventListener('fetch', (req) => {
 
 async function doFetch() {
   let resp = await fetch("https://www.google.com");
-  let res = resp.body;
-  for (let h in resp.headers) {
-    res += `\n\t${h}: ${resp.headers[h]}`;
+  let res = await resp.text();
+  for (let h of resp.headers.toList()) {
+    res += `\n\t${h[0]}: ${h[1]}`;
   }
   return res;
 }

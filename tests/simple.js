@@ -1,4 +1,4 @@
 
 addEventListener('fetch', (req) => {
-  req.respondWith("hello!");
+  req.respondWith(`hello from ${req.request.url.href}`);
 });

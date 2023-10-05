@@ -235,6 +235,15 @@ fn setup(runtime: &mut Runtime, global: Handle<*mut JSObject>) -> Result<(), any
     {
         rooted!(in(cx) let mut rval = UndefinedValue());
 
+        let res = runtime.evaluate_script(global, URL_SETUP, "url.js", 0, rval.handle_mut());
+        if res.is_err() {
+            ErrorInfo::check_context(cx)?;
+            bail!("Unknown exception ocurred");
+        }
+    }
+    {
+        rooted!(in(cx) let mut rval = UndefinedValue());
+
         let res = runtime.evaluate_script(global, JS_SETUP, "setup.js", 0, rval.handle_mut());
         if res.is_err() {
             ErrorInfo::check_context(cx)?;
@@ -728,6 +737,8 @@ fn read_runtime_exception(cx: *mut JSContext) -> anyhow::Error {
 }
 
 const JS_SETUP: &str = include_str!("./setup.js");
+
+const URL_SETUP: &str = include_str!("./url.js");
 
 unsafe extern "C" fn base64_encode(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
     let args = CallArgs::from_vp(vp, argc);

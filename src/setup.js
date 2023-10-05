@@ -109,8 +109,11 @@ class Request {
       this.headers = new Headers();
     }
 
-    // FIXME: validate url
-    this.url = init?.url ?? '';
+    if (init?.url) {
+      this.url = new URL(init.url);
+    } else {
+      this.url = new URL("/");
+    }
 
     // FIXME: implement body validation / conversion
     this.body = init.body;
@@ -159,7 +162,6 @@ class Response {
     }
     this.headers = headers;
 
-
     if (body) {
       if (typeof body === 'string') {
         this.body = new TextEncoder().encode(body);
@@ -190,11 +192,11 @@ class Response {
   }
 
   async json() {
-    return JSON.parse(this.body);
+    return this.text().then(JSON.parse);
   }
 
   async text() {
-    return this.body;
+    return new TextDecoder().decode(this.body);
   }
 }
 
@@ -235,7 +237,7 @@ class FetchEvent {
       globalThis.fetch = function (url, params) {
         let result = new Promise((resolve, reject) => {
           __native_fetch(resolve, reject, url?.toString(), params || {});
-        });
+        }).then(resp => new Response(resp?.body, resp));
         return result;
       };
     }
