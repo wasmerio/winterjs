@@ -560,7 +560,8 @@ fn build_request(
     set_property(cx, opts.handle(), "method\0", &req.method.to_string())?;
 
     // url
-    set_property(cx, opts.handle(), "url\0", &req.uri.to_string())?;
+    let uri = format!("https://app.wasmer.internal{}", req.uri.to_string());
+    set_property(cx, opts.handle(), "url\0", &uri)?;
 
     // headers
     if !req.headers.is_empty() {
