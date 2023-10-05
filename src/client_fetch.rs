@@ -8,10 +8,9 @@ use mozjs::jsval::{NullValue, ObjectValue, UndefinedValue};
 use mozjs::rooted;
 
 use mozjs::jsapi::{
-    CallArgs, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue, JS_NewObject,
-    JS_NewPlainObject, Value,
+    CallArgs, HandleValueArray, JSContext, JSObject, JS_CallFunctionValue, JS_NewPlainObject, Value,
 };
-use mozjs::rust::{Handle, MutableHandle};
+use mozjs::rust::Handle;
 use reqwest::{Request, Response};
 
 pub(super) unsafe extern "C" fn fetch(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
@@ -38,12 +37,14 @@ pub(super) unsafe extern "C" fn fetch(cx: *mut JSContext, argc: u32, vp: *mut Va
     };
 
     let fut = Box::pin(async move {
-        let response = UndefinedValue();
-        rooted!(in(cx) let mut response_rooted = response);
-        match execute_request(cx, url.as_str(), params, response_rooted.handle_mut()).await {
+        let response_obj = unsafe { JS_NewPlainObject(cx) };
+        rooted!(in(cx) let response_rooted = response_obj);
+
+        match execute_request(cx, url.as_str(), params, response_rooted.handle()).await {
             Ok(()) => {
-                // rooted!(in(cx) let mut inval = UndefinedValue());
-                // response.to_jsval(cx, inval.handle_mut());
+                let response = UndefinedValue();
+                rooted!(in(cx) let mut response_rooted = response);
+                response_rooted.set(ObjectValue(response_obj));
 
                 let func_args = unsafe { HandleValueArray::from_rooted_slice(&[*response_rooted]) };
 
@@ -98,7 +99,7 @@ async fn execute_request(
     cx: *mut JSContext,
     url: &str,
     params: *mut JSObject,
-    mut out_response: MutableHandle<'_, Value>,
+    out_response: Handle<'_, *mut JSObject>,
 ) -> anyhow::Result<()> {
     let request = build_request(cx, url, params)?;
     let client = reqwest::ClientBuilder::new().build()?;
@@ -108,12 +109,7 @@ async fn execute_request(
         .await
         .context("Failed to execute request")?;
 
-    let response_obj = unsafe { JS_NewObject(cx, std::ptr::null()) };
-    rooted!(in(cx) let response_rooted = response_obj);
-
-    build_response(cx, response, response_rooted.handle()).await?;
-
-    out_response.set(ObjectValue(response_obj));
+    build_response(cx, response, out_response).await?;
     Ok(())
 }
 
