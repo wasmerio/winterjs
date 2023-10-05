@@ -46,7 +46,7 @@ async fn handle_inner(
 pub async fn run_server(code: String) -> Result<(), anyhow::Error> {
     let context = AppContext { code };
 
-    let make_service = make_service_fn(move |conn: &AddrStream| {
+    let make_service = make_service_fn(move |_conn: &AddrStream| {
         let context = context.clone();
 
         // Create a `Service` for responding to the request.

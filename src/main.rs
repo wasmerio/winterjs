@@ -4,12 +4,12 @@
 
 use anyhow::{bail, Context};
 
-macro_rules! fail_msg {
-    ($cx:expr, $msg:expr) => {
-        $crate::run::report_js_error($cx, $msg);
-        return false;
-    };
-}
+// macro_rules! fail_msg {
+//     ($cx:expr, $msg:expr) => {
+//         $crate::run::report_js_error($cx, $msg);
+//         return false;
+//     };
+// }
 
 macro_rules! js_try {
     ($cx:expr, $expr:expr) => {

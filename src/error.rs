@@ -8,15 +8,11 @@ use anyhow::bail;
 // use js::error::{throw_range_error, throw_type_error};
 #[cfg(feature = "js_backtrace")]
 use js::jsapi::StackFormat as JSStackFormat;
-use mozjs::jsapi::{
-    ExceptionStackBehavior, JSContext, JS_ClearPendingException, JS_IsExceptionPending,
-};
+use mozjs::jsapi::{JSContext, JS_ClearPendingException, JS_IsExceptionPending};
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
-use mozjs::rust::wrappers::{
-    JS_ErrorFromException, JS_GetPendingException, JS_SetPendingException,
-};
-use mozjs::rust::{HandleObject, HandleValue, MutableHandleValue};
+use mozjs::rust::wrappers::{JS_ErrorFromException, JS_GetPendingException};
+use mozjs::rust::{HandleObject, HandleValue};
 // use libc::c_uint;
 
 // use crate::script_runtime::JSContext as SafeJSContext;

@@ -1,43 +1,33 @@
 use std::cell::RefCell;
-use std::ffi::CStr;
 use std::ffi::CString;
 use std::future::Future;
-use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::ptr;
 use std::str;
 use std::str::FromStr;
-use std::task::Poll;
-use std::time::Duration;
 
 use anyhow::anyhow;
 use anyhow::{bail, Context as _};
 use base64::Engine;
 use bytes::Bytes;
 use futures::stream::FuturesUnordered;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use http::HeaderName;
 use mozjs::conversions::ConversionBehavior;
 use mozjs::conversions::ConversionResult;
 use mozjs::conversions::FromJSValConvertible;
 use mozjs::conversions::ToJSValConvertible;
 use mozjs::gc::Handle;
-use mozjs::glue::EncodeStringToUTF8;
 use mozjs::jsapi::JSProtoKey;
 use mozjs::jsapi::JS_GetClassObject;
-use mozjs::jsapi::JS_GetClassPrototype;
 use mozjs::jsapi::{
     CallArgs, HandleValueArray, HasJobsPending, IsPromiseObject, JSAutoRealm, JSContext, JSObject,
-    JS_CallFunctionName, JS_CallFunctionValue, JS_DefineFunction, JS_IsExceptionPending,
-    JS_NewGlobalObject, JS_NewObject, JS_NewPlainObject, JS_ObjectIsFunction, JS_ReportErrorASCII,
-    JS_SetProperty, OnNewGlobalHookOption, PromiseState, RunJobs, Value,
+    JS_CallFunctionName, JS_CallFunctionValue, JS_DefineFunction, JS_NewGlobalObject, JS_NewObject,
+    JS_NewPlainObject, JS_ObjectIsFunction, JS_ReportErrorASCII, JS_SetProperty,
+    OnNewGlobalHookOption, PromiseState, RunJobs, Value,
 };
-use mozjs::jsval::NullValue;
-use mozjs::jsval::StringValue;
-use mozjs::jsval::{DoubleValue, JSVal};
-use mozjs::jsval::{ObjectValue, UndefinedValue};
+use mozjs::jsval::{DoubleValue, NullValue, ObjectValue, UndefinedValue};
 use mozjs::rooted;
-use mozjs::rust::jsapi_wrapped::JS_GetProperty;
 use mozjs::rust::wrappers::Construct1;
 use mozjs::rust::HandleObject;
 use mozjs::rust::HandleValue;
@@ -46,14 +36,9 @@ use mozjs::rust::MutableHandleObject;
 use mozjs::rust::MutableHandleValue;
 use mozjs::rust::{IntoHandle, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs::typedarray::Uint8Array;
-use tokio::select;
 use tokio::sync::mpsc::error::TryRecvError;
-use tokio::time::sleep;
-use tokio::time::Sleep;
 
 use crate::error::ErrorInfo;
-use crate::fetch::RequestData;
-use crate::fetch::RequestIndex;
 
 // pub struct JsEnv {
 //     engine: JSEngine,
@@ -262,6 +247,7 @@ pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy
 });
 
 /// Run Javascript code in a context with Winter CG APIs.
+#[cfg(test)]
 pub fn run_code(user_code: &str) -> Result<(), anyhow::Error> {
     // let engine = JSEngine::init().unwrap();
 
@@ -568,7 +554,6 @@ fn build_request(
     if !constructor_raw.is_object() {
         bail!("could not retrieve Request constructor - not an object");
     }
-    rooted!(in(cx) let constructor = constructor_raw.to_object());
 
     // method
     rooted!(in(cx) let mut opts = unsafe { JS_NewPlainObject(cx) });
@@ -624,18 +609,10 @@ fn http_headers_to_vec(headers: http::HeaderMap) -> Result<Vec<Vec<String>>, any
 
         match value.to_str() {
             Ok(v) => {
-                match value.to_str() {
-                    Ok(v) => {
-                        items.push(vec![key, v.to_string()]);
-                    }
-                    Err(_) => {
-                        // FIXME: implement non-utf8 header values
-                        tracing::warn!("ignoring non-utf8 header value for header '{key}'");
-                    }
-                }
+                items.push(vec![key, v.to_string()]);
             }
             Err(_) => {
-                // FIXME: support non-utf8 header values
+                // FIXME: implement non-utf8 header values
                 tracing::warn!("ignoring non-utf8 header value for header '{key}'");
             }
         }
@@ -644,56 +621,56 @@ fn http_headers_to_vec(headers: http::HeaderMap) -> Result<Vec<Vec<String>>, any
     Ok(items)
 }
 
-fn http_headers_to_object(
-    cx: *mut JSContext,
-    out: MutableHandleValue,
-    headers: http::HeaderMap,
-) -> Result<(), anyhow::Error> {
-    let mut items = Vec::new();
-    let mut header: Option<HeaderName> = None;
-    for (key, value) in headers {
-        if header.is_none() {
-            header = key;
-        }
+// fn http_headers_to_object(
+//     cx: *mut JSContext,
+//     out: MutableHandleValue,
+//     headers: http::HeaderMap,
+// ) -> Result<(), anyhow::Error> {
+//     let mut items = Vec::new();
+//     let mut header: Option<HeaderName> = None;
+//     for (key, value) in headers {
+//         if header.is_none() {
+//             header = key;
+//         }
 
-        let key = header.as_ref().unwrap().to_string();
-        match value.to_str() {
-            Ok(v) => {
-                match value.to_str() {
-                    Ok(v) => {
-                        items.push(vec![key, v.to_string()]);
-                    }
-                    Err(_) => {
-                        // FIXME: implement non-utf8 header values
-                        tracing::warn!("ignoring non-utf8 header value for header '{key}'");
-                    }
-                }
-            }
-            Err(_) => {
-                // FIXME: support non-utf8 header values
-                tracing::warn!("ignoring non-utf8 header value for header '{key}'");
-            }
-        }
-    }
+//         let key = header.as_ref().unwrap().to_string();
+//         match value.to_str() {
+//             Ok(v) => {
+//                 match value.to_str() {
+//                     Ok(v) => {
+//                         items.push(vec![key, v.to_string()]);
+//                     }
+//                     Err(_) => {
+//                         // FIXME: implement non-utf8 header values
+//                         tracing::warn!("ignoring non-utf8 header value for header '{key}'");
+//                     }
+//                 }
+//             }
+//             Err(_) => {
+//                 // FIXME: support non-utf8 header values
+//                 tracing::warn!("ignoring non-utf8 header value for header '{key}'");
+//             }
+//         }
+//     }
 
-    unsafe {
-        items.to_jsval(cx, out);
-    }
+//     unsafe {
+//         items.to_jsval(cx, out);
+//     }
 
-    Ok(())
-}
+//     Ok(())
+// }
 
-fn http_headers_from_object(
-    cx: *mut JSContext,
-    obj: HandleValue,
-) -> Result<hyper::HeaderMap, anyhow::Error> {
-    let mut map = http::HeaderMap::new();
+// fn http_headers_from_object(
+//     cx: *mut JSContext,
+//     obj: HandleValue,
+// ) -> Result<hyper::HeaderMap, anyhow::Error> {
+//     let mut map = http::HeaderMap::new();
 
-    // headers are stored in the item key
-    // FIXME: implement response header conversion.
+//     // headers are stored in the item key
+//     // FIXME: implement response header conversion.
 
-    Ok(map)
-}
+//     Ok(map)
+// }
 
 // fn resolve_promise(cx: *mut JSContext, value: Handle<*mut JSValue>) -> Result<(), anyhow::Error> {
 //     todo!()
@@ -709,32 +686,32 @@ impl Drop for FuturesDropGuard {
     }
 }
 
-fn read_runtime_exception(cx: *mut JSContext) -> anyhow::Error {
-    if !unsafe { JS_IsExceptionPending(cx) } {
-        return anyhow::anyhow!("no exception pending - unknown error occurred");
-    }
+// fn read_runtime_exception(cx: *mut JSContext) -> anyhow::Error {
+//     if !unsafe { JS_IsExceptionPending(cx) } {
+//         return anyhow::anyhow!("no exception pending - unknown error occurred");
+//     }
 
-    rooted!(in(cx) let mut rval = UndefinedValue());
-    let ok = unsafe { mozjs::rust::wrappers::JS_GetPendingException(cx, rval.handle_mut()) };
-    if !ok {
-        return anyhow::anyhow!("could not retrieve exception details");
-    }
+//     rooted!(in(cx) let mut rval = UndefinedValue());
+//     let ok = unsafe { mozjs::rust::wrappers::JS_GetPendingException(cx, rval.handle_mut()) };
+//     if !ok {
+//         return anyhow::anyhow!("could not retrieve exception details");
+//     }
 
-    // JS::ExceptionStack exception(cx);
-    // if (!JS::GetPendingExceptionStack(cx, &exception)) {
-    //   fprintf(stderr,
-    //           "Error: exception pending after %s, but got another error "
-    //           "when trying to retrieve it. Aborting.\n",
-    //           description);
-    // } else {
-    //   fprintf(stderr, "Exception while %s: ", description);
-    //   dump_value(cx, exception.exception(), stderr);
-    //   print_stack(cx, exception.stack(), stderr);
-    // }
+//     // JS::ExceptionStack exception(cx);
+//     // if (!JS::GetPendingExceptionStack(cx, &exception)) {
+//     //   fprintf(stderr,
+//     //           "Error: exception pending after %s, but got another error "
+//     //           "when trying to retrieve it. Aborting.\n",
+//     //           description);
+//     // } else {
+//     //   fprintf(stderr, "Exception while %s: ", description);
+//     //   dump_value(cx, exception.exception(), stderr);
+//     //   print_stack(cx, exception.stack(), stderr);
+//     // }
 
-    // FIXME: implement reading exception details
-    anyhow::anyhow!("unknown exception occured (reading not implemented yet)")
-}
+//     // FIXME: implement reading exception details
+//     anyhow::anyhow!("unknown exception occured (reading not implemented yet)")
+// }
 
 const JS_SETUP: &str = include_str!("./setup.js");
 
@@ -786,7 +763,7 @@ lazy_static::lazy_static! {
     static ref PERFORMANCE_ORIGIN: std::time::Instant = std::time::Instant::now();
 }
 
-unsafe extern "C" fn performance_now(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn performance_now(_cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
     let args = CallArgs::from_vp(vp, argc);
 
     args.rval().set(DoubleValue(
@@ -1108,7 +1085,7 @@ where
 pub(super) mod tests {
     use hyper::{Body, Method};
 
-    use crate::{error::ErrorInfo, fetch::ResponseData};
+    use crate::error::ErrorInfo;
 
     use super::*;
 
