@@ -42,11 +42,9 @@ pub(super) unsafe extern "C" fn fetch(cx: *mut JSContext, argc: u32, vp: *mut Va
 
         match execute_request(cx, url.as_str(), params, response_rooted.handle()).await {
             Ok(()) => {
-                let response = UndefinedValue();
-                rooted!(in(cx) let mut response_rooted = response);
-                response_rooted.set(ObjectValue(response_obj));
+                rooted!(in(cx) let arg1 = ObjectValue(response_rooted.get()));
 
-                let func_args = unsafe { HandleValueArray::from_rooted_slice(&[*response_rooted]) };
+                let func_args = unsafe { HandleValueArray::from_rooted_slice(&[*arg1]) };
 
                 rooted!(in(cx) let thisval = NullValue().to_object_or_null());
                 rooted!(in(cx) let mut rval = UndefinedValue());
