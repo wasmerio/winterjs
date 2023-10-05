@@ -68,6 +68,17 @@ class Headers {
       throw new Error('value must be a string');
     }
 
+    this.items[key] = [value];
+  }
+
+  append(key, value) {
+    if (typeof key !== 'string') {
+      throw new Error('key must be a string');
+    }
+    if (typeof value !== 'string') {
+      throw new Error('value must be a string');
+    }
+
     if (this.items[key]) {
       this.items[key].push(value);
     } else {
