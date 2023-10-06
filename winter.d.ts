@@ -69,10 +69,10 @@ type ResponseLiteral = {
 };
 type FetchEvent = {
     readonly request: Request,
-    respondWith(response: FetchResponse): void;
+    respondWith(response: FetchResponse | Promise<FetchResponse>): void;
 };
-type FetchResponse = string | Response | ResponseLiteral | void;
-type FetchHandler = (req: FetchEvent) => FetchResponse | Promise<FetchResponse> ;
+type FetchResponse = string | Response | ResponseLiteral;
+type FetchHandler = (req: FetchEvent) => FetchResponse | Promise<FetchResponse> | void;
 /**
  * Register a request handler that will be invoked by the server on every
  * request.
