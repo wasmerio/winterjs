@@ -1,0 +1,22 @@
+[package]
+name = "wasmer-examples/winter-js-typescript"
+version = "0.1.0"
+description = "An example demonstrating how to use TypeScript with WinterJS"
+
+# See more keys and definitions at https://docs.wasmer.io/registry/manifest
+
+[dependencies]
+"wasmer/winter" = "*"
+
+[[command]]
+name = "server"
+module = "wasmer/winter:wasmer-winter"
+runner = "wasi"
+
+[command.annotations.wasi]
+main-args = ["/app/index.js"]
+env = ["JS_PATH=/app/index.js"]
+
+[fs]
+"/app" = "./dist"
+

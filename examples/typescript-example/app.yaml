@@ -1,0 +1,4 @@
+---
+kind: wasmer.io/App.v0
+name: wasmer-winter-js-typescript
+package: wasmer-examples/winter-js-typescript

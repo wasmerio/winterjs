@@ -21,6 +21,9 @@ addEventListener('fetch', (req) => {
 });
 ```
 
+> Note: The interface that is provided to Service Workers can be seen in
+> [`winter.d.ts`](./winter.d.ts).
+
 ## Running WinterJS Natively
 
 You can run WinterJS natively by simply doing

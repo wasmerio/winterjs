@@ -3,8 +3,8 @@
  */
 
 /// <reference no-default-lib="true"/>
-/// <reference lib="es2015"/>
-
+/// <reference lib="es6"/>
+/// <reference lib="es2017"/>
 
 interface Performance {
     now(): number;
@@ -33,14 +33,19 @@ declare class Headers {
     toList(): Array<[string, string]>;
 }
 
+type RequestBody = any;
 type RequestInit = {
     method?: string;
     headers?: Headers | HeadersInit;
     url?: string;
-    body?: any;
+    body?: RequestBody;
 };
 declare class Request {
     constructor(init?: RequestInit);
+    readonly url: URL;
+    readonly method: string;
+    readonly headers: Headers;
+    readonly body?: RequestBody;
     text(): Promise<string>;
     json(): Promise<any>;
 }
@@ -66,8 +71,8 @@ type FetchEvent = {
     readonly request: Request,
     respondWith(response: FetchResponse): void;
 };
-type FetchResponse = string | Response | ResponseLiteral;
-type FetchHandler = (req: FetchEvent) => FetchResponse | Promise<FetchResponse>;
+type FetchResponse = string | Response | ResponseLiteral | void;
+type FetchHandler = (req: FetchEvent) => FetchResponse | Promise<FetchResponse> ;
 /**
  * Register a request handler that will be invoked by the server on every
  * request.
@@ -85,4 +90,24 @@ declare class TextEncoder {
 declare class TextDecoder {
     constructor();
     decode(data: Uint8Array): string;
+}
+
+// Provided by the url.js polyfill
+interface URL {
+    hash: string;
+    host: string;
+    hostname: string;
+    href: string;
+    readonly origin: string;
+    password: string;
+    pathname: string;
+    port: string;
+    protocol: string;
+    search: string;
+    username: string;
+    toString(): string;
+}
+declare var URL: {
+    prototype: URL;
+    new(url: string, base?: string): URL;
 }

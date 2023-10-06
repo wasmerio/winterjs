@@ -5,6 +5,9 @@
 .envrc
 __pycache__
 
+node_modules/
+dist/
+
 # Keep this in sync with ignore() in build.rs
 
 *.pyc
