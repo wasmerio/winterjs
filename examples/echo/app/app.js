@@ -1,3 +1,4 @@
+/// <reference types="../../../winter.d.ts"/>
 
 
 const TEMPLATE = `
