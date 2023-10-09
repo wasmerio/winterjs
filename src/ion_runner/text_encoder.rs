@@ -40,7 +40,7 @@ impl NativeModule for TextEncoderModule {
 
     fn module<'cx>(cx: &'cx ion::Context) -> Option<ion::Object<'cx>> {
         let mut ret = Object::new(cx);
-        if ret.define_methods(cx, METHODS) {
+        if unsafe { ret.define_methods(cx, METHODS) } {
             Some(ret)
         } else {
             None

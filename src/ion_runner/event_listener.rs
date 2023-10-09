@@ -53,5 +53,5 @@ static METHODS: &[JSFunctionSpec] = &[
 ];
 
 pub fn define<'cx: 'o, 'o>(cx: &'cx Context, global: &mut Object<'o>) -> bool {
-    global.define_methods(cx, METHODS)
+    unsafe { global.define_methods(cx, METHODS) }
 }

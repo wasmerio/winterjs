@@ -13,7 +13,7 @@ use ion::{
 pub struct Headers(pub HashMap<String, String>);
 
 impl<'cx> ToValue<'cx> for Headers {
-    unsafe fn to_value(&self, cx: &'cx ion::Context, value: &mut ion::Value) {
+    fn to_value(&self, cx: &'cx ion::Context, value: &mut ion::Value) {
         let mut object = Object::new(cx);
         for (key, val) in &self.0 {
             object.set_as(cx, key, &val);
@@ -25,7 +25,7 @@ impl<'cx> ToValue<'cx> for Headers {
 impl<'cx> FromValue<'cx> for Headers {
     type Config = ();
 
-    unsafe fn from_value<'v>(
+    fn from_value<'v>(
         cx: &'cx ion::Context,
         value: &ion::Value<'v>,
         _strict: bool,
@@ -68,7 +68,7 @@ impl<'cx> FromValue<'cx> for Headers {
 pub struct Body(pub Option<Bytes>);
 
 impl<'cx> ToValue<'cx> for Body {
-    unsafe fn to_value(&self, cx: &'cx ion::Context, value: &mut ion::Value) {
+    fn to_value(&self, cx: &'cx ion::Context, value: &mut ion::Value) {
         match self.0 {
             Some(ref bytes) => {
                 let array = ArrayBuffer::from(bytes.as_ref());

@@ -12,14 +12,15 @@ use futures::future::Either;
 use http::{header::ToStrError, HeaderName, HeaderValue};
 use ion::{
     conversions::{FromValue, IntoValue},
+    script::Script,
     ClassDefinition, Context, ErrorReport, Promise, Value,
 };
 use mozjs::rust::{JSEngine, JSEngineHandle};
 use runtime::{
     modules::{init_global_module, init_module, StandardModules},
-    script::Script,
     RuntimeBuilder,
 };
+use tokio::task::LocalSet;
 
 use self::{performance::PerformanceModule, text_encoder::TextEncoderModule};
 
@@ -60,7 +61,7 @@ async fn handle_request(
     let request = build_request(req, body)?;
 
     let mut request_value = Value::undefined(&cx);
-    unsafe { Box::new(request).into_value(&cx, &mut request_value) };
+    Box::new(request).into_value(&cx, &mut request_value);
     let request_object = request_value.to_object(&cx);
 
     let callback_rval = event_listener::invoke_fetch_event_callback(&cx, &[request_value])
@@ -171,7 +172,7 @@ fn build_response<'cx>(
 
         // Else, construct a response from the response object
         Either::Right(value) => {
-            let response = unsafe { response::Response::from_value(cx, &value, true, ()) }
+            let response = response::Response::from_value(cx, &value, true, ())
                 .map_err(|e| anyhow::anyhow!("Failed to read response object: {e:?}"))?;
 
             let mut hyper_response =
@@ -232,7 +233,12 @@ impl crate::server::RequestHandler for IonRunner {
                     .enable_all()
                     .build()
                     .unwrap()
-                    .block_on(handle_request(user_code, req, body))
+                    .block_on(async move {
+                        let local_set = LocalSet::new();
+                        local_set
+                            .run_until(handle_request(user_code, req, body))
+                            .await
+                    })
             })
             .join()
         })

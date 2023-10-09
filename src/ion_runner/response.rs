@@ -31,7 +31,7 @@ fn parse_headers<'cx>(cx: &'cx Context, v: Value<'cx>) -> ion::Result<HashMap<St
             ));
         };
         let val = o.get(cx, key).unwrap();
-        let val_str = unsafe { <String as FromValue>::from_value(cx, &val, false, ()) }?;
+        let val_str = <String as FromValue>::from_value(cx, &val, false, ())?;
         res.insert(key_str, val_str);
     }
     Ok(res)
@@ -39,7 +39,7 @@ fn parse_headers<'cx>(cx: &'cx Context, v: Value<'cx>) -> ion::Result<HashMap<St
 
 fn parse_body<'cx>(cx: &'cx Context, v: Value<'cx>) -> ion::Result<Bytes> {
     if v.handle().is_string() {
-        let str = unsafe { <String as FromValue>::from_value(cx, &v, false, ()) }?;
+        let str = <String as FromValue>::from_value(cx, &v, false, ())?;
         Ok(Bytes::from(str.into_bytes()))
     } else {
         let v = v.to_object(cx);
