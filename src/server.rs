@@ -80,7 +80,23 @@ pub async fn run_server<H: RequestHandler>(code: String, handler: H) -> Result<(
         async move { Ok::<_, Infallible>(service) }
     });
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    let ip = std::env::var("LISTEN_IP")
+        .map(|x| {
+            x.parse()
+                .context(format!("Invalid listen IP value {x}"))
+                .unwrap()
+        })
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+
+    let port = std::env::var("PORT")
+        .map(|x| {
+            x.parse()
+                .context(format!("Invalid port value {x}"))
+                .unwrap()
+        })
+        .unwrap_or(8080u16);
+
+    let addr = SocketAddr::from((ip, port));
     tracing::info!(listen=%addr, "starting server on {addr}");
 
     Server::bind(&addr)
