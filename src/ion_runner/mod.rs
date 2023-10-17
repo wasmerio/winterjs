@@ -1,15 +1,16 @@
 mod event_listener;
+mod fetch_event;
 mod performance;
 mod request;
 mod response;
 mod text_encoder;
 
-use std::{collections::HashMap, path::Path, str::FromStr};
+use std::{path::Path, str::FromStr};
 
 use anyhow::bail;
 use bytes::Bytes;
 use futures::future::Either;
-use http::{header::ToStrError, HeaderName, HeaderValue};
+use http::{HeaderName, HeaderValue};
 use ion::{
     conversions::{FromValue, IntoValue},
     script::Script,
@@ -22,7 +23,9 @@ use runtime::{
 };
 use tokio::task::LocalSet;
 
-use self::{performance::PerformanceModule, text_encoder::TextEncoderModule};
+use self::{
+    fetch_event::class::FetchEvent, performance::PerformanceModule, text_encoder::TextEncoderModule,
+};
 
 pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy::new(|| {
     let engine = JSEngine::init().expect("could not create engine");
@@ -46,22 +49,16 @@ async fn handle_request(
         .standard_modules(Modules)
         .build(&cx);
 
-    // Set polyfills up
-    Script::compile_and_evaluate(rt.cx(), Path::new("setup.js"), include_str!("setup.js"))
-        .map_err(|e| error_report_to_anyhow_error(&cx, e))?;
-
-    rt.run_event_loop().await.unwrap();
-
     // Evaluate the user script, hopefully resulting in the fetch handler being registered
     Script::compile_and_evaluate(rt.cx(), Path::new("app.js"), user_code)
         .map_err(|e| error_report_to_anyhow_error(&cx, e))?;
 
     rt.run_event_loop().await.unwrap();
 
-    let request = build_request(req, body)?;
+    let fetch_event = FetchEvent::try_new(&cx, req, body)?;
 
     let mut request_value = Value::undefined(&cx);
-    Box::new(request).into_value(&cx, &mut request_value);
+    Box::new(fetch_event).into_value(&cx, &mut request_value);
     let request_object = request_value.to_object(&cx);
 
     let callback_rval = event_listener::invoke_fetch_event_callback(&cx, &[request_value])
@@ -70,7 +67,7 @@ async fn handle_request(
                 .unwrap_or(anyhow::anyhow!("Script execution failed"))
         })?;
 
-    let request = <request::FetchRequest as ion::ClassDefinition>::get_private(&request_object);
+    let request = <request::ExecuteRequest as ion::ClassDefinition>::get_private(&request_object);
 
     let result = if let Some(response) = request.response.as_ref() {
         response.clone()
@@ -84,40 +81,7 @@ async fn handle_request(
     rt.run_event_loop().await.unwrap();
 
     let response = build_response(&cx, result);
-    std::mem::forget(rt);
-    std::mem::forget(cx);
     response
-}
-
-fn build_request<'cx>(
-    req: http::request::Parts,
-    body: Option<bytes::Bytes>,
-) -> anyhow::Result<request::FetchRequest> {
-    let body_bytes = body.as_ref().map(|b| b.as_ref());
-    let body = match (&req.method, body_bytes) {
-        (&http::Method::GET, _) | (&http::Method::HEAD, _) | (_, Some(b"")) | (_, None) => None,
-        _ => body,
-    };
-
-    let request = request::FetchRequest {
-        path: req.uri.to_string(),
-        method: req.method.to_string(),
-        headers: request::Headers(
-            req.headers
-                .iter()
-                .map(|h| {
-                    Result::<_, ToStrError>::Ok((
-                        h.0.to_string(),
-                        h.1.to_str().map(|x| x.to_string())?,
-                    ))
-                })
-                .collect::<Result<HashMap<_, _>, _>>()?,
-        ),
-        body: request::Body(body),
-        response: None,
-    };
-
-    Ok(request)
 }
 
 fn build_response<'cx>(
@@ -257,7 +221,8 @@ impl StandardModules for Modules {
             && init_module::<modules::PathM>(cx, global)
             && init_module::<modules::UrlM>(cx, global)
             && event_listener::define(cx, global)
-            && request::FetchRequest::init_class(cx, global).0
+            && request::ExecuteRequest::init_class(cx, global).0
+            && fetch_event::FetchEvent::init_class(cx, global).0
     }
 
     fn init_globals<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
@@ -268,6 +233,7 @@ impl StandardModules for Modules {
             && init_global_module::<modules::PathM>(cx, global)
             && init_global_module::<modules::UrlM>(cx, global)
             && event_listener::define(cx, global)
-            && request::FetchRequest::init_class(cx, global).0
+            && request::ExecuteRequest::init_class(cx, global).0
+            && fetch_event::FetchEvent::init_class(cx, global).0
     }
 }
