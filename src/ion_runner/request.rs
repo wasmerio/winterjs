@@ -21,7 +21,6 @@ impl<'cx> ToValue<'cx> for Body {
 
 #[js_class]
 mod class {
-    use futures::future::Either;
     use ion::{typedarray::ArrayBuffer, Context, Value};
     use mozjs::jsapi::JSObject;
     use mozjs_sys::jsgc::Heap;
@@ -34,8 +33,6 @@ mod class {
         pub(crate) method: String,
         pub(crate) headers: runtime::globals::fetch::Headers,
         pub(crate) body: Body,
-        pub(crate) response:
-            Option<Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>>,
     }
 
     impl ExecuteRequest {

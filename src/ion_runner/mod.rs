@@ -2,19 +2,16 @@ mod event_listener;
 mod fetch_event;
 mod performance;
 mod request;
-mod response;
 mod text_encoder;
 
 use std::{path::Path, str::FromStr};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use bytes::Bytes;
 use futures::future::Either;
 use http::{HeaderName, HeaderValue};
 use ion::{
-    conversions::{FromValue, IntoValue},
-    script::Script,
-    ClassDefinition, Context, ErrorReport, Promise, Value,
+    conversions::IntoValue, script::Script, ClassDefinition, Context, ErrorReport, Promise, Value,
 };
 use mozjs::rust::{JSEngine, JSEngineHandle};
 use runtime::{
@@ -67,9 +64,9 @@ async fn handle_request(
                 .unwrap_or(anyhow::anyhow!("Script execution failed"))
         })?;
 
-    let request = <request::ExecuteRequest as ion::ClassDefinition>::get_private(&request_object);
+    let event = fetch_event::FetchEvent::get_private(&request_object);
 
-    let result = if let Some(response) = request.response.as_ref() {
+    let result = if let Some(response) = event.response.as_ref() {
         response.clone()
     } else if callback_rval.handle().is_object() || callback_rval.handle().is_string() {
         value_to_object_or_string(callback_rval)?
@@ -80,12 +77,11 @@ async fn handle_request(
     // Wait for a potential promise to finish running
     rt.run_event_loop().await.unwrap();
 
-    let response = build_response(&cx, result);
-    response
+    build_response(&cx, result).await
 }
 
-fn build_response<'cx>(
-    cx: &'cx Context,
+async fn build_response<'cx>(
+    cx: &'cx Context<'_>,
     value: Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
     let value = match value {
@@ -93,7 +89,7 @@ fn build_response<'cx>(
             let result = Promise::from(cx.root_object(obj)).unwrap().result(cx);
             value_to_object_or_string(result)?
         }
-        _ => value.clone(),
+        _ => value,
     };
 
     // First, check if the value is a string or byte array
@@ -136,29 +132,32 @@ fn build_response<'cx>(
 
         // Else, construct a response from the response object
         Either::Right(value) => {
-            let response = response::Response::from_value(cx, &value, true, ())
-                .map_err(|e| anyhow::anyhow!("Failed to read response object: {e:?}"))?;
+            let obj = value.to_object(cx);
+            if !runtime::globals::fetch::Response::instance_of(cx, &obj, None) {
+                // TODO: support plain objects
+                bail!("If an object is returned, it must be an instance of Response");
+            }
 
-            let mut hyper_response =
-                hyper::Response::builder().status(response.status.unwrap_or(200));
+            let response = runtime::globals::fetch::Response::get_private(&obj);
+
+            let mut hyper_response = hyper::Response::builder().status(response.get_status());
 
             let headers =
                 anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
-            if let Some(response_headers) = response.headers {
-                for header in response_headers {
-                    headers.append(
-                        HeaderName::from_str(header.0.as_str())?,
-                        HeaderValue::from_str(header.1.as_str())?,
-                    );
-                }
+            let response_headers = response.get_headers_object(cx);
+            for header in response_headers.iter() {
+                headers.append(
+                    HeaderName::from_str(header.0.as_str())?,
+                    HeaderValue::from_str(header.1.to_str()?)?,
+                );
             }
 
-            let body = match response.body {
-                None => hyper::Body::empty(),
-                Some(bytes) => hyper::Body::from(bytes),
-            };
+            let body = response
+                .read_to_bytes()
+                .await
+                .map_err(|e| anyhow!("Failed to read response body: {e:?}"))?;
 
-            Ok(hyper_response.body(body)?)
+            Ok(hyper_response.body(hyper::Body::from(body))?)
         }
     }
 }

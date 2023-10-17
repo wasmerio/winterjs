@@ -65,7 +65,6 @@ pub mod class {
                     method: req.method.to_string(),
                     headers,
                     body: super::super::request::Body(body),
-                    response: None,
                 },
             ));
 
