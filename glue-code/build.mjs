@@ -9,5 +9,11 @@ const ctx = await esbuild.context({
     outfile: "dist/index.js",
 });
 
-await ctx.watch();
-console.log("ESBuild watching...");
+if (process.argv.includes("--watch")) {
+    await ctx.watch();
+    console.log("ESBuild watching...");
+} else {
+    await ctx.rebuild();
+    await ctx.dispose();
+}
+
