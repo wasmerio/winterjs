@@ -18,14 +18,6 @@
 
 // http://encoding.spec.whatwg.org/#textencoder
 
-export interface TextDecoderConstructor {
-    new (): TextDecoder;
-}
-
-export interface TextEncoderConstructor {
-    new (): TextEncoder;
-}
-
 export class TextEncoder {
     encode(string: string): Uint8Array {
         const octets = [];
