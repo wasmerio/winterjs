@@ -1,3 +1,12 @@
+<div align="center">
+  <a href="https://winterjs.org" target="_blank">
+    <picture>
+      <source srcset="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/logo.png"  media="(prefers-color-scheme: dark)">
+      <img width="300" src="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/logo.png" alt="Wasmer logo">
+    </picture>
+  </a>
+</div>
+
 # WinterJS
 
 The JavaScript server that runs Service Workers according to the [Winter Community Group specification](https://wintercg.org/).
@@ -5,12 +14,12 @@ The JavaScript server that runs Service Workers according to the [Winter Communi
 
 ## Running WinterJS with Wasmer
 
-The WinterJS server is published in Wasmer as [`wasmer/winter`](https://wasmer.io/wasmer/winter).
+The WinterJS server is published in Wasmer as [`wasmer/winterjs`](https://wasmer.io/wasmer/winterjs).
 
 You can run the HTTP server locally with:
 
 ```shell
-wasmer run wasmer/winter --net --mapdir=tests:tests tests/simple.js
+wasmer run wasmer/winterjs --net --mapdir=tests:tests tests/simple.js
 ```
 
 Where `simple.js` is:
