@@ -2,7 +2,6 @@ mod event_listener;
 mod fetch_event;
 mod performance;
 mod request;
-mod text_encoder;
 
 use std::{path::Path, str::FromStr};
 
@@ -11,7 +10,8 @@ use bytes::Bytes;
 use futures::future::Either;
 use http::{HeaderName, HeaderValue};
 use ion::{
-    conversions::IntoValue, script::Script, ClassDefinition, Context, ErrorReport, Promise, Value,
+    conversions::IntoValue, flags::IteratorFlags, script::Script, ClassDefinition, Context,
+    ErrorReport, Promise, Value,
 };
 use mozjs::rust::{JSEngine, JSEngineHandle};
 use runtime::{
@@ -20,9 +20,7 @@ use runtime::{
 };
 use tokio::task::LocalSet;
 
-use self::{
-    fetch_event::class::FetchEvent, performance::PerformanceModule, text_encoder::TextEncoderModule,
-};
+use self::{fetch_event::class::FetchEvent, performance::PerformanceModule};
 
 pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy::new(|| {
     let engine = JSEngine::init().expect("could not create engine");
@@ -45,6 +43,13 @@ async fn handle_request(
         .macrotask_queue()
         .standard_modules(Modules)
         .build(&cx);
+
+    for key in rt.global().keys(
+        &cx,
+        Some(IteratorFlags::HIDDEN | IteratorFlags::PRIVATE | IteratorFlags::SYMBOLS),
+    ) {
+        println!("{:?}", key.to_owned_key(&cx));
+    }
 
     // Evaluate the user script, hopefully resulting in the fetch handler being registered
     Script::compile_and_evaluate(rt.cx(), Path::new("app.js"), user_code)
@@ -214,7 +219,6 @@ struct Modules;
 impl StandardModules for Modules {
     fn init<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
         init_module::<PerformanceModule>(cx, global)
-            && init_module::<TextEncoderModule>(cx, global)
             && init_module::<modules::Assert>(cx, global)
             && init_module::<modules::FileSystem>(cx, global)
             && init_module::<modules::PathM>(cx, global)
@@ -226,7 +230,6 @@ impl StandardModules for Modules {
 
     fn init_globals<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
         init_global_module::<PerformanceModule>(cx, global)
-            && init_global_module::<TextEncoderModule>(cx, global)
             && init_global_module::<modules::Assert>(cx, global)
             && init_global_module::<modules::FileSystem>(cx, global)
             && init_global_module::<modules::PathM>(cx, global)
