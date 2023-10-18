@@ -1,0 +1,27 @@
+{
+  "name": "@wasmer/winterjs-glue-code",
+  "version": "0.0.0",
+  "description": "Glue code run on startup to provide users with the WinterJS API",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "node ./build.mjs && tsc",
+    "fmt": "prettier . --write",
+    "dev": "concurrently --kill-others \"node ./build.mjs --watch\" \"tsc --watch\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wasmerio/winterjs.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/wasmerio/winterjs/issues"
+  },
+  "homepage": "https://github.com/wasmerio/winterjs#readme",
+  "devDependencies": {
+    "concurrently": "^8.2.1",
+    "esbuild": "0.19.5",
+    "prettier": "^3.0.3",
+    "typescript": "^5.2.2"
+  }
+}
