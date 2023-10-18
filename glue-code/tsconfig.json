@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "es2016",
+    "lib": [
+      "ES6",
+      "ES2017"
+    ],
+    "module": "commonjs",
+    "types": [],
+    "declaration": true,
+    "outDir": "./dist/",
+    "emitDeclarationOnly": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "skipLibCheck": false
+  }
+}
