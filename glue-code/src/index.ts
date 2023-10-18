@@ -3,19 +3,18 @@ export type * from "./text";
 export type * from "./request";
 export type * from "./response";
 export type * from "./fetch";
-export type * from "./url";
 export type * from "./fetch_handler";
 
 import * as headers from "./headers";
 import * as text from "./text";
-import * as url from "./url";
 import * as events from "./events";
 import { FetchHandler } from "./fetch_handler";
-import * as con from "./console";
-import * as perf from "./performance";
+import * as consoleShim from "./console";
+import * as performanceShim from "./performance";
+import * as fetchShim from "./fetch";
+import { Response } from "./response";
 
 declare global {
-    export var URL: typeof url.URL;
     export var TextEncoder: typeof text.TextEncoder;
     export var TextDecoder: typeof text.TextDecoder;
     export var Headers: typeof headers.Headers;
@@ -34,11 +33,17 @@ declare global {
         event: "fetch",
         callback: FetchHandler,
     ): void;
+
+    export function fetch(
+        url: string,
+        params: fetchShim.FetchParams,
+    ): Promise<Response>;
 }
 
 globalThis.TextEncoder = text.TextEncoder;
 globalThis.TextDecoder = text.TextDecoder;
 globalThis.Headers = headers.Headers;
+globalThis.console = { log: consoleShim.log };
+globalThis.performance = { now: performanceShim.now };
 globalThis.addEventListener = events.addEventListener;
-globalThis.console = { log: con.log };
-globalThis.performance = { now: perf.now };
+globalThis.fetch = fetchShim.fetch;

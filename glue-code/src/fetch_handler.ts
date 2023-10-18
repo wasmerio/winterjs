@@ -11,18 +11,8 @@ export type ResponseLiteral = {
 export type FetchResponse = string | Response | ResponseLiteral;
 
 export type FetchHandler = (
-    req: FetchEvent,
+    req: Request,
 ) => FetchResponse | Promise<FetchResponse> | void;
-
-export class FetchEvent {
-    private __response?: FetchResponse | Promise<FetchResponse>;
-
-    constructor(readonly request: Request) {}
-
-    respondWith(response: FetchResponse | Promise<FetchResponse>): void {
-        this.__response = response;
-    }
-}
 
 const FETCH_HANDLERS: Record<number, FetchHandler> = {};
 
@@ -78,33 +68,12 @@ globalThis.__wasmer_callFetchHandler = function (
         throw new TypeError("request must be an instance of the Request class");
     }
 
-    let event = new FetchEvent(request);
-
     const items = Object.values(FETCH_HANDLERS);
     if (items.length === 0) {
         throw new Error("no fetch handlers registered");
     }
 
-    let res = items[0](event);
-
-    // Hack: We need to access the __response field, but we can't make it a
-    // public field because then it'd end up in the *.d.ts file.
-    const dunderResponse: FetchResponse | Promise<FetchResponse> | undefined = (
-        event as any
-    ).__response;
-
-    if (dunderResponse) {
-        if (
-            typeof dunderResponse !== "object" &&
-            typeof dunderResponse !== "string"
-        ) {
-            throw new TypeError(
-                "the argument to FetchEvent.respondWith must be an object or a string",
-            );
-        }
-
-        res = dunderResponse;
-    }
+    let res = items[0](request);
 
     if (!res) {
         throw new Error("fetch handler returned null");

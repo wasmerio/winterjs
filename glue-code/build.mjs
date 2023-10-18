@@ -16,4 +16,3 @@ if (process.argv.includes("--watch")) {
     await ctx.rebuild();
     await ctx.dispose();
 }
-

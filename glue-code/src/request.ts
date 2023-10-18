@@ -12,7 +12,7 @@ export class Request {
     readonly method: string;
     readonly headers: Headers;
     readonly body?: RequestBody;
-    readonly url: InstanceType<typeof URL>;
+    readonly url: string;
 
     constructor(init?: RequestInit) {
         if (init?.method) {
@@ -34,11 +34,8 @@ export class Request {
             this.headers = new Headers();
         }
 
-        if (init?.url) {
-            this.url = new URL(init.url);
-        } else {
-            this.url = new URL("/");
-        }
+        // FIXME: validate url
+        this.url = init?.url ?? "";
 
         // FIXME: implement body validation / conversion
         this.body = init?.body;
