@@ -1,3 +1,4 @@
+mod base64;
 mod event_listener;
 mod fetch_event;
 mod performance;
@@ -10,8 +11,7 @@ use bytes::Bytes;
 use futures::future::Either;
 use http::{HeaderName, HeaderValue};
 use ion::{
-    conversions::IntoValue, flags::IteratorFlags, script::Script, ClassDefinition, Context,
-    ErrorReport, Promise, Value,
+    conversions::IntoValue, script::Script, ClassDefinition, Context, ErrorReport, Promise, Value,
 };
 use mozjs::rust::{JSEngine, JSEngineHandle};
 use runtime::{
@@ -43,13 +43,6 @@ async fn handle_request(
         .macrotask_queue()
         .standard_modules(Modules)
         .build(&cx);
-
-    for key in rt.global().keys(
-        &cx,
-        Some(IteratorFlags::HIDDEN | IteratorFlags::PRIVATE | IteratorFlags::SYMBOLS),
-    ) {
-        println!("{:?}", key.to_owned_key(&cx));
-    }
 
     // Evaluate the user script, hopefully resulting in the fetch handler being registered
     Script::compile_and_evaluate(rt.cx(), Path::new("app.js"), user_code)
@@ -226,6 +219,7 @@ impl StandardModules for Modules {
             && event_listener::define(cx, global)
             && request::ExecuteRequest::init_class(cx, global).0
             && fetch_event::FetchEvent::init_class(cx, global).0
+            && base64::define(cx, global)
     }
 
     fn init_globals<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
@@ -237,5 +231,6 @@ impl StandardModules for Modules {
             && event_listener::define(cx, global)
             && request::ExecuteRequest::init_class(cx, global).0
             && fetch_event::FetchEvent::init_class(cx, global).0
+            && base64::define(cx, global)
     }
 }
