@@ -102,5 +102,10 @@ pub mod class {
                 )),
             }
         }
+
+        #[ion(name = "waitUntil")]
+        pub fn wait_until(&self, _promise: ion::Promise) {
+            // No need to do anything, the runtime will run the promise anyway
+        }
     }
 }
