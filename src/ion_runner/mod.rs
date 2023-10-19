@@ -142,7 +142,7 @@ async fn build_response<'cx>(
 
             let headers =
                 anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
-            let response_headers = response.get_headers_object(cx);
+            let response_headers = response.get_headers_object();
             for header in response_headers.iter() {
                 headers.append(
                     HeaderName::from_str(header.0.as_str())?,
