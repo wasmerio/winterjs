@@ -1,6 +1,5 @@
 /doc
 /target
-/Cargo.lock
 .direnv
 .envrc
 __pycache__
