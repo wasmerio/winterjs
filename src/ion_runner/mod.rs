@@ -13,7 +13,10 @@ use http::{HeaderName, HeaderValue};
 use ion::{
     conversions::IntoValue, script::Script, ClassDefinition, Context, ErrorReport, Promise, Value,
 };
-use mozjs::rust::{JSEngine, JSEngineHandle};
+use mozjs::{
+    jsapi::PromiseState,
+    rust::{JSEngine, JSEngineHandle},
+};
 use runtime::{
     modules::{init_global_module, init_module, StandardModules},
     RuntimeBuilder,
@@ -84,8 +87,32 @@ async fn build_response<'cx>(
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
     let value = match value {
         Either::Right(obj) if Promise::is_promise(&cx.root_object(obj)) => {
-            let result = Promise::from(cx.root_object(obj)).unwrap().result(cx);
-            value_to_object_or_string(result)?
+            let promise = Promise::from(cx.root_object(obj)).unwrap();
+            match promise.state() {
+                PromiseState::Pending => bail!("Event loop finished but promise is still pending"),
+                PromiseState::Rejected => {
+                    let result = promise.result(cx);
+                    let message = result
+                        .to_object(cx)
+                        .get(cx, "message")
+                        .and_then(|v| {
+                            if v.get().is_string() {
+                                Some(
+                                    ion::String::from(cx.root_string(v.get().to_string()))
+                                        .to_owned(cx),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or("<No error message>".to_string());
+                    bail!("Script execution failed: {message}")
+                }
+                PromiseState::Fulfilled => {
+                    let result = promise.result(cx);
+                    value_to_object_or_string(result)?
+                }
+            }
         }
         _ => value,
     };
