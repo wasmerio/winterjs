@@ -244,6 +244,7 @@ impl StandardModules for Modules {
             && init_module::<modules::PathM>(cx, global)
             && init_module::<modules::UrlM>(cx, global)
             && modules::file::define(cx, global)
+            && modules::form_data::define(cx, global)
             && event_listener::define(cx, global)
             && request::ExecuteRequest::init_class(cx, global).0
             && fetch_event::FetchEvent::init_class(cx, global).0
@@ -257,6 +258,7 @@ impl StandardModules for Modules {
             && init_global_module::<modules::PathM>(cx, global)
             && init_global_module::<modules::UrlM>(cx, global)
             && modules::file::define(cx, global)
+            && modules::form_data::define(cx, global)
             && event_listener::define(cx, global)
             && request::ExecuteRequest::init_class(cx, global).0
             && fetch_event::FetchEvent::init_class(cx, global).0
