@@ -56,14 +56,14 @@ mod class {
         }
 
         #[ion(name = "arrayBuffer")]
-        pub fn array_buffer(&self) -> ArrayBuffer {
+        pub async fn array_buffer(&self) -> ArrayBuffer {
             match self.body.0 {
                 Some(ref bytes) => ArrayBuffer::from(bytes.as_ref()),
                 None => ArrayBuffer::from(&b""[..]),
             }
         }
 
-        pub fn text(&self) -> String {
+        pub async fn text(&self) -> String {
             self.body
                 .0
                 .as_ref()
@@ -71,8 +71,8 @@ mod class {
                 .unwrap_or_else(|| String::new())
         }
 
-        pub fn json(&self, cx: &Context) -> ion::Result<*mut JSObject> {
-            let text = self.text();
+        pub async fn json(&self, cx: &Context<'_>) -> ion::Result<*mut JSObject> {
+            let text = self.text().await;
             let Some(str) = ion::String::new(cx, text.as_str()) else {
                 return Err(ion::Error::new(
                     "Failed to allocate string",
