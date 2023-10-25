@@ -32,7 +32,7 @@ mod class {
         pub(crate) url: Box<Heap<*mut JSObject>>,
         pub(crate) method: String,
         pub(crate) headers: runtime::globals::fetch::Headers,
-        pub(crate) body: Body,
+        pub(crate) body: Option<Body>,
     }
 
     impl ExecuteRequest {
@@ -51,27 +51,43 @@ mod class {
         }
 
         #[ion(get)]
-        pub fn get_body(&self) -> Body {
-            self.body.clone()
+        pub fn get_body(&mut self, cx: &Context<'_>) -> ion::Result<*mut JSObject> {
+            match self.body.take() {
+                None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
+                Some(body) => {
+                    let stream = runtime::globals::readable_stream::new_memory_backed(
+                        cx,
+                        body.0.unwrap_or(vec![].into()),
+                    );
+
+                    Ok((*stream).get())
+                }
+            }
+        }
+
+        #[ion(get, name = "bodyUsed")]
+        pub fn get_body_used(&self) -> bool {
+            self.body.is_none()
         }
 
         #[ion(name = "arrayBuffer")]
-        pub async fn array_buffer(&self) -> ArrayBuffer {
-            match self.body.0 {
+        pub async fn array_buffer(&mut self) -> ArrayBuffer {
+            match self.body.take().and_then(|b| b.0) {
                 Some(ref bytes) => ArrayBuffer::from(bytes.as_ref()),
                 None => ArrayBuffer::from(&b""[..]),
             }
         }
 
-        pub async fn text(&self) -> String {
+        pub async fn text(&mut self) -> String {
             self.body
-                .0
+                .take()
+                .and_then(|b| b.0)
                 .as_ref()
                 .map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
                 .unwrap_or_else(|| String::new())
         }
 
-        pub async fn json(&self, cx: &Context<'_>) -> ion::Result<*mut JSObject> {
+        pub async fn json(&mut self, cx: &Context<'_>) -> ion::Result<*mut JSObject> {
             let text = self.text().await;
             let Some(str) = ion::String::new(cx, text.as_str()) else {
                 return Err(ion::Error::new(
@@ -87,10 +103,7 @@ mod class {
                     result.handle_mut().into(),
                 )
             } {
-                return Err(ion::Error::new(
-                    "Failed to deserialize JSON",
-                    ion::ErrorKind::Normal,
-                ));
+                return Err(ion::Error::none());
             }
 
             Ok((*result.to_object(cx)).get())

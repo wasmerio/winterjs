@@ -64,7 +64,7 @@ pub mod class {
                     url: Heap::boxed((*url).get()),
                     method: req.method.to_string(),
                     headers,
-                    body: super::super::request::Body(body),
+                    body: Some(super::super::request::Body(body)),
                 },
             ));
 

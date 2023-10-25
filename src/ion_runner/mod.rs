@@ -15,7 +15,7 @@ use ion::{
 };
 use mozjs::{
     jsapi::PromiseState,
-    rust::{JSEngine, JSEngineHandle},
+    rust::{JSEngine, JSEngineHandle, RealmOptions},
 };
 use runtime::{
     modules::{init_global_module, init_module, StandardModules},
@@ -40,11 +40,14 @@ async fn handle_request(
     let rt = mozjs::rust::Runtime::new(ENGINE.clone());
 
     let cx = Context::from_runtime(&rt);
+    let mut realm_options = RealmOptions::default();
+    realm_options.creationOptions_.streams_ = true;
     // TODO: module loader?
     let rt = RuntimeBuilder::<(), _>::new()
         .microtask_queue()
         .macrotask_queue()
         .standard_modules(Modules)
+        .realm_options(realm_options)
         .build(&cx);
 
     // Evaluate the user script, hopefully resulting in the fetch handler being registered

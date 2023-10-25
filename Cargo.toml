@@ -27,7 +27,9 @@ ion = { package = "ion", features = ["macros"], git = "https://github.com/wasmer
 ion-proc = { package = "ion-proc", git = "https://github.com/wasmerio/spiderfire.git" }
 runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git" }
 modules = { package = "modules", git = "https://github.com/wasmerio/spiderfire.git" }
-mozjs = { version = "0.14.1", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi" }
+mozjs = { version = "0.14.1", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi", features = [
+    "streams",
+] }
 mozjs_sys = { version = "0.68.2", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi" }
 
 # for mozjs
