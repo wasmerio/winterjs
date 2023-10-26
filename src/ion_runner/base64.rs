@@ -3,33 +3,21 @@ use ion::{function_spec, Context};
 use mozjs_sys::jsapi::JSFunctionSpec;
 
 #[js_fn]
-fn btoa<'cx>(cx: &'cx Context, val: ion::String<'cx>) -> ion::String<'cx> {
-    let str = val.to_owned(cx);
-    let bytes = str.as_bytes();
-    ion::String::new(
-        cx,
-        ::base64::engine::general_purpose::STANDARD
-            .encode(bytes)
-            .as_str(),
-    )
-    .unwrap()
+fn btoa<'cx>(val: String) -> String {
+    let bytes = val.as_bytes();
+    ::base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 #[js_fn]
-fn atob<'cx>(cx: &'cx Context, val: ion::String<'cx>) -> ion::Result<ion::String<'cx>> {
-    let str = val.to_owned(cx);
-    match ::base64::engine::general_purpose::STANDARD.decode(&str) {
+fn atob<'cx>(val: String) -> ion::Result<String> {
+    match ::base64::engine::general_purpose::STANDARD.decode(val.as_str()) {
         Err(_) => {
             return Err(ion::Error::new(
                 "Failed to deserialize base64 data",
                 ion::ErrorKind::Normal,
             ))
         }
-        Ok(bytes) => Ok(ion::String::new(
-            cx,
-            String::from_utf8_lossy(&bytes[..]).into_owned().as_str(),
-        )
-        .unwrap()),
+        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes[..]).into_owned()),
     }
 }
 
