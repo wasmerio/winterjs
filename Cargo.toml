@@ -23,6 +23,7 @@ rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.5", 
 h2 = { version = "=0.3.20" }
 futures = "0.3.28"
 http = "0.2.9"
+form_urlencoded = "1.2.0"
 ion = { package = "ion", features = ["macros"], git = "https://github.com/wasmerio/spiderfire.git" }
 ion-proc = { package = "ion-proc", git = "https://github.com/wasmerio/spiderfire.git" }
 runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git" }

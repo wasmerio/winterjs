@@ -806,7 +806,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#d6526f5f58a395a5f20117e23a1acd6f8ef8f4b6"
+source = "git+https://github.com/wasmerio/spiderfire.git#8190db72f89c87cf2227a32625cc744cee229688"
 dependencies = [
  "bitflags 2.4.0",
  "bytemuck",
@@ -828,7 +828,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#d6526f5f58a395a5f20117e23a1acd6f8ef8f4b6"
+source = "git+https://github.com/wasmerio/spiderfire.git#8190db72f89c87cf2227a32625cc744cee229688"
 dependencies = [
  "convert_case",
  "either",
@@ -1033,7 +1033,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#d6526f5f58a395a5f20117e23a1acd6f8ef8f4b6"
+source = "git+https://github.com/wasmerio/spiderfire.git#8190db72f89c87cf2227a32625cc744cee229688"
 dependencies = [
  "bytes",
  "futures",
@@ -1512,7 +1512,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#d6526f5f58a395a5f20117e23a1acd6f8ef8f4b6"
+source = "git+https://github.com/wasmerio/spiderfire.git#8190db72f89c87cf2227a32625cc744cee229688"
 dependencies = [
  "base64-url",
  "bytes",
@@ -2677,6 +2677,7 @@ dependencies = [
  "anyhow",
  "base64 0.21.4",
  "bytes",
+ "form_urlencoded",
  "futures",
  "h2",
  "http",
