@@ -11,6 +11,7 @@
 
 The JavaScript server that runs Service Workers according to the [Winter Community Group specification](https://wintercg.org/).
 
+> Note: WinterJS is not officially endorsed by WinterCG, despite sharing "Winter" in their name. There are many [runtimes supporting WinterCG](https://runtime-keys.proposal.wintercg.org/), WinterJS being one among those
 
 ## Running WinterJS with Wasmer
 
