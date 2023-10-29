@@ -11,7 +11,11 @@ edition = "2021"
 [dependencies]
 lazy_static = "1.4.0"
 anyhow = "1.0.75"
-hyper = { version = "=0.14.27", features = ["server", "http1", "tcp"] }
+hyper = { version = "=0.14.27", features = [
+    "server",
+    "http1",
+    "tcp",
+], git = "https://github.com/wasix-org/hyper", branch = "v0.14.27" }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }
 serde_derive = "1.0.164"
@@ -20,11 +24,14 @@ serde_json = "1.0.97"
 bytes = { version = "1.5.0", features = ["serde"] }
 once_cell = "1.18.0"
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.5", version = "=0.21.5" }
-h2 = { version = "=0.3.20" }
+hyper-rustls = { version = "=0.24.1", git = "https://github.com/wasix-org/hyper-rustls.git", branch = "wasix" }
+h2 = { version = "=0.3.20", git = "https://github.com/wasix-org/h2.git" }
 futures = "0.3.28"
 http = "0.2.9"
 form_urlencoded = "1.2.0"
-ion = { package = "ion", features = ["macros"], git = "https://github.com/wasmerio/spiderfire.git" }
+ion = { package = "ion", features = [
+    "macros",
+], git = "https://github.com/wasmerio/spiderfire.git" }
 ion-proc = { package = "ion-proc", git = "https://github.com/wasmerio/spiderfire.git" }
 runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git" }
 modules = { package = "modules", git = "https://github.com/wasmerio/spiderfire.git" }
@@ -34,7 +41,9 @@ mozjs = { version = "0.14.1", git = "https://github.com/wasmerio/mozjs.git", bra
 mozjs_sys = { version = "0.68.2", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi" }
 
 # for mozjs
-libc = "=0.2.139"
+libc = { version = "=0.2.139", git = "https://github.com/wasix-org/libc.git" }
+
+# libc = "=0.2.139"
 
 # NOTE: We need to pin and replace some dependencies to achieve wasix compatibility.
 # tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros"] }
@@ -46,8 +55,9 @@ base64 = "0.21.4"
 [patch.crates-io]
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "epoll" }
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" }
-libc = { git = "https://github.com/wasix-org/libc.git", branch = "master" }
-h2 = { git = "https://github.com/wasix-org/h2", branch = "master" }
+libc = { git = "https://github.com/wasix-org/libc.git" }
+h2 = { git = "https://github.com/wasix-org/h2" }
 hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.27" }
 ring = { git = "https://github.com/wasix-org/ring", branch = "wasix" }
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.5" }
+hyper-rustls = { git = "https://github.com/wasix-org/hyper-rustls.git", branch = "wasix" }
