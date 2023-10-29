@@ -11,3 +11,4 @@ __pycache__
 *.dylib
 
 .vscode
+.DS_Store
