@@ -3,9 +3,9 @@ async function handler(request) {
     success: true,
     package: "owner/package-name",
   });
-  return new Response(out, {
+  request.respondWith(new Response(out, {
     headers: { "content-type": "application/json" },
-  });
+  }));
 }
 
 addEventListener("fetch", handler);
