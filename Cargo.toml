@@ -51,6 +51,7 @@ tokio = { version = "=1.24.2", features = ["full"] }
 parking_lot = { version = "=0.12.1", features = ["nightly"] }
 url = "2.4.1"
 base64 = "0.21.4"
+async-trait = "0.1.74"
 
 [patch.crates-io]
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "epoll" }

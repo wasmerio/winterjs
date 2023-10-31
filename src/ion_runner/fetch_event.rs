@@ -84,6 +84,7 @@ pub mod class {
             match self.response {
                 None => {
                     if response.handle().is_object() {
+                        // TODO: do we need to root the response here?
                         self.response = Some(Either::Right(response.handle().to_object()));
                         Ok(())
                     } else if response.handle().is_string() {

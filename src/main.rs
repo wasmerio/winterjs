@@ -67,5 +67,7 @@ async fn run() -> Result<(), anyhow::Error> {
     runtime::config::CONFIG
         .set(Config::default().log_level(runtime::config::LogLevel::Error))
         .unwrap();
-    crate::server::run_server(code, ion_runner::IonRunner).await
+    
+    // TODO: make max_threads configurable
+    crate::server::run_server(ion_runner::IonRunner::new_request_handler(16, code)).await
 }

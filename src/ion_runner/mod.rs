@@ -4,9 +4,15 @@ mod fetch_event;
 mod performance;
 mod request;
 
-use std::{path::Path, str::FromStr};
+use std::{
+    path::Path,
+    str::FromStr,
+    sync::{atomic::AtomicI32, Arc},
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail};
+use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::Either;
 use http::{HeaderName, HeaderValue};
@@ -21,7 +27,8 @@ use runtime::{
     modules::{init_global_module, init_module, StandardModules},
     RuntimeBuilder,
 };
-use tokio::task::LocalSet;
+use tokio::{select, sync::Mutex, task::LocalSet};
+use tracing::debug;
 
 use self::{fetch_event::class::FetchEvent, performance::PerformanceModule};
 
@@ -32,11 +39,15 @@ pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy
     handle
 });
 
-async fn handle_request(
-    user_code: &str,
-    req: http::request::Parts,
-    body: Option<bytes::Bytes>,
-) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
+// Used to ignore errors when sending responses back, since
+// if the receiving end of the oneshot channel is dropped,
+// there really isn't anything we can do
+fn ignore_error<E>(_r: std::result::Result<(), E>) {}
+
+async fn handle_requests(
+    user_code: String,
+    mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
+) -> Result<(), anyhow::Error> {
     let rt = mozjs::rust::Runtime::new(ENGINE.clone());
 
     let cx = Context::from_runtime(&rt);
@@ -51,99 +62,214 @@ async fn handle_request(
         .build(&cx);
 
     // Evaluate the user script, hopefully resulting in the fetch handler being registered
-    Script::compile_and_evaluate(rt.cx(), Path::new("app.js"), user_code)
+    Script::compile_and_evaluate(rt.cx(), Path::new("app.js"), user_code.as_str())
         .map_err(|e| error_report_to_anyhow_error(&cx, e))?;
 
-    rt.run_event_loop().await.unwrap();
+    // Wait for any promises resulting from running the script to be resolved, giving
+    // scripts a chance to initialize before accepting requests
+    rt.run_event_loop()
+        .await
+        .map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
 
-    let fetch_event = FetchEvent::try_new(&cx, req, body)?;
+    let mut requests: Vec<(ion::Promise, tokio::sync::oneshot::Sender<ResponseData>)> = vec![];
 
-    let mut request_value = Value::undefined(&cx);
-    Box::new(fetch_event).into_value(&cx, &mut request_value);
-    let request_object = request_value.to_object(&cx);
+    // Every 1ms, we stop waiting for the event loop and check existing requests.
+    // This lets us send back ready responses before the entire event loop is done,
+    // at which point *all* requests will have been handled.
+    let poll_interval = Duration::from_millis(1);
 
-    let callback_rval = event_listener::invoke_fetch_event_callback(&cx, &[request_value])
-        .map_err(|e| {
-            e.map(|e| error_report_to_anyhow_error(&cx, e))
-                .unwrap_or(anyhow::anyhow!("Script execution failed"))
-        })?;
+    loop {
+        select! {
+            msg = recv.recv() => {
+                match msg {
+                    None | Some(ControlMessage::Shutdown) => break,
+                    Some(ControlMessage::HandleRequest(req, resp_tx)) => {
+                        match start_request(&cx, req.req, req.body).await {
+                            Either::Left(promise) => requests.push((promise, resp_tx)),
+                            Either::Right(resp) => ignore_error(resp_tx.send(resp)),
+                        }
+                    }
+                }
+            }
 
-    let event = fetch_event::FetchEvent::get_private(&request_object);
+            // Nothing to do here except check the error, the promises are checked further down
+            e = rt.run_event_loop() => {
+                e.map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
+            }
 
-    let result = if let Some(response) = event.response.as_ref() {
-        response.clone()
-    } else if callback_rval.handle().is_object() || callback_rval.handle().is_string() {
-        value_to_object_or_string(callback_rval)?
-    } else {
-        bail!("No response provided");
+            // Same as above
+            _ = tokio::time::sleep(poll_interval) => {}
+        }
+
+        // We have to do this convoluted bit of code because drain_filter is not stable
+        let mut i = 0;
+        while i < requests.len() {
+            if requests[i].0.state() != PromiseState::Pending {
+                let (promise, resp_tx) = requests.swap_remove(i);
+                // TODO: awaiting here makes other requests wait for this one
+                ignore_error(resp_tx.send(ResponseData(
+                    build_response_from_promise(&cx, promise).await,
+                )));
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    rt.run_event_loop()
+        .await
+        .map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
+
+    for (promise, resp_tx) in requests {
+        ignore_error(resp_tx.send(ResponseData(
+            build_response_from_promise(&cx, promise).await,
+        )));
+    }
+
+    Ok(())
+}
+
+enum ReadyResponseValue<'cx> {
+    String(ion::String<'cx>),
+    Object(ion::Object<'cx>),
+}
+
+enum ResponseValue<'cx> {
+    Ready(ReadyResponseValue<'cx>),
+    Promise(ion::Promise<'cx>),
+}
+
+impl<'cx> ResponseValue<'cx> {
+    fn from_raw_pointers(
+        cx: &'cx Context<'_>,
+        p: Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>,
+    ) -> Self {
+        match p {
+            Either::Left(str) => {
+                Self::Ready(ReadyResponseValue::String(cx.root_string(str).into()))
+            }
+            Either::Right(obj) => {
+                let obj = cx.root_object(obj);
+                if Promise::is_promise(&obj) {
+                    // Safety: already checking is_promise above
+                    Self::Promise(unsafe { Promise::from_unchecked(obj) })
+                } else {
+                    Self::Ready(ReadyResponseValue::Object(obj.into()))
+                }
+            }
+        }
+    }
+}
+
+async fn start_request<'cx>(
+    cx: &'cx Context<'_>,
+    req: http::request::Parts,
+    body: Option<bytes::Bytes>,
+) -> Either<ion::Promise<'cx>, ResponseData> {
+    let start_inner = async move {
+        let fetch_event = FetchEvent::try_new(&cx, req, body)?;
+
+        let mut request_value = Value::undefined(&cx);
+        Box::new(fetch_event).into_value(&cx, &mut request_value);
+        let request_object = request_value.to_object(&cx);
+
+        let callback_rval = event_listener::invoke_fetch_event_callback(&cx, &[request_value])
+            .map_err(|e| {
+                e.map(|e| error_report_to_anyhow_error(&cx, e))
+                    .unwrap_or(anyhow::anyhow!("Script execution failed"))
+            })?;
+
+        let event = fetch_event::FetchEvent::get_private(&request_object);
+
+        let result_pointers = if let Some(response) = event.response.as_ref() {
+            response.clone()
+        } else if callback_rval.handle().is_object() || callback_rval.handle().is_string() {
+            value_to_object_or_string(callback_rval)?
+        } else {
+            bail!("No response provided");
+        };
+
+        let response = match ResponseValue::from_raw_pointers(cx, result_pointers) {
+            ResponseValue::Promise(promise) => Either::Left(promise),
+            ResponseValue::Ready(ready) => {
+                Either::Right(ResponseData(build_response(cx, ready).await))
+            }
+        };
+
+        Ok(response)
     };
 
-    // Wait for a potential promise to finish running
-    rt.run_event_loop().await.unwrap();
+    match start_inner.await {
+        Ok(x) => x,
+        Err(e) => Either::Right(ResponseData(Err(e))),
+    }
+}
 
-    build_response(&cx, result).await
+// The promise must be fulfilled or rejected before calling this function,
+// otherwise an error is returned
+async fn build_response_from_promise<'cx>(
+    cx: &'cx Context<'_>,
+    promise: ion::Promise<'cx>,
+) -> anyhow::Result<hyper::Response<hyper::Body>> {
+    match promise.state() {
+        PromiseState::Pending => {
+            bail!("Internal error: promise is not fulfilled yet");
+        }
+        PromiseState::Rejected => {
+            let result = promise.result(cx);
+            let message = result
+                .to_object(cx)
+                .get(cx, "message")
+                .and_then(|v| {
+                    if v.get().is_string() {
+                        Some(ion::String::from(cx.root_string(v.get().to_string())).to_owned(cx))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("<No error message>".to_string());
+            bail!("Script execution failed: {message}")
+        }
+        PromiseState::Fulfilled => {
+            let result = promise.result(cx);
+            match ResponseValue::from_raw_pointers(cx, value_to_object_or_string(result)?) {
+                ResponseValue::Promise(_) => {
+                    bail!("Script error: promise resolved to another promise")
+                }
+                ResponseValue::Ready(ready) => build_response(cx, ready).await,
+            }
+        }
+    }
 }
 
 async fn build_response<'cx>(
     cx: &'cx Context<'_>,
-    value: Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>,
+    value: ReadyResponseValue<'cx>,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
-    let value = match value {
-        Either::Right(obj) if Promise::is_promise(&cx.root_object(obj)) => {
-            let promise = Promise::from(cx.root_object(obj)).unwrap();
-            match promise.state() {
-                PromiseState::Pending => bail!("Event loop finished but promise is still pending"),
-                PromiseState::Rejected => {
-                    let result = promise.result(cx);
-                    let message = result
-                        .to_object(cx)
-                        .get(cx, "message")
-                        .and_then(|v| {
-                            if v.get().is_string() {
-                                Some(
-                                    ion::String::from(cx.root_string(v.get().to_string()))
-                                        .to_owned(cx),
-                                )
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or("<No error message>".to_string());
-                    bail!("Script execution failed: {message}")
-                }
-                PromiseState::Fulfilled => {
-                    let result = promise.result(cx);
-                    value_to_object_or_string(result)?
-                }
-            }
-        }
-        _ => value,
-    };
-
     // First, check if the value is a string or byte array
     let response = match value {
-        Either::Left(str) => {
-            let str = ion::String::from(cx.root_string(str)).to_owned(cx);
+        ReadyResponseValue::String(str) => {
+            let str = str.to_owned(cx);
             Either::Left((Bytes::from(str.into_bytes()), "text/plain; charset=utf-8"))
         }
-        Either::Right(obj) => {
-            if let Ok(arr) = mozjs::typedarray::ArrayBuffer::from(obj) {
+        ReadyResponseValue::Object(obj) => {
+            if let Ok(arr) = mozjs::typedarray::ArrayBuffer::from((*obj).get()) {
                 Either::Left((
                     Bytes::from(unsafe { arr.as_slice() }.to_owned()),
                     "application/octet-stream",
                 ))
-            } else if let Ok(arr) = mozjs::typedarray::ArrayBufferView::from(obj) {
+            } else if let Ok(arr) = mozjs::typedarray::ArrayBufferView::from((*obj).get()) {
                 Either::Left((
                     Bytes::from(unsafe { arr.as_slice() }.to_owned()),
                     "application/octet-stream",
                 ))
-            } else if let Ok(arr) = mozjs::typedarray::Uint8Array::from(obj) {
+            } else if let Ok(arr) = mozjs::typedarray::Uint8Array::from((*obj).get()) {
                 Either::Left((
                     Bytes::from(unsafe { arr.as_slice() }.to_owned()),
                     "application/octet-stream",
                 ))
             } else {
-                Either::Right(Value::object(cx, &cx.root_object(obj).into()))
+                Either::Right(obj)
             }
         }
     };
@@ -159,8 +285,7 @@ async fn build_response<'cx>(
         }
 
         // Else, construct a response from the response object
-        Either::Right(value) => {
-            let obj = value.to_object(cx);
+        Either::Right(obj) => {
             if !runtime::globals::fetch::Response::instance_of(cx, &obj, None) {
                 // TODO: support plain objects
                 bail!("If an object is returned, it must be an instance of Response");
@@ -207,33 +332,163 @@ fn error_report_to_anyhow_error(cx: &Context, error_report: ErrorReport) -> anyh
     anyhow::anyhow!("Runtime error: {}", error_report.exception.format(cx))
 }
 
-#[derive(Clone)]
-pub struct IonRunner;
+fn error_report_option_to_anyhow_error(
+    cx: &Context,
+    error_report: Option<ErrorReport>,
+) -> anyhow::Error {
+    match error_report {
+        Some(e) => error_report_to_anyhow_error(cx, e),
+        None => anyhow!("Unknown runtime error"),
+    }
+}
 
-impl crate::server::RequestHandler for IonRunner {
-    fn handle(
+pub struct RequestData {
+    _addr: std::net::SocketAddr,
+    req: http::request::Parts,
+    body: Option<bytes::Bytes>,
+}
+
+pub struct ResponseData(Result<hyper::Response<hyper::Body>, anyhow::Error>);
+
+pub enum ControlMessage {
+    HandleRequest(RequestData, tokio::sync::oneshot::Sender<ResponseData>),
+    Shutdown,
+}
+
+impl std::fmt::Debug for ControlMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HandleRequest(_, _) => write!(f, "HandleRequest"),
+            Self::Shutdown => write!(f, "Shutdown"),
+        }
+    }
+}
+
+pub struct WorkerThreadInfo {
+    thread: std::thread::JoinHandle<anyhow::Result<()>>,
+    channel: tokio::sync::mpsc::UnboundedSender<ControlMessage>,
+    in_flight_requests: Arc<AtomicI32>,
+}
+
+// TODO: clean shutdown
+// TODO: replace failing threads
+pub struct IonRunner {
+    threads: Vec<WorkerThreadInfo>,
+    max_threads: usize,
+    user_code: String,
+}
+
+impl IonRunner {
+    pub fn new(max_threads: usize, user_code: String) -> Self {
+        if max_threads == 0 {
+            panic!("max_threads must be at least 1");
+        }
+
+        Self {
+            threads: vec![],
+            max_threads,
+            user_code,
+        }
+    }
+
+    pub fn new_request_handler(max_threads: usize, user_code: String) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self::new(max_threads, user_code)))
+    }
+
+    fn spawn_thread(&mut self) -> &WorkerThreadInfo {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let user_code = self.user_code.clone();
+        let join_handle = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let local_set = LocalSet::new();
+                    local_set.run_until(handle_requests(user_code, rx)).await
+                })
+        });
+        let worker = WorkerThreadInfo {
+            thread: join_handle,
+            channel: tx,
+            in_flight_requests: Arc::new(AtomicI32::new(0)),
+        };
+        self.threads.push(worker);
+        let spawned_index = self.threads.len() - 1;
+        debug!("Starting new handler thread #{spawned_index}");
+        &self.threads[spawned_index]
+    }
+
+    fn find_or_spawn_thread(&mut self) -> &WorkerThreadInfo {
+        let request_counts = self
+            .threads
+            .iter()
+            .enumerate()
+            .map(|(idx, t)| {
+                (
+                    idx,
+                    t.in_flight_requests
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // Step 1: are there any idle threads?
+        for t in &request_counts {
+            if t.1 <= 0 {
+                debug!("Using idle handler thread #{}", t.0);
+                return &self.threads[t.0];
+            }
+        }
+
+        // Step 2: can we spawn a new thread?
+        if self.threads.len() < self.max_threads {
+            return self.spawn_thread();
+        }
+
+        // Step 3: find the thread with the least active requests
+        // unwrap safety: request_counts can never be empty
+        let min = request_counts.iter().min_by_key(|t| t.1).unwrap();
+        debug!(
+            "Reusing busy handler thread #{} with in-flight request count {}",
+            min.0,
+            self.threads[min.0]
+                .in_flight_requests
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
+        &self.threads[min.0]
+    }
+}
+
+#[async_trait]
+impl crate::server::RequestHandler for Arc<Mutex<IonRunner>> {
+    async fn handle(
         &self,
-        user_code: &str,
         _addr: std::net::SocketAddr,
         req: http::request::Parts,
         body: Option<bytes::Bytes>,
     ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
-        std::thread::scope(move |s| {
-            s.spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap()
-                    .block_on(async move {
-                        let local_set = LocalSet::new();
-                        local_set
-                            .run_until(handle_request(user_code, req, body))
-                            .await
-                    })
-            })
-            .join()
-        })
-        .unwrap()
+        let mut this = self.lock().await;
+        let thread = this.find_or_spawn_thread();
+
+        let request_count = thread.in_flight_requests.clone();
+        request_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        thread.channel.send(ControlMessage::HandleRequest(
+            RequestData { _addr, req, body },
+            tx,
+        ))?;
+
+        // explicitly drop mutex guard to unlock mutex
+        drop(this);
+
+        let response = rx.await?;
+
+        request_count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+
+        response.0
     }
 }
 

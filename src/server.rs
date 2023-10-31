@@ -2,15 +2,16 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 
 use anyhow::Context as _;
+use async_trait::async_trait;
 use bytes::Bytes;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 
+#[async_trait]
 pub trait RequestHandler: Send + Clone + 'static {
-    fn handle(
+    async fn handle(
         &self,
-        user_code: &str,
         addr: SocketAddr,
         req: http::request::Parts,
         body: Option<Bytes>,
@@ -19,9 +20,6 @@ pub trait RequestHandler: Send + Clone + 'static {
 
 #[derive(Clone)]
 struct AppContext<H: RequestHandler> {
-    /// Javascript code.
-    code: String,
-
     handler: H,
 }
 
@@ -55,18 +53,15 @@ async fn handle_inner(
         .await
         .context("could not read body")?;
 
-    tokio::task::spawn_blocking(move || {
-        context
-            .handler
-            .handle(&context.code, addr, parts, Some(body))
-    })
-    .await
-    .context("processing task failed")?
-    .context("javascript failed")
+    context
+        .handler
+        .handle(addr, parts, Some(body))
+        .await
+        .context("JavaScript failed")
 }
 
-pub async fn run_server<H: RequestHandler>(code: String, handler: H) -> Result<(), anyhow::Error> {
-    let context = AppContext { code, handler };
+pub async fn run_server<H: RequestHandler + Send + Sync>(handler: H) -> Result<(), anyhow::Error> {
+    let context = AppContext { handler };
 
     let make_service = make_service_fn(move |conn: &AddrStream| {
         let context = context.clone();
