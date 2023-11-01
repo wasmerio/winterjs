@@ -3,9 +3,8 @@ pub use class::FetchEvent;
 #[js_class]
 pub mod class {
     use anyhow::anyhow;
-    use futures::future::Either;
     use ion::{ClassDefinition, Context, Object, Value};
-    use mozjs::jsapi::{HandleValueArray, JSObject, JSString};
+    use mozjs::jsapi::{HandleValueArray, JSObject};
     use mozjs::rooted;
     use mozjs_sys::jsgc::Heap;
     use mozjs_sys::jsval::ObjectValue;
@@ -16,7 +15,7 @@ pub mod class {
     #[ion(into_value, no_constructor)]
     pub struct FetchEvent {
         pub(crate) request: Box<Heap<*mut JSObject>>,
-        pub(crate) response: Option<Either<*mut JSString, *mut JSObject>>,
+        pub(crate) response: Option<Box<Heap<*mut JSObject>>>,
     }
 
     impl FetchEvent {
@@ -80,19 +79,25 @@ pub mod class {
         }
 
         #[ion(name = "respondWith")]
-        pub fn respond_with(&mut self, response: ion::Value) -> ion::Result<()> {
+        pub fn respond_with(&mut self, cx: &Context, response: ion::Value) -> ion::Result<()> {
             match self.response {
                 None => {
                     if response.handle().is_object() {
-                        // TODO: do we need to root the response here?
-                        self.response = Some(Either::Right(response.handle().to_object()));
-                        Ok(())
-                    } else if response.handle().is_string() {
-                        self.response = Some(Either::Left(response.handle().to_string()));
-                        Ok(())
+                        let obj = response.handle().to_object();
+                        let rooted = cx.root_object(obj);
+                        if runtime::globals::fetch::Response::instance_of(cx, &rooted.into(), None)
+                        {
+                            self.response = Some(Heap::boxed(obj));
+                            Ok(())
+                        } else {
+                            Err(ion::Error::new(
+                                "Value must be an instance of Response",
+                                ion::ErrorKind::Type,
+                            ))
+                        }
                     } else {
                         Err(ion::Error::new(
-                            "Response must be an object or a string",
+                            "Value must be an instance of Response",
                             ion::ErrorKind::Type,
                         ))
                     }

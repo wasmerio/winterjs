@@ -13,7 +13,6 @@ use std::{
 
 use anyhow::{anyhow, bail};
 use async_trait::async_trait;
-use bytes::Bytes;
 use futures::future::Either;
 use http::{HeaderName, HeaderValue};
 use ion::{
@@ -71,7 +70,7 @@ async fn handle_requests(
         .await
         .map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
 
-    let mut requests: Vec<(ion::Promise, tokio::sync::oneshot::Sender<ResponseData>)> = vec![];
+    let mut requests = vec![];
 
     // Every 1ms, we stop waiting for the event loop and check existing requests.
     // This lets us send back ready responses before the entire event loop is done,
@@ -85,8 +84,9 @@ async fn handle_requests(
                     None | Some(ControlMessage::Shutdown) => break,
                     Some(ControlMessage::HandleRequest(req, resp_tx)) => {
                         match start_request(&cx, req.req, req.body).await {
-                            Either::Left(promise) => requests.push((promise, resp_tx)),
-                            Either::Right(resp) => ignore_error(resp_tx.send(resp)),
+                            Err(f) => ignore_error(resp_tx.send(ResponseData(Err(f)))),
+                            Ok(Either::Left(pending)) => requests.push((pending, resp_tx)),
+                            Ok(Either::Right(resp)) => ignore_error(resp_tx.send(ResponseData(Ok(resp)))),
                         }
                     }
                 }
@@ -104,11 +104,11 @@ async fn handle_requests(
         // We have to do this convoluted bit of code because drain_filter is not stable
         let mut i = 0;
         while i < requests.len() {
-            if requests[i].0.state() != PromiseState::Pending {
-                let (promise, resp_tx) = requests.swap_remove(i);
+            if requests[i].0.promise.state() != PromiseState::Pending {
+                let (pending, resp_tx) = requests.swap_remove(i);
                 // TODO: awaiting here makes other requests wait for this one
                 ignore_error(resp_tx.send(ResponseData(
-                    build_response_from_promise(&cx, promise).await,
+                    build_response_from_pending(&cx, pending).await,
                 )));
             } else {
                 i += 1;
@@ -120,103 +120,71 @@ async fn handle_requests(
         .await
         .map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
 
-    for (promise, resp_tx) in requests {
+    for (pending, resp_tx) in requests {
         ignore_error(resp_tx.send(ResponseData(
-            build_response_from_promise(&cx, promise).await,
+            build_response_from_pending(&cx, pending).await,
         )));
     }
 
     Ok(())
 }
 
-enum ReadyResponseValue<'cx> {
-    String(ion::String<'cx>),
-    Object(ion::Object<'cx>),
-}
-
-enum ResponseValue<'cx> {
-    Ready(ReadyResponseValue<'cx>),
-    Promise(ion::Promise<'cx>),
-}
-
-impl<'cx> ResponseValue<'cx> {
-    fn from_raw_pointers(
-        cx: &'cx Context<'_>,
-        p: Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>,
-    ) -> Self {
-        match p {
-            Either::Left(str) => {
-                Self::Ready(ReadyResponseValue::String(cx.root_string(str).into()))
-            }
-            Either::Right(obj) => {
-                let obj = cx.root_object(obj);
-                if Promise::is_promise(&obj) {
-                    // Safety: already checking is_promise above
-                    Self::Promise(unsafe { Promise::from_unchecked(obj) })
-                } else {
-                    Self::Ready(ReadyResponseValue::Object(obj.into()))
-                }
-            }
-        }
-    }
+struct PendingResponse<'cx> {
+    promise: ion::Promise<'cx>,
+    fetch_event: ion::Object<'cx>,
 }
 
 async fn start_request<'cx>(
     cx: &'cx Context<'_>,
     req: http::request::Parts,
     body: Option<bytes::Bytes>,
-) -> Either<ion::Promise<'cx>, ResponseData> {
-    let start_inner = async move {
-        let fetch_event = FetchEvent::try_new(&cx, req, body)?;
+) -> anyhow::Result<Either<PendingResponse<'cx>, hyper::Response<hyper::Body>>> {
+    let fetch_event = FetchEvent::try_new(&cx, req, body)?;
 
-        let mut request_value = Value::undefined(&cx);
-        Box::new(fetch_event).into_value(&cx, &mut request_value);
-        let request_object = request_value.to_object(&cx);
+    let mut request_value = Value::undefined(&cx);
+    Box::new(fetch_event).into_value(&cx, &mut request_value);
+    let fetch_event_object = request_value.to_object(&cx);
 
-        let callback_rval = event_listener::invoke_fetch_event_callback(&cx, &[request_value])
-            .map_err(|e| {
-                e.map(|e| error_report_to_anyhow_error(&cx, e))
-                    .unwrap_or(anyhow::anyhow!("Script execution failed"))
-            })?;
+    let callback_rval = event_listener::invoke_fetch_event_callback(&cx, &[request_value])
+        .map_err(|e| {
+            e.map(|e| error_report_to_anyhow_error(&cx, e))
+                .unwrap_or(anyhow::anyhow!("Script execution failed"))
+        })?;
 
-        let event = fetch_event::FetchEvent::get_private(&request_object);
-
-        let result_pointers = if let Some(response) = event.response.as_ref() {
-            response.clone()
-        } else if callback_rval.handle().is_object() || callback_rval.handle().is_string() {
-            value_to_object_or_string(callback_rval)?
+    if callback_rval.get().is_object() {
+        // We have a promise, return it so we can wait for it
+        let obj = callback_rval.to_object(cx);
+        if Promise::is_promise(&obj) {
+            Ok(Either::Left(PendingResponse {
+                promise: unsafe { Promise::from_unchecked(obj.into_local()) },
+                fetch_event: fetch_event_object,
+            }))
         } else {
-            bail!("No response provided");
-        };
-
-        let response = match ResponseValue::from_raw_pointers(cx, result_pointers) {
-            ResponseValue::Promise(promise) => Either::Left(promise),
-            ResponseValue::Ready(ready) => {
-                Either::Right(ResponseData(build_response(cx, ready).await))
-            }
-        };
-
-        Ok(response)
-    };
-
-    match start_inner.await {
-        Ok(x) => x,
-        Err(e) => Either::Right(ResponseData(Err(e))),
+            bail!("Script error: the fetch event handler should not return a value");
+        }
+    } else if !callback_rval.get().is_undefined() {
+        // The event handler cannot return anything other than a promise
+        bail!("Script error: the fetch event handler should not return a value");
+    } else {
+        // The event handler didn't return anything, a response should have been provided via respondWith
+        build_response_from_fetch_event(cx, &fetch_event_object)
+            .await
+            .map(Either::Right)
     }
 }
 
 // The promise must be fulfilled or rejected before calling this function,
 // otherwise an error is returned
-async fn build_response_from_promise<'cx>(
+async fn build_response_from_pending<'cx>(
     cx: &'cx Context<'_>,
-    promise: ion::Promise<'cx>,
+    response: PendingResponse<'cx>,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
-    match promise.state() {
+    match response.promise.state() {
         PromiseState::Pending => {
             bail!("Internal error: promise is not fulfilled yet");
         }
         PromiseState::Rejected => {
-            let result = promise.result(cx);
+            let result = response.promise.result(cx);
             let message = result
                 .to_object(cx)
                 .get(cx, "message")
@@ -231,100 +199,67 @@ async fn build_response_from_promise<'cx>(
             bail!("Script execution failed: {message}")
         }
         PromiseState::Fulfilled => {
-            let result = promise.result(cx);
-            match ResponseValue::from_raw_pointers(cx, value_to_object_or_string(result)?) {
-                ResponseValue::Promise(_) => {
-                    bail!("Script error: promise resolved to another promise")
-                }
-                ResponseValue::Ready(ready) => build_response(cx, ready).await,
+            let promise_result = response.promise.result(cx);
+            if !promise_result.get().is_undefined() {
+                bail!("Script error: the fetch event handler should not return a value");
             }
+
+            build_response_from_fetch_event(cx, &response.fetch_event).await
+        }
+    }
+}
+
+async fn build_response_from_fetch_event<'cx>(
+    cx: &'cx Context<'_>,
+    fetch_event: &ion::Object<'cx>,
+) -> anyhow::Result<hyper::Response<hyper::Body>> {
+    if !FetchEvent::instance_of(cx, fetch_event, None) {
+        bail!("Internal error: expected a fetch event");
+    }
+
+    let fetch_event = FetchEvent::get_private(fetch_event);
+
+    match fetch_event.response.as_ref() {
+        None => {
+            bail!("Script error: FetchEvent.respondWith must be called with a Response object before returning")
+        }
+        Some(response) => {
+            let response = ion::Object::from(cx.root_object(response.get()));
+
+            build_response(cx, response).await
         }
     }
 }
 
 async fn build_response<'cx>(
     cx: &'cx Context<'_>,
-    value: ReadyResponseValue<'cx>,
+    value: ion::Object<'cx>,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
-    // First, check if the value is a string or byte array
-    let response = match value {
-        ReadyResponseValue::String(str) => {
-            let str = str.to_owned(cx);
-            Either::Left((Bytes::from(str.into_bytes()), "text/plain; charset=utf-8"))
-        }
-        ReadyResponseValue::Object(obj) => {
-            if let Ok(arr) = mozjs::typedarray::ArrayBuffer::from((*obj).get()) {
-                Either::Left((
-                    Bytes::from(unsafe { arr.as_slice() }.to_owned()),
-                    "application/octet-stream",
-                ))
-            } else if let Ok(arr) = mozjs::typedarray::ArrayBufferView::from((*obj).get()) {
-                Either::Left((
-                    Bytes::from(unsafe { arr.as_slice() }.to_owned()),
-                    "application/octet-stream",
-                ))
-            } else if let Ok(arr) = mozjs::typedarray::Uint8Array::from((*obj).get()) {
-                Either::Left((
-                    Bytes::from(unsafe { arr.as_slice() }.to_owned()),
-                    "application/octet-stream",
-                ))
-            } else {
-                Either::Right(obj)
-            }
-        }
-    };
-
-    match response {
-        // If it's a simple value, return it directly
-        Either::Left((bytes, mime_type)) => {
-            let mut hyper_response = hyper::Response::builder().status(200);
-            let headers =
-                anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
-            headers.append("Content-Type", HeaderValue::from_str(mime_type)?);
-            Ok(hyper_response.body(hyper::Body::from(bytes))?)
-        }
-
-        // Else, construct a response from the response object
-        Either::Right(obj) => {
-            if !runtime::globals::fetch::Response::instance_of(cx, &obj, None) {
-                // TODO: support plain objects
-                bail!("If an object is returned, it must be an instance of Response");
-            }
-
-            let response = runtime::globals::fetch::Response::get_private(&obj);
-
-            let mut hyper_response = hyper::Response::builder().status(response.get_status());
-
-            let headers =
-                anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
-            let response_headers = response.get_headers_object();
-            for header in response_headers.iter() {
-                headers.append(
-                    HeaderName::from_str(header.0.as_str())?,
-                    HeaderValue::from_str(header.1.to_str()?)?,
-                );
-            }
-
-            let body = response
-                .read_to_bytes()
-                .await
-                .map_err(|e| anyhow!("Failed to read response body: {e:?}"))?;
-
-            Ok(hyper_response.body(hyper::Body::from(body))?)
-        }
+    if !runtime::globals::fetch::Response::instance_of(cx, &value, None) {
+        // TODO: support plain objects
+        bail!("If an object is returned, it must be an instance of Response");
     }
-}
 
-fn value_to_object_or_string(
-    value: Value,
-) -> anyhow::Result<Either<*mut mozjs::jsapi::JSString, *mut mozjs::jsapi::JSObject>> {
-    if value.handle().is_string() {
-        Ok(Either::Left(value.handle().to_string()))
-    } else if value.handle().is_object() {
-        Ok(Either::Right(value.handle().to_object()))
-    } else {
-        bail!("Value must be an object or a string")
+    let response = runtime::globals::fetch::Response::get_private(&value);
+
+    let mut hyper_response = hyper::Response::builder().status(response.get_status());
+
+    let headers =
+        anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
+    let response_headers = response.get_headers_object();
+    for header in response_headers.iter() {
+        headers.append(
+            HeaderName::from_str(header.0.as_str())?,
+            HeaderValue::from_str(header.1.to_str()?)?,
+        );
     }
+
+    let body = response
+        .read_to_bytes()
+        .await
+        .map_err(|e| anyhow!("Failed to read response body: {e:?}"))?;
+
+    Ok(hyper_response.body(hyper::Body::from(body))?)
 }
 
 fn error_report_to_anyhow_error(cx: &Context, error_report: ErrorReport) -> anyhow::Error {

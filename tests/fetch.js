@@ -3,7 +3,7 @@ addEventListener('fetch', async req => {
 });
 
 async function handleRequest(req) {
-  let url = req.request.text();
+  let url = await req.request.text();
   console.log("Fetching", url);
   let h = req.request.headers.get('x-wasmer-test');
   console.log("Header val:", h);
