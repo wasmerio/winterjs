@@ -3,23 +3,23 @@
 This benchmarks are done in a MacBook Pro M1 Max laptop with 64 GB of RAM, on Oct 31st, 2023.
 
 This benchmark compares:
-* (`workerd`)[#workerd]: Cloudflare's Service Worker server powered by V8 (repo: https://github.com/cloudflare/workerd)
-* (WinterJS Native)[#winterjs-native]: WinterJS running natively
-* (WinterJS WASIX)[#winterjs-wasix]: WinterJS running in Wasmer via WASIX
-* (`wrangler`)[#wrangler]: Cloudflare's Service Worker powered by Node (repo: https://github.com/cloudflare/workers-sdk)
+* [`workerd`](#workerd): Cloudflare's Service Worker server powered by V8 (repo: https://github.com/cloudflare/workerd)
+* [WinterJS Native](#winterjs-native): WinterJS running natively
+* [WinterJS WASIX](#winterjs-wasix): WinterJS running in Wasmer via WASIX
+* [`wrangler`](#wrangler): Cloudflare's Service Worker powered by Node (repo: https://github.com/cloudflare/workers-sdk)
 
 
-> Note: this benchmarks focuses on running a simple workload [`simple.js`](./simple.js)
+> Note: this benchmarks focuses on running a simple workload [`simple.js`](./simple.js).
 
 
 ## Workerd
 
-Used latest release binary: https://github.com/cloudflare/workerd/releases/tag/v1.20231030.0
+Using latest release binary: https://github.com/cloudflare/workerd/releases/tag/v1.20231030.0
 
 Running the server:
 
 ```
-$ workerd-darwin-arm64 serve ./worker.capnp
+$ ./workerd-darwin-arm64 serve ./worker.capnp
 ```
 
 And then:
