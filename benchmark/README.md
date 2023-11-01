@@ -9,7 +9,7 @@ This benchmark compares:
 * [`wrangler`](#wrangler): Cloudflare's Service Worker powered by Node (repo: https://github.com/cloudflare/workers-sdk)
 
 
-> Note: this benchmarks focuses on running a simple workload [`simple.js`](./simple.js).
+> Note: this benchmarks focuses on running a simple workload [`simple.js`](./simple.js). There's also the [`complex.js`](./complex.js) file, which does Server Side Rendering using React.
 
 
 ## Workerd
