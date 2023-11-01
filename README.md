@@ -27,7 +27,7 @@ Where `simple.js` is:
 
 ```js
 addEventListener('fetch', (req) => {
-  return "hello";
+  req.respondWith(new Response('hello;'));
 });
 ```
 
