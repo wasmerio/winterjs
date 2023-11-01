@@ -9,7 +9,9 @@
 
 # WinterJS
 
-The JavaScript server that runs Service Workers according to the [Winter Community Group specification](https://wintercg.org/).
+A *blazing-fast* JavaScript server that runs Service Workers scripts according to the [Winter Community Group specification](https://wintercg.org/).
+
+**WinterJS is able to handle up to 100,000 reqs/s in a single laptop** (see [Benchmark](./benchmark)).
 
 > Note: WinterJS is not officially endorsed by WinterCG, despite sharing "Winter" in their name. There are many [runtimes supporting WinterCG](https://runtime-keys.proposal.wintercg.org/), WinterJS being one among those.
 
