@@ -2,7 +2,7 @@
   <a href="https://winterjs.org" target="_blank">
     <picture>
       <source srcset="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/logo.png"  media="(prefers-color-scheme: dark)">
-      <img width="300" src="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/logo.png" alt="Wasmer logo">
+      <img width="128" src="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/logo.png" alt="Wasmer logo">
     </picture>
   </a>
 </div>
