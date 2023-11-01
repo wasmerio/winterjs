@@ -12649,7 +12649,7 @@
     // src/app.js
     init_modules_watch_stub();
     var import_react = __toESM(require_react());
-    var App = () => /* @__PURE__ */ import_react.default.createElement("div", null, /* @__PURE__ */ import_react.default.createElement("title", null, "My Cool Site"), /* @__PURE__ */ import_react.default.createElement("link", { href: "https://unpkg.com/tailwindcss@^1.0/dist/tailwind.min.css", rel: "stylesheet" }), /* @__PURE__ */ import_react.default.createElement("body", { className: "bg-gray-200 w-full h-screen flex items-center justify-center" }), /* @__PURE__ */ import_react.default.createElement("div", { class: "max-w-sm mx-auto flex p-6 bg-white rounded-lg shadow-xl" }, /* @__PURE__ */ import_react.default.createElement("div", null, /* @__PURE__ */ import_react.default.createElement("h4", { class: "text-xl text-gray-900 leading-tight" }, "\u{1F920} Hello!"))));
+    var App = () => /* @__PURE__ */ import_react.default.createElement("div", null, /* @__PURE__ */ import_react.default.createElement("title", null, "My Cool Site"), /* @__PURE__ */ import_react.default.createElement("link", { href: "https://unpkg.com/tailwindcss@^1.0/dist/tailwind.min.css", rel: "stylesheet" }), /* @__PURE__ */ import_react.default.createElement("body", { className: "bg-gray-200 w-full h-screen flex items-center justify-center" }), /* @__PURE__ */ import_react.default.createElement("div", { class: "max-w-sm mx-auto flex p-6 bg-white rounded-lg shadow-xl" }, /* @__PURE__ */ import_react.default.createElement("div", null, /* @__PURE__ */ import_react.default.createElement("h4", { class: "text-xl text-gray-900 leading-tight" }, "Hello!"))));
     var app_default = App;
   
     // src/index.js
