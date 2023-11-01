@@ -4,8 +4,10 @@ pub use class::FetchEvent;
 pub mod class {
     use anyhow::anyhow;
     use ion::{ClassDefinition, Context, Object, Value};
+    use mozjs::gc::Traceable;
     use mozjs::jsapi::{HandleValueArray, JSObject};
     use mozjs::rooted;
+    use mozjs_sys::jsapi::JSTracer;
     use mozjs_sys::jsgc::Heap;
     use mozjs_sys::jsval::ObjectValue;
     use runtime::globals::{fetch::Headers, url::Url};
@@ -112,6 +114,15 @@ pub mod class {
         #[ion(name = "waitUntil")]
         pub fn wait_until(&self, _promise: ion::Promise) {
             // No need to do anything, the runtime will run the promise anyway
+        }
+    }
+
+    unsafe impl Traceable for FetchEvent {
+        unsafe fn trace(&self, trc: *mut JSTracer) {
+            self.request.trace(trc);
+            if let Some(response) = self.response.as_ref() {
+                response.trace(trc);
+            }
         }
     }
 }
