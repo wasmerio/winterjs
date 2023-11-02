@@ -52,6 +52,7 @@ parking_lot = { version = "=0.12.1", features = ["nightly"] }
 url = "2.4.1"
 base64 = "0.21.4"
 async-trait = "0.1.74"
+uuid = { version = "1.5.0", features = ["v4"] }
 
 [patch.crates-io]
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "epoll" }

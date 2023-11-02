@@ -1,4 +1,5 @@
 mod base64;
+mod crypto;
 mod event_listener;
 mod fetch_event;
 mod performance;
@@ -29,7 +30,7 @@ use runtime::{
 use tokio::{select, sync::Mutex, task::LocalSet};
 use tracing::debug;
 
-use self::{fetch_event::class::FetchEvent, performance::PerformanceModule};
+use self::{crypto::CryptoModule, fetch_event::class::FetchEvent, performance::PerformanceModule};
 
 pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy::new(|| {
     let engine = JSEngine::init().expect("could not create engine");
@@ -432,6 +433,7 @@ struct Modules;
 impl StandardModules for Modules {
     fn init<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
         init_module::<PerformanceModule>(cx, global)
+            && init_module::<CryptoModule>(cx, global)
             && init_module::<modules::Assert>(cx, global)
             && init_module::<modules::FileSystem>(cx, global)
             && init_module::<modules::PathM>(cx, global)
@@ -444,6 +446,7 @@ impl StandardModules for Modules {
 
     fn init_globals<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
         init_global_module::<PerformanceModule>(cx, global)
+            && init_global_module::<CryptoModule>(cx, global)
             && init_global_module::<modules::Assert>(cx, global)
             && init_global_module::<modules::FileSystem>(cx, global)
             && init_global_module::<modules::PathM>(cx, global)
