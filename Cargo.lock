@@ -2761,6 +2761,7 @@ dependencies = [
  "mozjs_sys",
  "once_cell",
  "parking_lot 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand",
  "runtime",
  "rustls",
  "serde",

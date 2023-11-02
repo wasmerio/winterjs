@@ -1,6 +1,19 @@
 use ion::{function_spec, Object};
-use mozjs_sys::jsapi::JSFunctionSpec;
+use mozjs::typedarray::ArrayBufferView;
+use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
+use rand::RngCore;
 use runtime::modules::NativeModule;
+
+#[js_fn]
+fn get_random_values(array: ArrayBufferView) -> *mut JSObject {
+    let mut array = array;
+    let slice = unsafe { array.as_mut_slice() };
+    rand::thread_rng().fill_bytes(slice);
+
+    // We have to call underlying_object because ToValue is not
+    // implemented for ArrayBufferView
+    unsafe { *array.underlying_object() }
+}
 
 #[js_fn]
 fn random_uuid() -> String {
@@ -9,6 +22,7 @@ fn random_uuid() -> String {
 }
 
 const METHODS: &[JSFunctionSpec] = &[
+    function_spec!(get_random_values, "getRandomValues", 1),
     function_spec!(random_uuid, "randomUUID", 0),
     JSFunctionSpec::ZERO,
 ];

@@ -53,6 +53,7 @@ url = "2.4.1"
 base64 = "0.21.4"
 async-trait = "0.1.74"
 uuid = { version = "1.5.0", features = ["v4"] }
+rand = "0.8.5"
 
 [patch.crates-io]
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "epoll" }
