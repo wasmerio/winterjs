@@ -825,7 +825,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#5866fc04d8aa28ea8c19686ab4f0a486468be057"
+source = "git+https://github.com/wasmerio/spiderfire.git#a89c2c70b2e94e6fc0fa5fcd7d2ff545e5130282"
 dependencies = [
  "bitflags 2.4.1",
  "bytemuck",
@@ -847,7 +847,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#5866fc04d8aa28ea8c19686ab4f0a486468be057"
+source = "git+https://github.com/wasmerio/spiderfire.git#a89c2c70b2e94e6fc0fa5fcd7d2ff545e5130282"
 dependencies = [
  "convert_case",
  "either",
@@ -1052,7 +1052,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#5866fc04d8aa28ea8c19686ab4f0a486468be057"
+source = "git+https://github.com/wasmerio/spiderfire.git#a89c2c70b2e94e6fc0fa5fcd7d2ff545e5130282"
 dependencies = [
  "bytes",
  "futures",
@@ -1537,7 +1537,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#5866fc04d8aa28ea8c19686ab4f0a486468be057"
+source = "git+https://github.com/wasmerio/spiderfire.git#a89c2c70b2e94e6fc0fa5fcd7d2ff545e5130282"
 dependencies = [
  "base64-url",
  "bytes",
@@ -1611,7 +1611,7 @@ dependencies = [
 [[package]]
 name = "rustls-native-certs"
 version = "0.6.3"
-source = "git+https://github.com/wasix-org/rustls-native-certs.git?branch=main#59091f9bd1f0e4b116e93dfaf63669b09380dd7e"
+source = "git+https://github.com/wasix-org/rustls-native-certs.git?branch=main#678174c93b8dd4344ca0476b1724ca989c2aa991"
 dependencies = [
  "libc 0.2.139",
  "openssl-probe",
@@ -1683,7 +1683,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "sct"
 version = "0.7.0"
-source = "git+https://github.com/wasix-org/sct.git?branch=v0.7.0#edb86530ecb0445b3821415f4e91fd2c687d23bb"
+source = "git+https://github.com/wasix-org/sct.git?branch=v0.7.0#25c9cb550fe06601da25be1dbb7ca46449886acd"
 dependencies = [
  "ring",
  "untrusted",
