@@ -408,7 +408,7 @@ impl crate::server::RequestHandler for Arc<Mutex<IonRunner>> {
         let thread = this.find_or_spawn_thread();
 
         let request_count = thread.in_flight_requests.clone();
-        request_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let increment_guard = IncrementGuard::new(request_count);
 
         let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -422,9 +422,26 @@ impl crate::server::RequestHandler for Arc<Mutex<IonRunner>> {
 
         let response = rx.await?;
 
-        request_count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        drop(increment_guard);
 
         response.0
+    }
+}
+
+struct IncrementGuard {
+    value: Arc<AtomicI32>,
+}
+
+impl IncrementGuard {
+    fn new(value: Arc<AtomicI32>) -> Self {
+        value.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self { value }
+    }
+}
+
+impl Drop for IncrementGuard {
+    fn drop(&mut self) {
+        self.value.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
