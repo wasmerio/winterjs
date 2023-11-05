@@ -1,4 +1,7 @@
-use ion::{function_spec, Object};
+mod algorithm;
+mod subtle;
+
+use ion::{conversions::ToValue, function_spec, Object};
 use mozjs::typedarray::ArrayBufferView;
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
 use rand::RngCore;
@@ -37,7 +40,11 @@ impl NativeModule for CryptoModule {
 
     fn module<'cx>(cx: &'cx ion::Context) -> Option<ion::Object<'cx>> {
         let mut ret = Object::new(cx);
-        if unsafe { ret.define_methods(cx, METHODS) } {
+
+        let subtle = Object::new(cx);
+        ret.set(cx, "subtle", &subtle.as_value(cx));
+
+        if (unsafe { ret.define_methods(cx, METHODS) } && subtle::define(cx, subtle)) {
             Some(ret)
         } else {
             None
