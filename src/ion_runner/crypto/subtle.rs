@@ -1,7 +1,7 @@
 use ion::{function_spec, typedarray::ArrayBuffer, Context, Object};
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
 
-use super::algorithm::{sha::Sha, CryptoAlgorithm};
+use super::algorithm::{md5::Md5, sha::Sha, CryptoAlgorithm};
 
 pub struct CryptoKey {}
 
@@ -80,6 +80,7 @@ impl AlgorithmIdentifier {
             "sha-256" => Ok(Box::new(Sha::Sha256)),
             "sha-384" => Ok(Box::new(Sha::Sha384)),
             "sha-512" => Ok(Box::new(Sha::Sha512)),
+            "md5" => Ok(Box::new(Md5)),
 
             _ => Err(ion::Error::new(
                 "Unknown algorithm identifier",
