@@ -1,5 +1,5 @@
-addEventListener('fetch', async req => {
-  req.respondWith(await handleRequest(req));
+addEventListener('fetch', req => {
+  req.respondWith(handleRequest(req));
 });
 
 async function handleRequest(req) {

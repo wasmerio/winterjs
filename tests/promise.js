@@ -1,7 +1,11 @@
 
-addEventListener('fetch', async req => {
+async function handleRequest(req) {
   await sleep(1000);
-  req.respondWith(new Response('hello'));
-});
+  return new Response('hello');
+}
 
 const sleep = n => new Promise(resolve => setTimeout(resolve, n));
+
+addEventListener('fetch', req => {
+  req.respondWith(handleRequest(req));
+});
