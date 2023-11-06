@@ -44,9 +44,9 @@ pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy
 // there really isn't anything we can do
 fn ignore_error<E>(_r: std::result::Result<(), E>) {}
 
-async fn handle_requests(
+async fn handle_requests_inner(
     user_code: String,
-    mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
+    recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) -> Result<(), anyhow::Error> {
     let rt = mozjs::rust::Runtime::new(ENGINE.clone());
 
@@ -128,6 +128,27 @@ async fn handle_requests(
     }
 
     Ok(())
+}
+
+async fn handle_requests(
+    user_code: String,
+    mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
+) {
+    if let Err(e) = handle_requests_inner(user_code, &mut recv).await {
+        // The request handling logic itself failed, so we report the error
+        // as long as the thread is alive and shutdown has not been requested.
+        // This lets us report the error. The runner can shut us down as soon
+        // as it discovers the error.
+
+        loop {
+            match recv.recv().await {
+                None | Some(ControlMessage::Shutdown) => break,
+                Some(ControlMessage::HandleRequest(_, resp_tx)) => {
+                    ignore_error(resp_tx.send(ResponseData(Err(anyhow!("{e:?}")))))
+                }
+            }
+        }
+    }
 }
 
 struct PendingResponse<'cx> {
@@ -279,7 +300,7 @@ impl std::fmt::Debug for ControlMessage {
 }
 
 pub struct WorkerThreadInfo {
-    thread: std::thread::JoinHandle<anyhow::Result<()>>,
+    thread: std::thread::JoinHandle<()>,
     channel: tokio::sync::mpsc::UnboundedSender<ControlMessage>,
     in_flight_requests: Arc<AtomicI32>,
 }
