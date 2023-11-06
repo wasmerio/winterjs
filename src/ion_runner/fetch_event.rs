@@ -3,7 +3,7 @@ pub use class::FetchEvent;
 #[js_class]
 pub mod class {
     use anyhow::anyhow;
-    use ion::{ClassDefinition, Context, Object, Value};
+    use ion::{ClassDefinition, Context, Object, Promise, Value};
     use mozjs::gc::Traceable;
     use mozjs::jsapi::{HandleValueArray, JSObject};
     use mozjs::rooted;
@@ -87,19 +87,24 @@ pub mod class {
                     if response.handle().is_object() {
                         let obj = response.handle().to_object();
                         let rooted = cx.root_object(obj);
-                        if runtime::globals::fetch::Response::instance_of(cx, &rooted.into(), None)
+                        if Promise::is_promise(&rooted)
+                            || runtime::globals::fetch::Response::instance_of(
+                                cx,
+                                &rooted.into(),
+                                None,
+                            )
                         {
                             self.response = Some(Heap::boxed(obj));
                             Ok(())
                         } else {
                             Err(ion::Error::new(
-                                "Value must be an instance of Response",
+                                "Value must be a promise or an instance of Response",
                                 ion::ErrorKind::Type,
                             ))
                         }
                     } else {
                         Err(ion::Error::new(
-                            "Value must be an instance of Response",
+                            "Value must be a promise or an instance of Response",
                             ion::ErrorKind::Type,
                         ))
                     }

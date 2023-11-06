@@ -132,7 +132,6 @@ async fn handle_requests(
 
 struct PendingResponse<'cx> {
     promise: ion::Promise<'cx>,
-    fetch_event: ion::Object<'cx>,
 }
 
 async fn start_request<'cx>(
@@ -152,25 +151,27 @@ async fn start_request<'cx>(
                 .unwrap_or(anyhow::anyhow!("Script execution failed"))
         })?;
 
-    if callback_rval.get().is_object() {
-        // We have a promise, return it so we can wait for it
-        let obj = callback_rval.to_object(cx);
-        if Promise::is_promise(&obj) {
-            Ok(Either::Left(PendingResponse {
-                promise: unsafe { Promise::from_unchecked(obj.into_local()) },
-                fetch_event: fetch_event_object,
-            }))
-        } else {
-            bail!("Script error: the fetch event handler should not return a value");
-        }
-    } else if !callback_rval.get().is_undefined() {
-        // The event handler cannot return anything other than a promise
+    if !callback_rval.get().is_undefined() {
         bail!("Script error: the fetch event handler should not return a value");
-    } else {
-        // The event handler didn't return anything, a response should have been provided via respondWith
-        build_response_from_fetch_event(cx, &fetch_event_object)
-            .await
-            .map(Either::Right)
+    }
+
+    let fetch_event = FetchEvent::get_private(&fetch_event_object);
+
+    match fetch_event.response.as_ref() {
+        None => {
+            bail!("Script error: FetchEvent.respondWith must be called with a Response object before returning")
+        }
+        Some(response) => {
+            let response = ion::Object::from(cx.root_object(response.get()));
+
+            if Promise::is_promise(&response) {
+                Ok(Either::Left(PendingResponse {
+                    promise: unsafe { Promise::from_unchecked(response.into_local()) },
+                }))
+            } else {
+                Ok(Either::Right(build_response(cx, response).await?))
+            }
+        }
     }
 }
 
@@ -201,33 +202,10 @@ async fn build_response_from_pending<'cx>(
         }
         PromiseState::Fulfilled => {
             let promise_result = response.promise.result(cx);
-            if !promise_result.get().is_undefined() {
-                bail!("Script error: the fetch event handler should not return a value");
+            if !promise_result.handle().is_object() {
+                bail!("Script error: value provided to respondWith was not an object");
             }
-
-            build_response_from_fetch_event(cx, &response.fetch_event).await
-        }
-    }
-}
-
-async fn build_response_from_fetch_event<'cx>(
-    cx: &'cx Context<'_>,
-    fetch_event: &ion::Object<'cx>,
-) -> anyhow::Result<hyper::Response<hyper::Body>> {
-    if !FetchEvent::instance_of(cx, fetch_event, None) {
-        bail!("Internal error: expected a fetch event");
-    }
-
-    let fetch_event = FetchEvent::get_private(fetch_event);
-
-    match fetch_event.response.as_ref() {
-        None => {
-            bail!("Script error: FetchEvent.respondWith must be called with a Response object before returning")
-        }
-        Some(response) => {
-            let response = ion::Object::from(cx.root_object(response.get()));
-
-            build_response(cx, response).await
+            build_response(cx, promise_result.to_object(cx)).await
         }
     }
 }
