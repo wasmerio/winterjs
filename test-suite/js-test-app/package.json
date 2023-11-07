@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/main.js",
-    "build": "rollup -c"
+    "build": "rollup -c",
+    "run": "node dist/bundle.js"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.7",

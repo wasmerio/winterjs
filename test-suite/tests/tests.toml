@@ -1,89 +1,89 @@
-[[test]]
+[[tests]]
 test_name = "1-hello"
 test_route = "1-hello"
 expected_output = "hello"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "2-blob"
 test_route = "2-blob"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "3.1-headers"
 test_route = "3-headers"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "3.2-headers"
 test_route = "3-headers"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "3.3-headers"
 test_route = "3-headers"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "3.4-headers"
 test_route = "3-headers"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "3.5-headers"
 test_route = "3-headers"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "3.6-headers"
 test_route = "3-headers"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "3.7-headers"
 test_route = "3-headers"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "4-request"
 test_route = "4-request"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "5-response"
 test_route = "5-response"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
+[[tests]]
 test_name = "6-text-encoder"
 test_route = "6-text-encoder"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
-test_name = "7-"
-test_route = "5-response"
+[[tests]]
+test_name = "7-text-decoder"
+test_route = "7-text-decoder"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
-test_name = "5-response"
-test_route = "5-response"
+[[tests]]
+test_name = "8-url"
+test_route = "8-url"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[test]]
-test_name = "5-response"
-test_route = "5-response"
+[[tests]]
+test_name = "10-atob-btoa"
+test_route = "10-atob-btoa"
 expected_output = "Hello, world!"
 expected_response_status = 200
