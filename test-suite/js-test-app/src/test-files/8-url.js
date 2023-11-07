@@ -130,6 +130,5 @@ async function handleRequest(request) {
     return new Response(error.message, { status: 500 });
   }
 }
-addEventListener("fetch", async (event) => {
-  return event.respondWith(await handleRequest(event.request));
-});
+
+export { handleRequest };

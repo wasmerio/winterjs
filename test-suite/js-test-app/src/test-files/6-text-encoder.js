@@ -73,6 +73,4 @@ async function handleRequest(request) {
   }
 }
 
-addEventListener("fetch", async (event) => {
-  return event.respondWith(await handleRequest(event.request));
-});
+export { handleRequest };
