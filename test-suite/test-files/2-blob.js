@@ -1,5 +1,4 @@
 async function handleRequest(request) {
-  //   const { request } = fetchEvent;
   try {
     // Create a new Blob with some text
     const blobParts = ["Hello, world!"];

@@ -1,17 +1,3 @@
-// THIS FAILS: Investigate
-// function assert(condition, message) {
-//   if (!condition) {
-//     throw new Error(message || "Assertion failed");
-//   }
-// }
-
-// function assertEquals(actual, expected, message) {
-//   assert(
-//     actual === expected,
-//     message || `Expected ${expected} but got ${actual}`
-//   );
-// }
-
 async function handleRequest(request) {
   const assert = (condition, message) => {
     if (!condition) {
