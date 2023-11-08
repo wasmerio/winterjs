@@ -1,7 +1,5 @@
 // Utility function to get chunks of data
-function* nextChunk() {
-  const textSource =
-    "This is the complete text from which we will take chunks.";
+function* nextChunk(textSource) {
   let currentPosition = 0;
   const CHUNK_SIZE = 10;
 
@@ -21,7 +19,7 @@ function* nextChunk() {
 
 async function handleRequest(request) {
   try {
-    // Test the TextEncoder constructor
+    // Test the TextDecoder constructor
     try {
       const decoder = new TextDecoder("invalid-encoding");
       console.error(
@@ -37,16 +35,6 @@ async function handleRequest(request) {
       }
     }
 
-    if (encoder.encoding === "utf-8") {
-      console.log(
-        "Passed: TextEncoder 'encoding' attribute is 'utf-8' as expected."
-      );
-    } else {
-      throw new Error(
-        `Failed: TextEncoder 'encoding' attribute is not 'utf-8', it is '${encoder.encoding}'.`
-      );
-    }
-
     try {
       const encoding = "utf-8";
       let decoder = new TextDecoder(encoding);
@@ -55,10 +43,16 @@ async function handleRequest(request) {
         "Failed: The constructor should not throw an error for a valid encoding."
       );
     }
+
     try {
+      const encoding = "utf-8";
+      let decoder = new TextDecoder(encoding);
+
       let string = "";
+      let textSource =
+        "This is the complete text from which we will take chunks.";
       // Create an instance of the generator
-      const chunkGenerator = nextChunk();
+      const chunkGenerator = nextChunk(textSource);
 
       // Iterate over the generator
       for (
@@ -70,25 +64,13 @@ async function handleRequest(request) {
         const buffer = result.value;
         string += decoder.decode(buffer, { stream: true });
       }
-
-      // Decode the remaining bytes in the stream
-      string += decoder.decode();
-
-      console.log(`Decoded string: ${string}`);
+      if (string !== textSource) {
+        throw new Error(
+          "Failed: The decoded string does not match the source string."
+        );
+      }
     } catch (error) {
       throw new Error(`Failed: ${error.message}`);
-    }
-
-    const text = "Hello, world!";
-    const encoded = encoder.encode(text);
-    if (encoded instanceof Uint8Array) {
-      console.log(
-        "Passed: TextEncoder 'encode' method returns a Uint8Array as expected."
-      );
-    } else {
-      throw new Error(
-        "Failed: TextEncoder 'encode' method does not return a Uint8Array."
-      );
     }
 
     // Test the Fatal error mode
