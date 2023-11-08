@@ -1,89 +1,89 @@
-[[tests]]
+[[test_cases]]
 test_name = "1-hello"
 test_route = "1-hello"
 expected_output = "hello"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "2-blob"
 test_route = "2-blob"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "3.1-headers"
 test_route = "3-headers"
-expected_output = "Hello, world!"
+expected_output = "All Headers:\ncontent-type: text/plain\nx-custom-header: CustomValue\n"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "3.2-headers"
-test_route = "3-headers"
-expected_output = "Hello, world!"
+test_route = "3-headers/append"
+expected_output = "Header appended"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "3.3-headers"
-test_route = "3-headers"
-expected_output = "Hello, world!"
+test_route = "3-headers/delete"
+expected_output = "Header deleted"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "3.4-headers"
-test_route = "3-headers"
-expected_output = "Hello, world!"
+test_route = "3-headers/get"
+expected_output = "Content-Type is text/plain"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "3.5-headers"
-test_route = "3-headers"
-expected_output = "Hello, world!"
+test_route = "3-headers/set"
+expected_output = "Content-Type set to text/html"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "3.6-headers"
-test_route = "3-headers"
-expected_output = "Hello, world!"
+test_route = "3-headers/has"
+expected_output = "Has Content-Type: true"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "3.7-headers"
-test_route = "3-headers"
-expected_output = "Hello, world!"
+test_route = "3-headers/iterate"
+expected_output = "Headers iterated:\ncontent-type: text/plain\nx-custom-header: CustomValue\n"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "4-request"
 test_route = "4-request"
 expected_output = "Hello, world!"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "5-response"
 test_route = "5-response"
-expected_output = "Hello, world!"
+expected_output = "All tests passed"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "6-text-encoder"
 test_route = "6-text-encoder"
-expected_output = "Hello, world!"
+expected_output = "Passed: TextEncoder 'encodeInto' method returns an object with 'read' and 'written' properties as expected."
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "7-text-decoder"
 test_route = "7-text-decoder"
-expected_output = "Hello, world!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "8-url"
 test_route = "8-url"
-expected_output = "Hello, world!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
-[[tests]]
+[[test_cases]]
 test_name = "10-atob-btoa"
 test_route = "10-atob-btoa"
-expected_output = "Hello, world!"
+expected_output = "All Tests Passed!"
 expected_response_status = 200
