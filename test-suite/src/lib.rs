@@ -17,7 +17,7 @@ pub struct TestCase {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestConfig {
-    pub tests: Vec<TestCase>,
+    pub test_cases: Vec<TestCase>,
 }
 
 #[derive(Debug)]
@@ -34,7 +34,7 @@ impl TestManager {
 
     fn collect_tests(&self) -> Result<Vec<Trial>, anyhow::Error> {
         let mut tests: Vec<Trial> = Vec::new();
-        for test_case in self.config.tests.iter() {
+        for test_case in self.config.test_cases.iter() {
             let rt = self.rt.handle().clone();
 
             let test_name = test_case.test_name.clone();
@@ -48,7 +48,7 @@ impl TestManager {
                 // let expected_response_status = expected_resp_status;
                 rt.block_on(async move {
                     let client = reqwest::Client::new();
-                    let url = format!("http://localhost:8000/{}", test_route);
+                    let url = format!("http://localhost:8080/{}", test_route);
                     let response = client.get(&url).send().await?;
                     // let response_status = response.status();
                     let response_body = response.text().await?;

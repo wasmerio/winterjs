@@ -1,9 +1,7 @@
 use anyhow::Ok;
 use libtest_mimic::Arguments;
-use serde::Deserialize;
 use std::fs;
-use test_suite::{TestCase, TestConfig, TestManager};
-use toml;
+use test_suite::{TestConfig, TestManager};
 
 // Read and parse the TOML file into a TestConfig
 fn read_test_cases() -> Result<TestConfig, anyhow::Error> {
