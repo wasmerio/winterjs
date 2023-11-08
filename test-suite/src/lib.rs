@@ -16,7 +16,22 @@ pub struct TestCase {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct Runner {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub enum ERunner {
+    Winter(Runner),
+    Wrangler(Runner),
+    WorkerD(Runner),
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct TestConfig {
+    pub matrix_runners: Vec<ERunner>,
     pub test_cases: Vec<TestCase>,
 }
 

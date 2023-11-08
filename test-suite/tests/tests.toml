@@ -1,3 +1,16 @@
+matrix_runners = [
+    { Winter = { name = "winter", command = "wasmer-winter", args = [
+        "dev",
+    ] } },
+    { Wrangler = { name = "wrangler", command = "wrangler", args = [
+        "dev",
+    ] } },
+    { WorkerD = { name = "workerd", command = "workerd", args = [
+        "dev",
+    ] } },
+]
+
+
 [[test_cases]]
 test_name = "1-hello"
 test_route = "1-hello"
