@@ -10,7 +10,7 @@ async function handleRequest(request) {
       throw new Error("TextEncoder constructor does not create an object.");
     }
 
-    if (encoder.encoding === "UTF-8") {
+    if (encoder.encoding === "utf-8") {
       console.log(
         "Passed: TextEncoder 'encoding' attribute is 'utf-8' as expected."
       );
