@@ -8,6 +8,38 @@ use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 
+#[derive(Clone, Debug)]
+pub struct ServerConfig {
+    pub addr: SocketAddr,
+}
+
+pub async fn run_server<H: RequestHandler + Send + Sync>(
+    config: ServerConfig,
+    handler: H,
+) -> Result<(), anyhow::Error> {
+    let context = AppContext { handler };
+
+    let make_service = make_service_fn(move |conn: &AddrStream| {
+        let context = context.clone();
+
+        let addr = conn.remote_addr();
+
+        // Create a `Service` for responding to the request.
+        let service = service_fn(move |req| handle(context.clone(), addr, req));
+
+        // Return the service to hyper.
+        async move { Ok::<_, Infallible>(service) }
+    });
+
+    let addr = config.addr;
+    tracing::info!(listen=%addr, "starting server on '{addr}'");
+
+    Server::bind(&addr)
+        .serve(make_service)
+        .await
+        .context("hyper server failed")
+}
+
 #[async_trait]
 pub trait RequestHandler: Send + Clone + 'static {
     async fn handle(
@@ -58,44 +90,4 @@ async fn handle_inner(
         .handle(addr, parts, Some(body))
         .await
         .context("JavaScript failed")
-}
-
-pub async fn run_server<H: RequestHandler + Send + Sync>(handler: H) -> Result<(), anyhow::Error> {
-    let context = AppContext { handler };
-
-    let make_service = make_service_fn(move |conn: &AddrStream| {
-        let context = context.clone();
-
-        let addr = conn.remote_addr();
-
-        // Create a `Service` for responding to the request.
-        let service = service_fn(move |req| handle(context.clone(), addr, req));
-
-        // Return the service to hyper.
-        async move { Ok::<_, Infallible>(service) }
-    });
-
-    let ip = std::env::var("LISTEN_IP")
-        .map(|x| {
-            x.parse()
-                .context(format!("Invalid listen IP value {x}"))
-                .unwrap()
-        })
-        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-
-    let port = std::env::var("PORT")
-        .map(|x| {
-            x.parse()
-                .context(format!("Invalid port value {x}"))
-                .unwrap()
-        })
-        .unwrap_or(8080u16);
-
-    let addr = SocketAddr::from((ip, port));
-    tracing::info!(listen=%addr, "starting server on {addr}");
-
-    Server::bind(&addr)
-        .serve(make_service)
-        .await
-        .context("hyper server failed")
 }
