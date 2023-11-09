@@ -5,6 +5,9 @@ mod fetch_event;
 mod performance;
 mod request;
 
+mod watch;
+pub use watch::WatchRunner;
+
 use std::{
     path::Path,
     str::FromStr,
@@ -312,6 +315,8 @@ pub struct IonRunner {
     max_threads: usize,
     user_code: String,
 }
+
+pub type SharedIonRunner = Arc<Mutex<IonRunner>>;
 
 impl IonRunner {
     pub fn new(max_threads: usize, user_code: String) -> Self {

@@ -76,10 +76,7 @@ async fn run() -> Result<(), anyhow::Error> {
                 )
             })?;
 
-            // let listen = cmd.liste
-
-    
-            let interface = if let Some(iface) = cmd.interface {
+            let interface = if let Some(iface) = cmd.ip {
                 iface
             } else if let Ok(value) = std::env::var("LISTEN_IP") {
                 value
@@ -105,8 +102,18 @@ async fn run() -> Result<(), anyhow::Error> {
             runtime::config::CONFIG
                 .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
                 .unwrap();
+
+            if cmd.watch {
                 let runner = ion_runner::WatchRunner::new(cmd.js_path.clone(), cmd.max_js_threads);
                 crate::server::run_server(config, runner).await
+            } else {
+                let runner = ion_runner::IonRunner::new_request_handler(cmd.max_js_threads, code);
+                crate::server::run_server(config, runner).await
+            }
+        }
+    }
+}
+
 /// winterjs CLI
 #[derive(clap::Parser, Debug)]
 #[clap(version)]
@@ -130,12 +137,16 @@ struct CmdServe {
 
     /// The interface to listen on.
     /// Defaults to 127.0.0.1
-    #[clap(long, default_value = "127.0.0.1", env = "WINTERJS_INTERFACE")]
-    interface: Option<IpAddr>,
+    #[clap(long, default_value = "127.0.0.1", env = "WINTERJS_IP")]
+    ip: Option<IpAddr>,
 
     /// Maximum amount of Javascript worker threads to spawn.
     #[clap(long, default_value = "16", env = "WINTERJS_MAX_JS_THREADS")]
     max_js_threads: usize,
+
+    /// Watch the Javascript file for changes and automatically reload.
+    #[clap(short, long, env = "WINTERJS_WATCH")]
+    watch: bool,
 
     /// Path to a Javascript file to serve.
     #[clap(env = "JS_PATH")]
