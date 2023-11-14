@@ -1,4 +1,5 @@
 use libtest_mimic::{Arguments, Trial};
+use reqwest::StatusCode;
 use serde::Deserialize;
 
 // Sample Test Case
@@ -19,6 +20,7 @@ pub struct TestCase {
 pub struct Runner {
     pub name: String,
     pub command: String,
+    pub port: u16,
     pub args: Vec<String>,
 }
 
@@ -27,6 +29,53 @@ pub enum ERunner {
     Winter(Runner),
     Wrangler(Runner),
     WorkerD(Runner),
+}
+
+pub trait RunnerTrait {
+    fn run(&self) -> Result<(), anyhow::Error>;
+    fn port(&self) -> u16;
+    fn name(&self) -> String;
+}
+
+impl RunnerTrait for Runner {
+    fn run(&self) -> Result<(), anyhow::Error> {
+        let mut command = std::process::Command::new(&self.command);
+        command.args(&self.args);
+        let output = command.output()?;
+        println!("output: {:?}", output);
+        Ok(())
+    }
+
+    fn port(&self) -> u16 {
+        self.port
+    }
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+}
+
+impl RunnerTrait for ERunner {
+    fn run(&self) -> Result<(), anyhow::Error> {
+        match self {
+            ERunner::Winter(runner) => runner.run(),
+            ERunner::Wrangler(runner) => runner.run(),
+            ERunner::WorkerD(runner) => runner.run(),
+        }
+    }
+    fn port(&self) -> u16 {
+        match self {
+            ERunner::Winter(runner) => runner.port(),
+            ERunner::Wrangler(runner) => runner.port(),
+            ERunner::WorkerD(runner) => runner.port(),
+        }
+    }
+    fn name(&self) -> String {
+        match self {
+            ERunner::Winter(runner) => runner.name(),
+            ERunner::Wrangler(runner) => runner.name(),
+            ERunner::WorkerD(runner) => runner.name(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,31 +98,37 @@ impl TestManager {
 
     fn collect_tests(&self) -> Result<Vec<Trial>, anyhow::Error> {
         let mut tests: Vec<Trial> = Vec::new();
-        for test_case in self.config.test_cases.iter() {
-            let rt = self.rt.handle().clone();
+        for runner in self.config.matrix_runners.iter() {
+            for test_case in self.config.test_cases.iter() {
+                let rt = self.rt.handle().clone();
 
-            let test_name = test_case.test_name.clone();
-            let test_route = test_case.test_route.clone();
-            let expected_output = test_case.expected_output.clone();
-            let expected_resp_status = test_case.expected_response_status;
+                let mut test_name = test_case.test_name.clone();
+                test_name = format!("{}-{}", runner.name(), test_name);
+                let test_route = test_case.test_route.clone();
+                let expected_output = test_case.expected_output.clone();
+                let expected_resp_status = StatusCode::from_u16(test_case.expected_response_status)
+                    .expect("Invalid status code");
 
-            let test = Trial::test(test_name, move || {
-                let test_route = test_route.clone();
-                let expected_output = expected_output.clone();
-                // let expected_response_status = expected_resp_status;
-                rt.block_on(async move {
-                    let client = reqwest::Client::new();
-                    let url = format!("http://localhost:8080/{}", test_route);
-                    let response = client.get(&url).send().await?;
-                    // let response_status = response.status();
-                    let response_body = response.text().await?;
-                    // assert_eq!(response_status, expected_response_status.try_into()?);
-                    assert_eq!(response_body, expected_output);
-                    anyhow::Result::<()>::Ok(())
-                })?;
-                Ok(())
-            });
-            tests.push(test);
+                let runner_port = runner.port();
+
+                let test = Trial::test(test_name, move || {
+                    let test_route = test_route.clone();
+                    let expected_output = expected_output.clone();
+                    let expected_response_status = expected_resp_status;
+                    rt.block_on(async move {
+                        let client = reqwest::Client::new();
+                        let url = format!("http://localhost:{}/{}", runner_port, test_route);
+                        let response = client.get(&url).send().await?;
+                        let response_status = response.status();
+                        let response_body = response.text().await?;
+                        assert_eq!(response_status, expected_response_status);
+                        assert_eq!(response_body, expected_output);
+                        anyhow::Result::<()>::Ok(())
+                    })?;
+                    Ok(())
+                });
+                tests.push(test);
+            }
         }
         Ok(tests)
     }
