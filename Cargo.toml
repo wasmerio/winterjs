@@ -57,6 +57,7 @@ rand = "0.8.5"
 sha1 = "0.10.6"
 sha2 = "0.10.8"
 md5 = "0.7.0"
+strum = { version = "0.25.0", features = ["derive"] }
 
 [patch.crates-io]
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "epoll" }

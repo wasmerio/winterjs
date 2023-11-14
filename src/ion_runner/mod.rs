@@ -30,7 +30,7 @@ use runtime::{
 use tokio::{select, sync::Mutex, task::LocalSet};
 use tracing::debug;
 
-use self::{crypto::CryptoModule, fetch_event::class::FetchEvent, performance::PerformanceModule};
+use self::{fetch_event::class::FetchEvent, performance::PerformanceModule};
 
 pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy::new(|| {
     let engine = JSEngine::init().expect("could not create engine");
@@ -38,6 +38,13 @@ pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy
     std::mem::forget(engine);
     handle
 });
+
+#[macro_export]
+macro_rules! ionerr {
+    ($msg:expr, $ty:ident) => {
+        return Err(ion::Error::new($msg, ion::ErrorKind::$ty));
+    };
+}
 
 // Used to ignore errors when sending responses back, since
 // if the receiving end of the oneshot channel is dropped,
@@ -449,7 +456,7 @@ struct Modules;
 impl StandardModules for Modules {
     fn init<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
         init_module::<PerformanceModule>(cx, global)
-            && init_module::<CryptoModule>(cx, global)
+            && init_module::<crypto::CryptoModule>(cx, global)
             && init_module::<modules::Assert>(cx, global)
             && init_module::<modules::FileSystem>(cx, global)
             && init_module::<modules::PathM>(cx, global)
@@ -458,11 +465,12 @@ impl StandardModules for Modules {
             && request::ExecuteRequest::init_class(cx, global).0
             && fetch_event::FetchEvent::init_class(cx, global).0
             && base64::define(cx, global)
+            && crypto::define(cx, global)
     }
 
     fn init_globals<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
         init_global_module::<PerformanceModule>(cx, global)
-            && init_global_module::<CryptoModule>(cx, global)
+            && init_global_module::<crypto::CryptoModule>(cx, global)
             && init_global_module::<modules::Assert>(cx, global)
             && init_global_module::<modules::FileSystem>(cx, global)
             && init_global_module::<modules::PathM>(cx, global)
@@ -471,5 +479,6 @@ impl StandardModules for Modules {
             && request::ExecuteRequest::init_class(cx, global).0
             && fetch_event::FetchEvent::init_class(cx, global).0
             && base64::define(cx, global)
+            && crypto::define(cx, global)
     }
 }

@@ -1,7 +1,6 @@
-mod algorithm;
 mod subtle;
 
-use ion::{conversions::ToValue, function_spec, Object};
+use ion::{conversions::ToValue, function_spec, ClassDefinition, Context, Object};
 use mozjs::typedarray::ArrayBufferView;
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
 use rand::RngCore;
@@ -50,4 +49,8 @@ impl NativeModule for CryptoModule {
             None
         }
     }
+}
+
+pub fn define<'cx: 'o, 'o>(cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
+    subtle::crypto_key::CryptoKey::init_class(cx, global).0
 }

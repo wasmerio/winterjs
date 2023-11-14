@@ -11,6 +11,15 @@ pub enum Sha {
 }
 
 impl CryptoAlgorithm for Sha {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Sha1 => "SHA-1",
+            Self::Sha256 => "SHA-256",
+            Self::Sha384 => "SHA-384",
+            Self::Sha512 => "SHA-512",
+        }
+    }
+
     fn digest(&self, _params: ion::Object, data: super::BufferSource) -> ion::Result<ArrayBuffer> {
         match self {
             Self::Sha1 => {
