@@ -843,8 +843,8 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
-version = "0.24.1"
-source = "git+https://github.com/wasix-org/hyper-rustls.git?branch=wasix#e8d621f92e7041c5bb47d7adc9cdbd48cbe43a51"
+version = "0.24.2"
+source = "git+https://github.com/wasix-org/hyper-rustls.git?branch=main#15c72c1fedbf67c5e3c9722cde47c065fc894f5f"
 dependencies = [
  "futures-util",
  "http",
@@ -925,7 +925,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#a89c2c70b2e94e6fc0fa5fcd7d2ff545e5130282"
+source = "git+https://github.com/wasmerio/spiderfire.git#087056cdd9226af4d51d6b3c725723f7fb318737"
 dependencies = [
  "bitflags 2.4.1",
  "bytemuck",
@@ -947,7 +947,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#a89c2c70b2e94e6fc0fa5fcd7d2ff545e5130282"
+source = "git+https://github.com/wasmerio/spiderfire.git#087056cdd9226af4d51d6b3c725723f7fb318737"
 dependencies = [
  "convert_case",
  "either",
@@ -1158,7 +1158,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#a89c2c70b2e94e6fc0fa5fcd7d2ff545e5130282"
+source = "git+https://github.com/wasmerio/spiderfire.git#087056cdd9226af4d51d6b3c725723f7fb318737"
 dependencies = [
  "bytes",
  "futures",
@@ -1177,7 +1177,7 @@ dependencies = [
 [[package]]
 name = "mozjs"
 version = "0.14.1"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi#64ac49f2d081d49f432b85a516180b4759a09d9b"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#774a39e08956f26c03b1310dfac0910f575655b7"
 dependencies = [
  "bindgen",
  "cc",
@@ -1191,7 +1191,7 @@ dependencies = [
 [[package]]
 name = "mozjs_sys"
 version = "0.68.2"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi#64ac49f2d081d49f432b85a516180b4759a09d9b"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#774a39e08956f26c03b1310dfac0910f575655b7"
 dependencies = [
  "bindgen",
  "cc",
@@ -1199,6 +1199,7 @@ dependencies = [
  "encoding_c_mem",
  "libc 0.2.149",
  "libz-sys",
+ "regex",
  "walkdir",
 ]
 
@@ -1627,23 +1628,22 @@ checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
 
 [[package]]
 name = "ring"
-version = "0.16.20"
-source = "git+https://github.com/wasix-org/ring?branch=wasix#ae8229623bd623370e0dea68b046e62c228b47bd"
+version = "0.17.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb0205304757e5d899b9c2e448b867ffd03ae7f988002e47cd24954391394d0b"
 dependencies = [
  "cc",
  "getrandom",
  "libc 0.2.149",
- "once_cell",
  "spin",
  "untrusted",
- "wasi",
- "winapi",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#a89c2c70b2e94e6fc0fa5fcd7d2ff545e5130282"
+source = "git+https://github.com/wasmerio/spiderfire.git#087056cdd9226af4d51d6b3c725723f7fb318737"
 dependencies = [
  "base64-url",
  "bytes",
@@ -1705,8 +1705,8 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.21.5"
-source = "git+https://github.com/wasix-org/rustls.git?branch=v0.21.5#744e3c710697153efacdde0dcc80c6d56090ae3f"
+version = "0.21.8"
+source = "git+https://github.com/wasix-org/rustls.git?branch=v0.21.8#f70944f36379939d2f96aabf51c52e4c0df2eb2b"
 dependencies = [
  "log",
  "ring",
@@ -1737,8 +1737,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.101.1"
-source = "git+https://github.com/wasix-org/webpki.git?branch=v0.101.0#b647431385890a1d648bbccb44340b0384fc7c8c"
+version = "0.101.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
  "ring",
  "untrusted",
@@ -1788,8 +1789,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sct"
-version = "0.7.0"
-source = "git+https://github.com/wasix-org/sct.git?branch=v0.7.0#25c9cb550fe06601da25be1dbb7ca46449886acd"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414"
 dependencies = [
  "ring",
  "untrusted",
@@ -2543,7 +2545,7 @@ dependencies = [
 [[package]]
 name = "tokio-rustls"
 version = "0.24.1"
-source = "git+https://github.com/wasix-org/tokio-rustls.git#8c75a69b753b12ebe7c80835ac47d4fa90e68758"
+source = "git+https://github.com/wasix-org/tokio-rustls.git#d3dbaae30c5660ec7841bb044fa5b82aa1bbd587"
 dependencies = [
  "rustls",
  "tokio",
@@ -2718,9 +2720,9 @@ checksum = "e51733f11c9c4f72aa0c160008246859e340b00807569a0da0e7a1079b27ba85"
 
 [[package]]
 name = "untrusted"
-version = "0.7.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
+checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "url"
@@ -2920,11 +2922,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "0.24.0"
-source = "git+https://github.com/wasix-org/webpki-roots.git?branch=v0.24.0#a9ef804104f0ce70b80a04052940a6fa3fdae740"
-dependencies = [
- "rustls-webpki",
-]
+version = "0.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14247bb57be4f377dfb94c72830b8ce8fc6beac03cf4bf7b9732eadd414123fc"
 
 [[package]]
 name = "which"

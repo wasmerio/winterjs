@@ -71,17 +71,19 @@ The following words are used to describe the status of an API:
 |API|Status|Notes|
 |:-:|:-:|:--|
 |`console`|✅ Stable|
-|`fetch`|🔶 Partial|`Request`, `Response` and `ReadableStream` need to be stabilized before `fetch` can be considered Stable
+|`fetch`|🔶 Partial|`Request` and `Response` need to be stabilized before `fetch` can be considered Stable
 |`URL`|✅ Stable|
 |`URLSearchParams`|✅ Stable|
-|`Request`|🔶 Partial|`ReadableStream` needs to be stabilized before `Request` can be considered Stable<br/>Requests cannot be sent with `ReadableStream` bodies
+|`Request`|🔶 Partial|`Request`s cannot be sent with `ReadableStream` bodies
 |`Headers`|✅ Stable|
-|`Response`|🔶 Partial|`ReadableStream` needs to be stabilized before `Response` can be considered Stable.<br/>`Response.body` returns a Promise that resolves to a `ReadableStream` instead of returning a `ReadableStream` directly.
+|`Response`|🔶 Partial|`Response.body` returns a Promise that resolves to a `ReadableStream` instead of returning a `ReadableStream` directly.<br/>`Response`s with `ReadableStream` bodies cannot be returned to native code.
 |`Blob`|🔶 Partial|`Blob.stream()` is not implemented yet
+|`File`|❌ Pending|
 |`FormData`|✅ Stable|
 |`TextDecoder`|✅ Stable|
 |`TextEncoder`|✅ Stable|
-|`ReadableStream`|🔶 Partial|Creating `ReadableStream`s with `type: 'bytes'` is not supported yet.<br/>Returning `ReadableStream`s to native code is not supported yet.
+|`ReadableStream` and supporting types|✅ Stable|
+|`WritableStream` and supporting types|✅ Stable|
 |`atob`|✅ Stable|
 |`btoa`|✅ Stable|
 |`performance.now()`|✅ Stable|
