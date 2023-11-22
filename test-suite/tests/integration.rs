@@ -1,5 +1,5 @@
 use libtest_mimic::Arguments;
-use test_suite::{ERunner, RunnerTrait, TestConfig, TestManager};
+use test_suite::{Run, Runner, TestConfig, TestManager};
 
 use std::{
     fs,
@@ -45,7 +45,7 @@ fn main() -> Result<(), anyhow::Error> {
     // Read the test cases from the TOML file
     let test_config = read_test_cases()?;
 
-    let matrix_runners: Vec<ERunner> = test_config.matrix_runners.clone();
+    let matrix_runners: Vec<Runner> = test_config.matrix_runners.clone();
     let server_threads: Vec<thread::JoinHandle<Result<(), anyhow::Error>>> = matrix_runners
         .clone()
         .into_iter()
@@ -67,7 +67,7 @@ fn main() -> Result<(), anyhow::Error> {
         //stop the server thread
         .map(|_| {
             for server_thread in server_threads {
-                server_thread.join().unwrap();
+                let _ = server_thread.join().unwrap();
             }
         })
 }
