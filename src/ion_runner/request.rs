@@ -1,6 +1,15 @@
 use bytes::Bytes;
-pub use class::ExecuteRequest;
-use ion::{conversions::ToValue, typedarray::ArrayBuffer};
+use http::header::CONTENT_TYPE;
+use ion::{
+    class::{NativeObject, Reflector},
+    conversions::ToValue,
+    string::byte::ByteString,
+    typedarray::ArrayBuffer,
+    ClassDefinition, Context, Promise, Value,
+};
+use mozjs::jsapi::JSObject;
+use mozjs_sys::jsgc::Heap;
+use runtime::globals::form_data::FormData;
 
 #[derive(Clone)]
 pub struct Body(pub Option<Bytes>);
@@ -20,79 +29,90 @@ impl<'cx> ToValue<'cx> for Body {
 }
 
 #[js_class]
-mod class {
-    use http::header::CONTENT_TYPE;
-    use ion::{typedarray::ArrayBuffer, ClassDefinition, Context, Value};
-    use mozjs::jsapi::JSObject;
-    use mozjs_sys::jsgc::Heap;
-    use runtime::globals::form_data::FormData;
+pub struct ExecuteRequest {
+    pub(crate) reflector: Reflector,
+    pub(crate) url: Box<Heap<*mut JSObject>>,
+    pub(crate) method: String,
+    pub(crate) headers: runtime::globals::fetch::Headers,
+    #[ion(no_trace)]
+    pub(crate) body: Option<Body>,
+}
 
-    use super::Body;
+impl ExecuteRequest {
+    fn text_impl(&mut self) -> String {
+        self.body
+            .take()
+            .and_then(|b| b.0)
+            .as_ref()
+            .map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
+            .unwrap_or_else(|| String::new())
+    }
+}
 
-    #[ion(into_value, no_constructor)]
-    pub struct ExecuteRequest {
-        pub(crate) url: Box<Heap<*mut JSObject>>,
-        pub(crate) method: String,
-        pub(crate) headers: runtime::globals::fetch::Headers,
-        pub(crate) body: Option<Body>,
+#[js_class]
+impl ExecuteRequest {
+    #[ion(constructor)]
+    pub fn constructor() -> ion::Result<ExecuteRequest> {
+        Err(ion::Error::new(
+            "Cannot construct this class",
+            ion::ErrorKind::Type,
+        ))
     }
 
-    impl ExecuteRequest {
-        #[ion(get)]
-        pub fn get_url(&self) -> *mut JSObject {
-            self.url.get()
-        }
+    #[ion(get)]
+    pub fn get_url(&self) -> *mut JSObject {
+        self.url.get()
+    }
 
-        pub fn get_method(&self) -> String {
-            self.method.clone()
-        }
+    pub fn get_method(&self) -> String {
+        self.method.clone()
+    }
 
-        #[ion(get)]
-        pub fn get_headers(&self) -> runtime::globals::fetch::Headers {
-            self.headers.clone()
-        }
+    #[ion(get)]
+    pub fn get_headers(&self) -> *mut JSObject {
+        self.headers.reflector().get()
+    }
 
-        #[ion(get)]
-        pub fn get_body(&mut self, cx: &Context<'_>) -> ion::Result<*mut JSObject> {
-            match self.body.take() {
-                None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
-                Some(body) => {
-                    let stream = runtime::globals::readable_stream::new_memory_backed(
-                        cx,
-                        body.0.unwrap_or(vec![].into()),
-                    );
+    #[ion(get)]
+    pub fn get_body(&mut self, cx: &Context) -> ion::Result<*mut JSObject> {
+        match self.body.take() {
+            None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
+            Some(body) => {
+                let stream = runtime::globals::readable_stream::new_memory_backed(
+                    cx,
+                    body.0.unwrap_or(vec![].into()),
+                );
 
-                    Ok((*stream).get())
-                }
+                Ok((*stream).get())
             }
         }
+    }
 
-        #[ion(get, name = "bodyUsed")]
-        pub fn get_body_used(&self) -> bool {
-            self.body.is_none()
-        }
+    #[ion(get, name = "bodyUsed")]
+    pub fn get_body_used(&self) -> bool {
+        self.body.is_none()
+    }
 
-        #[ion(name = "arrayBuffer")]
-        pub async fn array_buffer(&mut self) -> ArrayBuffer {
+    #[ion(name = "arrayBuffer")]
+    pub fn array_buffer<'cx>(&'cx mut self, cx: &'cx Context) -> Promise<'cx> {
+        Promise::new_resolved(
+            cx,
             match self.body.take().and_then(|b| b.0) {
                 Some(ref bytes) => ArrayBuffer::from(bytes.as_ref()),
                 None => ArrayBuffer::from(&b""[..]),
-            }
-        }
+            },
+        )
+    }
 
-        pub async fn text(&mut self) -> String {
-            self.body
-                .take()
-                .and_then(|b| b.0)
-                .as_ref()
-                .map(|body| String::from_utf8_lossy(body.as_ref()).into_owned())
-                .unwrap_or_else(|| String::new())
-        }
+    pub fn text<'cx>(&'cx mut self, cx: &'cx Context) -> Promise<'cx> {
+        Promise::new_resolved(cx, self.text_impl())
+    }
 
-        pub async fn json(&mut self, cx: &Context<'_>) -> ion::Result<*mut JSObject> {
-            let text = self.text().await;
+    pub fn json<'cx>(&'cx mut self, cx: &'cx Context) -> Promise<'cx> {
+        Promise::new_from_result(cx, 'f: {
+            let text = self.text_impl();
             let Some(str) = ion::String::new(cx, text.as_str()) else {
-                return Err(ion::Error::new(
+                break 'f Err(ion::Error::new(
                     "Failed to allocate string",
                     ion::ErrorKind::Normal,
                 ));
@@ -105,17 +125,19 @@ mod class {
                     result.handle_mut().into(),
                 )
             } {
-                return Err(ion::Error::none());
+                break 'f Err(ion::Error::none());
             }
 
             Ok((*result.to_object(cx)).get())
-        }
+        })
+    }
 
-        #[ion(name = "formData")]
-        pub async fn form_data(&mut self, cx: &Context<'_>) -> ion::Result<*mut JSObject> {
-            let headers = self.get_headers();
-            let Some(content_type) = headers.get(CONTENT_TYPE.to_string())? else {
-                return Err(ion::Error::new(
+    #[ion(name = "formData")]
+    pub fn form_data<'cx>(&'cx mut self, cx: &'cx Context) -> Promise<'cx> {
+        Promise::new_from_result(cx, 'f: {
+            let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into()).unwrap();
+            let Some(content_type) = self.headers.get(content_type_string).unwrap() else {
+                break 'f Err(ion::Error::new(
                     "No content-type header, cannot decide form data format",
                     ion::ErrorKind::Type,
                 ));
@@ -134,7 +156,7 @@ mod class {
                     form_data.append_native_string(key.into_owned(), val.into_owned());
                 }
 
-                Ok(FormData::new_object(cx, form_data))
+                Ok(FormData::new_object(cx, Box::new(form_data)))
             } else if content_type.starts_with("multipart/form-data") {
                 Err(ion::Error::new(
                     "multipart/form-data deserialization is not supported yet",
@@ -146,6 +168,6 @@ mod class {
                     ion::ErrorKind::Type,
                 ))
             }
-        }
+        })
     }
 }

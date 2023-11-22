@@ -1,4 +1,3 @@
-mod base64;
 mod crypto;
 mod event_listener;
 mod fetch_event;
@@ -10,7 +9,6 @@ pub use watch::WatchRunner;
 
 use std::{
     path::Path,
-    str::FromStr,
     sync::{atomic::AtomicI32, Arc},
     time::Duration,
 };
@@ -18,10 +16,7 @@ use std::{
 use anyhow::{anyhow, bail};
 use async_trait::async_trait;
 use futures::future::Either;
-use http::{HeaderName, HeaderValue};
-use ion::{
-    conversions::IntoValue, script::Script, ClassDefinition, Context, ErrorReport, Promise, Value,
-};
+use ion::{conversions::ToValue, script::Script, ClassDefinition, Context, ErrorReport, Promise};
 use mozjs::{
     jsapi::PromiseState,
     rust::{JSEngine, JSEngineHandle, RealmOptions},
@@ -33,7 +28,7 @@ use runtime::{
 use tokio::{select, sync::Mutex, task::LocalSet};
 use tracing::debug;
 
-use self::{crypto::CryptoModule, fetch_event::class::FetchEvent, performance::PerformanceModule};
+use self::{crypto::CryptoModule, fetch_event::FetchEvent, performance::PerformanceModule};
 
 pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy::new(|| {
     let engine = JSEngine::init().expect("could not create engine");
@@ -51,9 +46,9 @@ async fn handle_requests_inner(
     user_code: String,
     recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) -> Result<(), anyhow::Error> {
-    let rt = mozjs::rust::Runtime::new(ENGINE.clone());
+    let mozjs_rt = mozjs::rust::Runtime::new(ENGINE.clone());
 
-    let cx = Context::from_runtime(&rt);
+    let mut cx = Context::from_runtime(&mozjs_rt);
     let mut realm_options = RealmOptions::default();
     realm_options.creationOptions_.streams_ = true;
     // TODO: module loader?
@@ -62,7 +57,9 @@ async fn handle_requests_inner(
         .macrotask_queue()
         .standard_modules(Modules)
         .realm_options(realm_options)
-        .build(&cx);
+        .build(&mut cx);
+
+    let cx = Context::from_runtime(&mozjs_rt);
 
     // Evaluate the user script, hopefully resulting in the fetch handler being registered
     Script::compile_and_evaluate(rt.cx(), Path::new("app.js"), user_code.as_str())
@@ -159,27 +156,28 @@ struct PendingResponse<'cx> {
 }
 
 async fn start_request<'cx>(
-    cx: &'cx Context<'_>,
+    cx: &'cx Context,
     req: http::request::Parts,
     body: Option<bytes::Bytes>,
 ) -> anyhow::Result<Either<PendingResponse<'cx>, hyper::Response<hyper::Body>>> {
-    let fetch_event = FetchEvent::try_new(&cx, req, body)?;
+    let fetch_event = ion::Object::from(cx.root_object(FetchEvent::new_object(
+        cx,
+        Box::new(FetchEvent::try_new(&cx, req, body)?),
+    )));
 
-    let mut request_value = Value::undefined(&cx);
-    Box::new(fetch_event).into_value(&cx, &mut request_value);
-    let fetch_event_object = request_value.to_object(&cx);
-
-    let callback_rval = event_listener::invoke_fetch_event_callback(&cx, &[request_value])
-        .map_err(|e| {
-            e.map(|e| error_report_to_anyhow_error(&cx, e))
-                .unwrap_or(anyhow::anyhow!("Script execution failed"))
-        })?;
+    let callback_rval =
+        event_listener::invoke_fetch_event_callback(&cx, &[fetch_event.as_value(cx)]).map_err(
+            |e| {
+                e.map(|e| error_report_to_anyhow_error(&cx, e))
+                    .unwrap_or(anyhow::anyhow!("Script execution failed"))
+            },
+        )?;
 
     if !callback_rval.get().is_undefined() {
         bail!("Script error: the fetch event handler should not return a value");
     }
 
-    let fetch_event = FetchEvent::get_private(&fetch_event_object);
+    let fetch_event = FetchEvent::get_private(&fetch_event);
 
     match fetch_event.response.as_ref() {
         None => {
@@ -202,7 +200,7 @@ async fn start_request<'cx>(
 // The promise must be fulfilled or rejected before calling this function,
 // otherwise an error is returned
 async fn build_response_from_pending<'cx>(
-    cx: &'cx Context<'_>,
+    cx: &'cx Context,
     response: PendingResponse<'cx>,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
     match response.promise.state() {
@@ -235,26 +233,23 @@ async fn build_response_from_pending<'cx>(
 }
 
 async fn build_response<'cx>(
-    cx: &'cx Context<'_>,
-    value: ion::Object<'cx>,
+    cx: &'cx Context,
+    mut value: ion::Object<'cx>,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
     if !runtime::globals::fetch::Response::instance_of(cx, &value, None) {
         // TODO: support plain objects
         bail!("If an object is returned, it must be an instance of Response");
     }
 
-    let response = runtime::globals::fetch::Response::get_private(&value);
+    let response = runtime::globals::fetch::Response::get_mut_private(&mut value);
 
     let mut hyper_response = hyper::Response::builder().status(response.get_status());
 
     let headers =
         anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
-    let response_headers = response.get_headers_object();
+    let response_headers = response.get_headers_object(cx);
     for header in response_headers.iter() {
-        headers.append(
-            HeaderName::from_str(header.0.as_str())?,
-            HeaderValue::from_str(header.1.to_str()?)?,
-        );
+        headers.append(header.0.clone(), header.1.clone());
     }
 
     let body = response
@@ -452,7 +447,7 @@ impl Drop for IncrementGuard {
 struct Modules;
 
 impl StandardModules for Modules {
-    fn init<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
+    fn init(self, cx: &Context, global: &mut ion::Object) -> bool {
         init_module::<PerformanceModule>(cx, global)
             && init_module::<CryptoModule>(cx, global)
             && init_module::<modules::Assert>(cx, global)
@@ -462,10 +457,9 @@ impl StandardModules for Modules {
             && event_listener::define(cx, global)
             && request::ExecuteRequest::init_class(cx, global).0
             && fetch_event::FetchEvent::init_class(cx, global).0
-            && base64::define(cx, global)
     }
 
-    fn init_globals<'cx: 'o, 'o>(self, cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
+    fn init_globals(self, cx: &Context, global: &mut ion::Object) -> bool {
         init_global_module::<PerformanceModule>(cx, global)
             && init_global_module::<CryptoModule>(cx, global)
             && init_global_module::<modules::Assert>(cx, global)
@@ -475,6 +469,5 @@ impl StandardModules for Modules {
             && event_listener::define(cx, global)
             && request::ExecuteRequest::init_class(cx, global).0
             && fetch_event::FetchEvent::init_class(cx, global).0
-            && base64::define(cx, global)
     }
 }

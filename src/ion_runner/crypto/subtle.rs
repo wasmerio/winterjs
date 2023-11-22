@@ -1,5 +1,6 @@
-use ion::{function_spec, typedarray::ArrayBuffer, Context, Object};
+use ion::{function_spec, Context, Object};
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
+use runtime::promise::future_to_promise;
 
 use super::algorithm::{md5::Md5, sha::Sha, CryptoAlgorithm};
 
@@ -98,13 +99,16 @@ impl AlgorithmIdentifier {
 }
 
 #[js_fn]
-async fn digest(
-    cx: &Context<'_>,
+fn digest<'cx>(
+    cx: &'cx Context,
     algorithm: AlgorithmIdentifier,
     data: BufferSource,
-) -> ion::Result<ArrayBuffer> {
-    let alg = algorithm.get_algorithm(cx)?;
-    alg.digest(algorithm.into_params(cx), data)
+) -> Option<ion::Promise<'cx>> {
+    let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
+    future_to_promise(cx, async move {
+        let alg = algorithm.get_algorithm(&cx2)?;
+        alg.digest(algorithm.into_params(&cx2), data)
+    })
 }
 
 const METHODS: &[JSFunctionSpec] = &[function_spec!(digest, 2), JSFunctionSpec::ZERO];

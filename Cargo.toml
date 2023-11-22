@@ -33,7 +33,7 @@ ion = { package = "ion", features = [
     "macros",
 ], git = "https://github.com/wasmerio/spiderfire.git" }
 ion-proc = { package = "ion-proc", git = "https://github.com/wasmerio/spiderfire.git" }
-runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git" }
+runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git", features = ["fetch"]}
 modules = { package = "modules", git = "https://github.com/wasmerio/spiderfire.git" }
 mozjs = { version = "0.14.1", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi-gecko", features = [
     "streams",
