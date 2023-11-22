@@ -2,7 +2,6 @@ use libtest_mimic::Arguments;
 use test_suite::{Run, Runner, TestConfig, TestManager};
 
 use std::{
-    fs,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream},
     thread,
     time::Duration,
@@ -10,9 +9,7 @@ use std::{
 
 // Read and parse the TOML file into a TestConfig
 fn read_test_cases() -> Result<TestConfig, anyhow::Error> {
-    // let file_path = format!("{}/tests.toml", env!("CARGO_MANIFEST_DIR"));
-    let file_content = include_str!("../tests.toml");
-    // let file_content = fs::read_to_string(file_path).expect("File should be read without problems");
+    let file_content = include_str!("../tests/tests.toml");
     let test_config: TestConfig = toml::from_str(&file_content)?;
     Ok(test_config)
 }
