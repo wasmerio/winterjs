@@ -1,17 +1,4 @@
-matrix_runners = [
-    { Winter = { name = "winter", command = "wasmer-winter", port = 8080, args = [
-        "./js-test-app/dist/bundle.js",
-    ] } },
-    { Wrangler = { name = "wrangler", command = "wrangler", port = 8787, args = [
-        "dev",
-        "--script",
-        "./js-test-app/dist/bundle.js",
-    ] } },
-    # { WorkerD = { name = "workerd", command = "workerd", args = [
-    #     "dev",
-    # ] } },
-]
-
+matrix_runners = ["Winter", "Wrangler"]
 
 [[test_cases]]
 test_name = "1-hello"
