@@ -17,70 +17,64 @@ pub struct TestCase {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct Runner {
-    pub name: String,
-    pub command: String,
-    pub port: u16,
-    pub args: Vec<String>,
+pub enum Runner {
+    Winter,
+    Wrangler,
+    WorkerD,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub enum ERunner {
-    Winter(Runner),
-    Wrangler(Runner),
-    WorkerD(Runner),
-}
-
-pub trait RunnerTrait {
+pub trait Run {
     fn run(&self) -> Result<(), anyhow::Error>;
     fn port(&self) -> u16;
     fn name(&self) -> String;
 }
 
-impl RunnerTrait for Runner {
+impl Runner {
+    fn command(&self) -> String {
+        match self {
+            Runner::Winter => "wasmer-winter".to_string(),
+            Runner::Wrangler => "wrangler".to_string(),
+            Runner::WorkerD => "workerd".to_string(),
+        }
+    }
+    fn args(&self) -> Vec<String> {
+        let res = match self {
+            Runner::Winter => vec!["./js-test-app/dist/bundle.js"],
+            Runner::Wrangler => vec!["dev", "--script", "./js-test-app/dist/bundle.js"],
+            Runner::WorkerD => vec!["--script", "./js-test-app/dist/bundle.js"],
+        };
+        res.iter().map(|s| s.to_string()).collect()
+    }
+}
+
+impl Run for Runner {
     fn run(&self) -> Result<(), anyhow::Error> {
-        let mut command = std::process::Command::new(&self.command);
-        command.args(&self.args);
+        let mut command = std::process::Command::new(self.command());
+        command.args(self.args());
         let output = command.output()?;
         println!("output: {:?}", output);
         Ok(())
     }
 
     fn port(&self) -> u16 {
-        self.port
-    }
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-}
-
-impl RunnerTrait for ERunner {
-    fn run(&self) -> Result<(), anyhow::Error> {
         match self {
-            ERunner::Winter(runner) => runner.run(),
-            ERunner::Wrangler(runner) => runner.run(),
-            ERunner::WorkerD(runner) => runner.run(),
-        }
-    }
-    fn port(&self) -> u16 {
-        match self {
-            ERunner::Winter(runner) => runner.port(),
-            ERunner::Wrangler(runner) => runner.port(),
-            ERunner::WorkerD(runner) => runner.port(),
+            Runner::Winter => 8080,
+            Runner::Wrangler => 8787,
+            Runner::WorkerD => 8789,
         }
     }
     fn name(&self) -> String {
         match self {
-            ERunner::Winter(runner) => runner.name(),
-            ERunner::Wrangler(runner) => runner.name(),
-            ERunner::WorkerD(runner) => runner.name(),
+            Runner::Winter => "winter".to_string(),
+            Runner::Wrangler => "wrangler".to_string(),
+            Runner::WorkerD => "workerd".to_string(),
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestConfig {
-    pub matrix_runners: Vec<ERunner>,
+    pub matrix_runners: Vec<Runner>,
     pub test_cases: Vec<TestCase>,
 }
 
