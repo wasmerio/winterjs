@@ -10,7 +10,7 @@ use std::{
 // Read and parse the TOML file into a TestConfig
 fn read_test_cases() -> Result<TestConfig, anyhow::Error> {
     let file_content = include_str!("../tests/tests.toml");
-    let test_config: TestConfig = toml::from_str(&file_content)?;
+    let test_config: TestConfig = toml::from_str(file_content)?;
     Ok(test_config)
 }
 
