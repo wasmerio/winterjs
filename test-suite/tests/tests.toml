@@ -89,3 +89,9 @@ test_name = "10-atob-btoa"
 test_route = "10-atob-btoa"
 expected_output = "All Tests Passed!"
 expected_response_status = 200
+
+[[test_cases]]
+test_name = "11-fetch"
+test_route = "11-fetch"
+expected_output = "All tests passed!"
+expected_response_status = 200

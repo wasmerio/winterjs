@@ -8,6 +8,7 @@ import {
   handleTextDecoder7,
   handleURL8,
   handleAtobBtoA9,
+  handleFetch,
 } from "./test-files/index.js";
 
 function router(req) {
@@ -41,7 +42,10 @@ function router(req) {
   if (path.startsWith("/10-atob-btoa")) {
     return handleAtobBtoA9(req);
   }
-  return new Response("Route Not Found", { status: 404 });
+  if (path.startsWith("/11-fetch")) {
+    return handleFetch(req);
+  }
+  return new Response(`Route Not Found ${path}`, { status: 404 });
 }
 
 addEventListener("fetch", (fetchEvent) => {
