@@ -7,6 +7,7 @@ import { handleRequest as handleTextEncoder6 } from "./6-text-encoder.js";
 import { handleRequest as handleTextDecoder7 } from "./7-text-decoder.js";
 import { handleRequest as handleURL8 } from "./8-url.js";
 import { handleRequest as handleAtobBtoA9 } from "./10-atob-btoa.js";
+import { handleRequest as handleFetch } from "./11-fetch.js";
 
 export {
   handleHello1,
@@ -18,4 +19,5 @@ export {
   handleTextDecoder7,
   handleURL8,
   handleAtobBtoA9,
+  handleFetch,
 };
