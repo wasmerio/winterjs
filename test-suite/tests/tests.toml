@@ -95,3 +95,9 @@ test_name = "11-fetch"
 test_route = "11-fetch"
 expected_output = "All Tests Passed!"
 expected_response_status = 200
+
+[[test_cases]]
+test_name = "12-streams"
+test_route = "12-streams"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
