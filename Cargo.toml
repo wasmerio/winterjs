@@ -23,8 +23,8 @@ serde = "1.0.164"
 serde_json = "1.0.97"
 bytes = { version = "1.5.0", features = ["serde"] }
 once_cell = "1.18.0"
-rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.8", version = "=0.21.8" }
-hyper-rustls = { version = "=0.24.2", git = "https://github.com/wasix-org/hyper-rustls.git", branch = "main" }
+rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.5", version = "=0.21.5" }
+hyper-rustls = { version = "=0.24.1", git = "https://github.com/wasix-org/hyper-rustls.git", rev = "e8d621f92e7041c5bb47d7adc9cdbd48cbe43a51" }
 h2 = { version = "=0.3.20", git = "https://github.com/wasix-org/h2.git" }
 futures = "0.3.28"
 http = "0.2.9"
@@ -65,5 +65,5 @@ socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" 
 libc = { git = "https://github.com/wasix-org/libc.git" }
 h2 = { git = "https://github.com/wasix-org/h2" }
 hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.27" }
-rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.8" }
-hyper-rustls = { git = "https://github.com/wasix-org/hyper-rustls.git", branch = "main" }
+rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.5" }
+hyper-rustls = { git = "https://github.com/wasix-org/hyper-rustls.git", rev = "e8d621f92e7041c5bb47d7adc9cdbd48cbe43a51" }
