@@ -45,7 +45,7 @@ function router(req) {
   if (path.startsWith("/11-fetch")) {
     return handleFetch(req);
   }
-  return new Response(`Route Not Found ${path}`, { status: 404 });
+  return new Response(`Route Not Found - ${path}`, { status: 404 });
 }
 
 addEventListener("fetch", (fetchEvent) => {
