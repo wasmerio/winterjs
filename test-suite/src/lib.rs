@@ -40,7 +40,13 @@ impl Runner {
     fn args(&self) -> Vec<String> {
         let res = match self {
             Runner::Winter => vec!["./js-test-app/dist/bundle.js"],
-            Runner::Wrangler => vec!["dev", "--script", "./js-test-app/dist/bundle.js"],
+            Runner::Wrangler => vec![
+                "dev",
+                "--script",
+                "./js-test-app/dist/bundle.js",
+                "--port",
+                "8787",
+            ],
             Runner::WorkerD => vec!["--script", "./js-test-app/dist/bundle.js"],
         };
         res.iter().map(|s| s.to_string()).collect()
