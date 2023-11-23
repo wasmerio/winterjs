@@ -20,34 +20,35 @@ async function handleRequest(request) {
 
     // Test GET
     try {
-      const METHOD = "GET";
+      const REQUEST_METHOD = "GET";
       const response = await fetch(url, {
-        method: METHOD,
+        method: REQUEST_METHOD,
       });
       assertEquals(
         response.status,
         200,
-        `Status code mismatch for ${METHOD}, expected 200 but got ${response.status}`
+        `Status code mismatch for ${REQUEST_METHOD}, expected 200 but got ${response.status}`
       );
 
       const text = await response.text();
       assertEquals(
         text,
         "GET request successful",
-        `Unexpected response body for ${METHOD} request. Expected 'GET request successful' but got ${text}`
+        `Unexpected response body for ${REQUEST_METHOD} request. Expected 'GET request successful' but got ${text}`
       );
     } catch (error) {
-      assert(false, "GET request failed");
+      assert(false, `GET request failed: ${error}`);
     }
 
     // Test POST
-
     try {
-      const METHOD = "POST";
+      const REQUEST_METHOD = "POST";
+
       const response = await fetch(url, {
-        method: METHOD,
+        method: REQUEST_METHOD,
         headers: {
           "Content-Type": "application/json",
+          Accept: "application/json",
         },
         body: JSON.stringify({
           name: "Winter",
@@ -56,27 +57,29 @@ async function handleRequest(request) {
 
       assertEquals(
         response.status,
-        200,
-        `Status code mismatch for ${METHOD}, expected 200 but got ${response.status}`
+        201,
+        `Status code mismatch for ${REQUEST_METHOD}, expected 201 but got ${response.status}`
       );
 
       const text = await response.json();
+      const data = { name: "Winter" };
       assertEquals(
-        text,
-        { name: "Winter" },
-        `Unexpected response body for ${METHOD} request. Expected { name: 'Winter' } but got ${text}`
+        JSON.stringify(text),
+        JSON.stringify(data),
+        `Unexpected response body for ${REQUEST_METHOD} request. Expected { name: 'Winter' } but got ${text}`
       );
     } catch (error) {
-      assert(false, "POST request failed");
+      assert(false, `POST request failed: ${error}`);
     }
 
     // Test PUT
     try {
-      const METHOD = "PUT";
+      const REQUEST_METHOD = "PUT";
       const response = await fetch(url, {
-        method: METHOD,
+        method: REQUEST_METHOD,
         headers: {
           "Content-Type": "application/json",
+          Accept: "application/json",
         },
         body: JSON.stringify({
           name: "Winter",
@@ -85,25 +88,26 @@ async function handleRequest(request) {
 
       assertEquals(
         response.status,
-        200,
-        `Status code mismatch for ${METHOD}, expected 200 but got ${response.status}`
+        201,
+        `Status code mismatch for ${REQUEST_METHOD}, expected 200 but got ${response.status}`
       );
 
       const text = await response.json();
+      const data = { name: "Winter" };
       assertEquals(
-        text,
-        { name: "Winter" },
-        `Unexpected response body for ${METHOD} request. Expected { name: 'Winter' } but got ${text}`
+        JSON.stringify(text),
+        JSON.stringify(data),
+        `Unexpected response body for ${REQUEST_METHOD} request. Expected { name: 'Winter' } but got ${text}`
       );
     } catch (error) {
-      assert(false, "POST request failed");
+      assert(false, `PUT request failed: ${error}`);
     }
 
     // Test PATCH
     try {
-      const METHOD = "PATCH";
+      const REQUEST_METHOD = "PATCH";
       const response = await fetch(url, {
-        method: METHOD,
+        method: REQUEST_METHOD,
         headers: {
           "Content-Type": "application/json",
         },
@@ -114,94 +118,95 @@ async function handleRequest(request) {
 
       assertEquals(
         response.status,
-        200,
-        `Status code mismatch for ${METHOD}, expected 200 but got ${response.status}`
+        201,
+        `Status code mismatch for ${REQUEST_METHOD}, expected 200 but got ${response.status}`
       );
 
       const text = await response.json();
+      const data = { name: "Winter" };
 
       assertEquals(
-        text,
-        { name: "Winter" },
-        `Unexpected response body for ${METHOD} request. Expected { name: 'Winter' } but got ${text}`
+        JSON.stringify(text),
+        JSON.stringify(data),
+        `Unexpected response body for ${REQUEST_METHOD} request. Expected { name: 'Winter' } but got ${text}`
       );
     } catch (error) {
-      assert(false, "PATCH request failed");
+      assert(false, `PATCH request failed: ${error}`);
     }
 
     // Test DELETE
     try {
-      const METHOD = "DELETE";
+      const REQUEST_METHOD = "DELETE";
       const response = await fetch(url, {
-        method: METHOD,
+        method: REQUEST_METHOD,
       });
 
       assertEquals(
         response.status,
         200,
-        `Status code mismatch for ${METHOD}, expected 200 but got ${response.status}`
+        `Status code mismatch for ${REQUEST_METHOD}, expected 200 but got ${response.status}`
       );
 
       const text = await response.text();
       assertEquals(
         text,
         "DELETE request successful",
-        `Unexpected response body for ${METHOD} request. Expected 'DELETE request successful' but got ${text}`
+        `Unexpected response body for ${REQUEST_METHOD} request. Expected 'DELETE request successful' but got ${text}`
       );
     } catch (error) {
-      assert(false, "DELETE request failed");
+      assert(false, `DELETE request failed: ${error}`);
     }
 
     // Test HEAD
     try {
-      const METHOD = "HEAD";
+      const REQUEST_METHOD = "HEAD";
       const response = await fetch(url, {
-        method: METHOD,
+        method: REQUEST_METHOD,
       });
 
       assertEquals(
         response.status,
         200,
-        `Status code mismatch for ${METHOD}, expected 200 but got ${response.status}`
+        `Status code mismatch for ${REQUEST_METHOD}, expected 200 but got ${response.status}`
       );
 
       const text = await response.text();
       assertEquals(
         text,
         "",
-        `Unexpected response body for ${METHOD} request. Expected empty string but got ${text}`
+        `Unexpected response body for ${REQUEST_METHOD} request. Expected empty string but got ${text}`
       );
     } catch (error) {
-      assert(false, "HEAD request failed");
+      assert(false, `HEAD request failed: ${error}`);
     }
 
     // Test TRACE
     try {
-      const METHOD = "TRACE";
+      const REQUEST_METHOD = "TRACE";
       // create request with some query params
       const response = await fetch(url + "?name=Winter", {
-        method: METHOD,
+        method: REQUEST_METHOD,
       });
 
       assertEquals(
         response.status,
         200,
-        `Status code mismatch for ${METHOD}, expected 200 but got ${response.status}`
+        `Status code mismatch for ${REQUEST_METHOD}, expected 200 but got ${response.status}`
       );
 
       const text = await response.text();
       assertEquals(
         text,
         "name=Winter",
-        `Unexpected response body for ${METHOD} request. Expected 'name=Winter' but got ${text}`
+        `Unexpected response body for ${REQUEST_METHOD} request. Expected 'name=Winter' but got ${text}`
       );
     } catch (error) {
-      assert(false, "TRACE request failed");
+      assert(false, `TRACE request failed: ${error}`);
     }
 
     // Test OPTIONS
     try {
-      const METHOD = "OPTIONS";
+      const REQUEST_METHOD = "OPTIONS";
       const response = await fetch(url, {
         method: "OPTIONS",
       });
@@ -209,26 +214,26 @@ async function handleRequest(request) {
       assertEquals(
         response.status,
         200,
-        `Status code mismatch for ${METHOD}, expected 200 but got ${response.status}`
+        `Status code mismatch for ${REQUEST_METHOD}, expected 200 but got ${response.status}`
       );
 
       const text = await response.text();
       assertEquals(
         text,
         "",
-        `Unexpected response body for ${METHOD} request. Expected empty string but got ${text}`
+        `Unexpected response body for ${REQUEST_METHOD} request. Expected empty string but got ${text}`
       );
 
       //   check the allow header
       assertEquals(
         response.headers.get("allow"),
         "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE",
-        `Allow header is incorrect for ${METHOD} request. Expected 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE' but got ${response.headers.get(
+        `Allow header is incorrect for ${REQUEST_METHOD} request. Expected 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE' but got ${response.headers.get(
           "allow"
         )}`
       );
     } catch (error) {
-      assert(false, "OPTIONS request failed");
+      assert(false, `OPTIONS request failed: ${error}`);
     }
 
     // Create a response with the Blob's text
@@ -242,3 +247,7 @@ async function handleRequest(request) {
 }
 
 export { handleRequest };
+
+// addEventListener("fetch", (fetchEvent) => {
+//   fetchEvent.respondWith(handleRequest(fetchEvent.request));
+// });
