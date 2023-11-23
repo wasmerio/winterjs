@@ -9,6 +9,7 @@ import {
   handleURL8,
   handleAtobBtoA9,
   handleFetch,
+  handleStreams,
 } from "./test-files/index.js";
 
 function router(req) {
@@ -44,6 +45,9 @@ function router(req) {
   }
   if (path.startsWith("/11-fetch")) {
     return handleFetch(req);
+  }
+  if (path.startsWith("/12-streams")) {
+    return handleStreams(req);
   }
   return new Response(`Route Not Found - ${path}`, { status: 404 });
 }
