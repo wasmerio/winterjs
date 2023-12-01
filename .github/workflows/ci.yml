@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - ci
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
