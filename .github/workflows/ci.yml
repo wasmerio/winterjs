@@ -47,7 +47,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
       - name: Install WinterJS
-        run: cargo install wasmer-winter --path .
+        run: cargo install wasmer-winter --path . --locked
       - name: Install Wrangler globally
         run: pnpm install -g wrangler
       - name: Build the tests
