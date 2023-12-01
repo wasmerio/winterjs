@@ -1,0 +1,56 @@
+name: Test JavaScript Samples
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+  TEST_SUITE_DIR: ./test-suite
+  TESTS_BUILDER_DIR: ./test-suite/js-test-app
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dsherret/rust-toolchain-file@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          run_install: false
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+      - name: Install WinterJS
+        run: cargo install wasmer-winter --path .
+      - name: Install Wrangler globally
+        run: pnpm install -g wrangler
+      - name: Build the tests
+        working-directory: ${{ env.TESTS_BUILDER_DIR }}
+        run: |
+          pnpm install
+          pnpm run build
+      - name: Run the tests
+        working-directory: ${{ env.TEST_SUITE_DIR }}
+        run: |
+          cargo run
