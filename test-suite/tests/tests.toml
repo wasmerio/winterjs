@@ -101,3 +101,15 @@ test_name = "12-streams"
 test_route = "12-streams"
 expected_output = "All Tests Passed!"
 expected_response_status = 200
+
+[[test_cases]]
+test_name = "13-transform-stream"
+test_route = "13-transform-stream"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
+
+[[test_cases]]
+test_name = "14-more-streams"
+test_route = "14-more-streams"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
