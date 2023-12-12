@@ -1195,7 +1195,7 @@ dependencies = [
 [[package]]
 name = "mozjs"
 version = "0.14.1"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#89d6227987b63474f4e3c6c23795556d0b223ed6"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#6f3e450948e26b63f0f1428bf610c3413825961d"
 dependencies = [
  "bindgen",
  "cc",
@@ -1209,7 +1209,7 @@ dependencies = [
 [[package]]
 name = "mozjs_sys"
 version = "0.68.2"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#89d6227987b63474f4e3c6c23795556d0b223ed6"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#6f3e450948e26b63f0f1428bf610c3413825961d"
 dependencies = [
  "bindgen",
  "cc",
@@ -2836,7 +2836,7 @@ checksum = "ca6ad05a4870b2bf5fe995117d3728437bd27d7cd5f06f13c17443ef369775a1"
 
 [[package]]
 name = "wasmer-winter"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
