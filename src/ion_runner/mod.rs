@@ -184,7 +184,7 @@ async fn start_request<'cx>(
             bail!("Script error: FetchEvent.respondWith must be called with a Response object before returning")
         }
         Some(response) => {
-            let response = ion::Object::from(cx.root_object(response.get()));
+            let response = ion::Object::from(response.root(cx));
 
             if Promise::is_promise(&response) {
                 Ok(Either::Left(PendingResponse {

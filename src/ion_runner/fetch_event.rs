@@ -1,10 +1,9 @@
 use anyhow::anyhow;
+use ion::conversions::ToValue;
 use ion::string::byte::ByteString;
-use ion::{class::Reflector, ClassDefinition, Context, Object, Promise, Value};
-use mozjs::jsapi::{HandleValueArray, JSObject};
-use mozjs::rooted;
-use mozjs_sys::jsgc::Heap;
-use mozjs_sys::jsval::ObjectValue;
+use ion::Heap;
+use ion::{class::Reflector, ClassDefinition, Context, Promise};
+use mozjs::jsapi::JSObject;
 use runtime::globals::{fetch::Headers, url::URL};
 
 use super::request::ExecuteRequest;
@@ -12,8 +11,8 @@ use super::request::ExecuteRequest;
 #[js_class]
 pub struct FetchEvent {
     reflector: Reflector,
-    pub(crate) request: Box<Heap<*mut JSObject>>,
-    pub(crate) response: Option<Box<Heap<*mut JSObject>>>,
+    pub(crate) request: Heap<*mut JSObject>,
+    pub(crate) response: Option<Heap<*mut JSObject>>,
 }
 
 impl FetchEvent {
@@ -29,20 +28,7 @@ impl FetchEvent {
         };
 
         let uri = format!("https://app.wasmer.internal{}", req.uri.to_string());
-
-        let mut url = Object::new(cx);
-        let arg1 = Value::string(cx, uri.as_str());
-        let args_array = [arg1.get()];
-        let args = unsafe { HandleValueArray::from_rooted_slice(&args_array) };
-        rooted!(in(cx.as_ptr()) let fn_obj = ObjectValue(unsafe { mozjs::jsapi::JS_GetFunctionObject(URL::constructor_fn(cx)) }));
-        unsafe {
-            mozjs::jsapi::Construct1(
-                cx.as_ptr(),
-                fn_obj.handle().into(),
-                &args,
-                url.handle_mut().into(),
-            )
-        };
+        let url = URL::construct(cx, &[uri.as_value(cx)]).unwrap();
 
         let mut headers = Headers::default();
         for h in &req.headers {
@@ -56,11 +42,11 @@ impl FetchEvent {
                 .map_err(|_| anyhow!("Failed to add header to Headers object"))?;
         }
 
-        let request = Heap::boxed(ExecuteRequest::new_object(
+        let request = Heap::new(ExecuteRequest::new_object(
             cx,
             Box::new(ExecuteRequest {
                 reflector: Default::default(),
-                url: Heap::boxed((*url).get()),
+                url: Heap::new((*url).get()),
                 method: req.method.to_string(),
                 headers,
                 body: Some(super::request::Body(body)),
@@ -100,7 +86,7 @@ impl FetchEvent {
                     if Promise::is_promise(&rooted)
                         || runtime::globals::fetch::Response::instance_of(cx, &rooted.into(), None)
                     {
-                        self.response = Some(Heap::boxed(obj));
+                        self.response = Some(Heap::new(obj));
                         Ok(())
                     } else {
                         Err(ion::Error::new(
