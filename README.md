@@ -81,7 +81,9 @@ The following words are used to describe the status of an API:
 |`File`|🔶 Partial|`Blob` must be stabilized before `File` can be considered stable
 |`FormData`|✅ Stable|
 |`TextDecoder`|✅ Stable|
+|`TextDecoderStream`|✅ Stable|
 |`TextEncoder`|✅ Stable|
+|`TextEncoderStream`|🔶 Partial|Surrogate pairs spread across two chunks are not handled correctly
 |`ReadableStream` and supporting types|✅ Stable|
 |`WritableStream` and supporting types|✅ Stable|
 |`TransformStream` and supporting types|🔶 Partial|Back-pressure is not implemented
