@@ -85,9 +85,9 @@ async fn handle_requests_inner(
                     None | Some(ControlMessage::Shutdown) => break,
                     Some(ControlMessage::HandleRequest(req, resp_tx)) => {
                         match start_request(&cx, req.req, req.body).await {
-                            Err(f) => ignore_error(resp_tx.send(ResponseData(Err(f)))),
+                            Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
                             Ok(Either::Left(pending)) => requests.push((pending, resp_tx)),
-                            Ok(Either::Right(resp)) => ignore_error(resp_tx.send(ResponseData(Ok(resp)))),
+                            Ok(Either::Right(resp)) => ignore_error(resp_tx.send(ResponseData::Done(resp))),
                         }
                     }
                 }
@@ -108,7 +108,7 @@ async fn handle_requests_inner(
             if requests[i].0.promise.state(&cx) != PromiseState::Pending {
                 let (pending, resp_tx) = requests.swap_remove(i);
                 // TODO: awaiting here makes other requests wait for this one
-                ignore_error(resp_tx.send(ResponseData(
+                ignore_error(resp_tx.send(ResponseData::from_result(
                     build_response_from_pending(&cx, pending).await,
                 )));
             } else {
@@ -122,7 +122,7 @@ async fn handle_requests_inner(
         .map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
 
     for (pending, resp_tx) in requests {
-        ignore_error(resp_tx.send(ResponseData(
+        ignore_error(resp_tx.send(ResponseData::from_result(
             build_response_from_pending(&cx, pending).await,
         )));
     }
@@ -135,16 +135,18 @@ async fn handle_requests(
     mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) {
     if let Err(e) = handle_requests_inner(user_code, &mut recv).await {
-        // The request handling logic itself failed, so we report the error
+        // The request handling logic itself failed, so we send back the error
         // as long as the thread is alive and shutdown has not been requested.
         // This lets us report the error. The runner can shut us down as soon
         // as it discovers the error.
+
+        let mut error = Some(e);
 
         loop {
             match recv.recv().await {
                 None | Some(ControlMessage::Shutdown) => break,
                 Some(ControlMessage::HandleRequest(_, resp_tx)) => {
-                    ignore_error(resp_tx.send(ResponseData(Err(anyhow!("{e:?}")))))
+                    ignore_error(resp_tx.send(ResponseData::ScriptError(error.take())))
                 }
             }
         }
@@ -281,7 +283,23 @@ pub struct RequestData {
     body: Option<bytes::Bytes>,
 }
 
-pub struct ResponseData(Result<hyper::Response<hyper::Body>, anyhow::Error>);
+pub enum ResponseData {
+    Done(hyper::Response<hyper::Body>),
+    RequestError(anyhow::Error),
+
+    // The error can only be returned once, so future calls to the
+    // thread will return None instead
+    ScriptError(Option<anyhow::Error>),
+}
+
+impl ResponseData {
+    fn from_result(r: Result<hyper::Response<hyper::Body>, anyhow::Error>) -> Self {
+        match r {
+            Ok(o) => Self::Done(o),
+            Err(e) => Self::RequestError(e),
+        }
+    }
+}
 
 pub enum ControlMessage {
     HandleRequest(RequestData, tokio::sync::oneshot::Sender<ResponseData>),
@@ -423,7 +441,17 @@ impl crate::server::RequestHandler for Arc<Mutex<IonRunner>> {
 
         drop(increment_guard);
 
-        response.0
+        // TODO: handle script errors
+        match response {
+            ResponseData::Done(resp) => Ok(resp),
+            ResponseData::RequestError(err) => Err(err),
+            ResponseData::ScriptError(err) => {
+                if let Some(err) = err {
+                    println!("{err:?}");
+                }
+                Err(anyhow!("Error encountered while evaluating user script"))
+            }
+        }
     }
 }
 
