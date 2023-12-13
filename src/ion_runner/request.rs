@@ -5,10 +5,9 @@ use ion::{
     conversions::ToValue,
     string::byte::ByteString,
     typedarray::ArrayBuffer,
-    ClassDefinition, Context, Promise, Value,
+    ClassDefinition, Context, Heap, Promise, Value,
 };
 use mozjs::jsapi::JSObject;
-use mozjs_sys::jsgc::Heap;
 use runtime::globals::form_data::FormData;
 
 #[derive(Clone)]
@@ -31,7 +30,7 @@ impl<'cx> ToValue<'cx> for Body {
 #[js_class]
 pub struct ExecuteRequest {
     pub(crate) reflector: Reflector,
-    pub(crate) url: Box<Heap<*mut JSObject>>,
+    pub(crate) url: Heap<*mut JSObject>,
     pub(crate) method: String,
     pub(crate) headers: runtime::globals::fetch::Headers,
     #[ion(no_trace)]
