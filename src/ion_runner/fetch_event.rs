@@ -1,12 +1,10 @@
 use anyhow::anyhow;
-use ion::conversions::ToValue;
 use ion::string::byte::ByteString;
 use ion::Heap;
 use ion::{class::Reflector, ClassDefinition, Context, Promise};
 use mozjs::jsapi::JSObject;
-use runtime::globals::{fetch::Headers, url::URL};
-
-use super::request::ExecuteRequest;
+use runtime::globals::fetch::{FetchBody, HeaderEntry, HeadersInit, Request};
+use runtime::globals::fetch::{FetchBodyInner, RequestInfo, RequestInit};
 
 #[js_class]
 pub struct FetchEvent {
@@ -28,30 +26,37 @@ impl FetchEvent {
         };
 
         let uri = format!("https://app.wasmer.internal{}", req.uri.to_string());
-        let url = URL::construct(cx, &[uri.as_value(cx)]).unwrap();
+        let request_info = RequestInfo::String(uri);
 
-        let mut headers = Headers::default();
-        for h in &req.headers {
-            headers
-                .append(
-                    ByteString::from(h.0.to_string().into())
+        let header_entries = req
+            .headers
+            .iter()
+            .map(|h| {
+                anyhow::Ok(HeaderEntry {
+                    name: ByteString::from(h.0.to_string().into())
                         .ok_or(anyhow!("Invalid characters in header name"))?,
-                    ByteString::from(h.1.to_str().map(|x| x.to_string().into())?)
+                    value: ByteString::from(h.1.to_str().map(|x| x.to_string().into())?)
                         .ok_or(anyhow!("Invalid characters in header value"))?,
-                )
-                .map_err(|_| anyhow!("Failed to add header to Headers object"))?;
-        }
+                })
+            })
+            .collect::<Result<_, _>>()?;
 
-        let request = Heap::new(ExecuteRequest::new_object(
-            cx,
-            Box::new(ExecuteRequest {
-                reflector: Default::default(),
-                url: Heap::new((*url).get()),
-                method: req.method.to_string(),
-                headers,
-                body: Some(super::request::Body(body)),
+        let request_init = RequestInit {
+            method: Some(req.method.to_string()),
+            headers: Some(HeadersInit::Array(header_entries)),
+            body: Some(FetchBody {
+                body: body
+                    .map(FetchBodyInner::Bytes)
+                    .unwrap_or(FetchBodyInner::None),
+                kind: None,
+                source: None,
             }),
-        ));
+            ..Default::default()
+        };
+
+        let request = Request::constructor(cx, request_info, Some(request_init))
+            .map_err(|e| anyhow!("Failed to construct request: {e:?}"))?;
+        let request = Heap::new(Request::new_object(cx, Box::new(request)));
 
         Ok(Self {
             reflector: Default::default(),
