@@ -107,7 +107,7 @@ impl ExecuteRequest {
     pub fn json<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
         Promise::new_from_result(cx, 'f: {
             let text = self.text_impl();
-            let Some(str) = ion::String::new(cx, text.as_str()) else {
+            let Some(str) = ion::String::copy_from_str(cx, text.as_str()) else {
                 break 'f Err(ion::Error::new(
                     "Failed to allocate string",
                     ion::ErrorKind::Normal,
