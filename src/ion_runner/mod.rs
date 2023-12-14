@@ -254,8 +254,7 @@ async fn build_response<'cx>(
     }
 
     let body = response
-        .read_to_bytes()
-        .await
+        .take_body_bytes()
         .map_err(|e| anyhow!("Failed to read response body: {e:?}"))?;
 
     Ok(hyper_response.body(hyper::Body::from(body))?)

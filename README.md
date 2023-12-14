@@ -76,7 +76,7 @@ The following words are used to describe the status of an API:
 |`URLSearchParams`|✅ Stable|
 |`Request`|🔶 Partial|`Request`s cannot be sent with `ReadableStream` bodies<br/>`Request.formData` does not support deserialization of `multipart/form-data` bodies
 |`Headers`|✅ Stable|
-|`Response`|🔶 Partial|`Response.body` returns a Promise that resolves to a `ReadableStream` instead of returning a `ReadableStream` directly.<br/>`Response`s with `ReadableStream` bodies cannot be returned to native code.
+|`Response`|🔶 Partial|`Response`s with `ReadableStream` bodies cannot be returned to native code
 |`Blob`|🔶 Partial|`Blob.stream()` is not implemented yet
 |`File`|🔶 Partial|`Blob` must be stabilized before `File` can be considered stable
 |`FormData`|✅ Stable|
