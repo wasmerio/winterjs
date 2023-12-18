@@ -35,7 +35,7 @@ jobs:
           pwd
       - name: Add WASI SDK to PATH
         run: |
-          echo "wasi-sdk/bin" >> $GITHUB_ENV
+          echo "/home/runner/work/winterjs/winterjs/wasi-sdk/bin" >> $GITHUB_PATH
       - name: Setup Rust
         uses: dsherret/rust-toolchain-file@v1
       - uses: actions/setup-node@v4
