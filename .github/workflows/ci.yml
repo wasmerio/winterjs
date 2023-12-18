@@ -24,7 +24,18 @@ jobs:
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
         with:
-          version: "14"
+          version: "16"
+      - name: Download WASI SDK
+        run: |
+          curl -L -o wasi-sdk.tar.gz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/wasi-sdk-20.0-linux.tar.gz
+      - name: Extract WASI SDK
+        run: |
+          mkdir wasi-sdk
+          tar -xzf wasi-sdk.tar.gz -C wasi-sdk --strip-components=1
+          pwd
+      - name: Add WASI SDK to PATH
+        run: |
+          echo "wasi-sdk/bin" >> $GITHUB_ENV
       - name: Setup Rust
         uses: dsherret/rust-toolchain-file@v1
       - uses: actions/setup-node@v4
