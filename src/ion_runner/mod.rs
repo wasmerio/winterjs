@@ -8,13 +8,18 @@ pub use watch::WatchRunner;
 
 use std::{
     path::Path,
+    pin::Pin,
     sync::{atomic::AtomicI32, Arc},
     time::Duration,
 };
 
 use anyhow::{anyhow, bail};
 use async_trait::async_trait;
-use futures::future::Either;
+use futures::{
+    future::Either,
+    stream::{FuturesUnordered, StreamExt},
+    Future,
+};
 use ion::{conversions::ToValue, script::Script, ClassDefinition, Context, ErrorReport, Promise};
 use mozjs::{
     jsapi::PromiseState,
@@ -77,16 +82,23 @@ async fn handle_requests_inner(
     // at which point *all* requests will have been handled.
     let poll_interval = Duration::from_millis(1);
 
+    let mut stream_body_futures = FuturesUnordered::new();
+
     loop {
         select! {
             msg = recv.recv() => {
                 match msg {
                     None | Some(ControlMessage::Shutdown) => break,
                     Some(ControlMessage::HandleRequest(req, resp_tx)) => {
-                        match start_request(&cx, req.req, req.body).await {
+                        match start_request(&cx, req.req, req.body) {
                             Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
                             Ok(Either::Left(pending)) => requests.push((pending, resp_tx)),
-                            Ok(Either::Right(resp)) => ignore_error(resp_tx.send(ResponseData::Done(resp))),
+                            Ok(Either::Right(resp)) => {
+                                if let Some(fut) = resp.1 {
+                                    stream_body_futures.push(fut);
+                                }
+                                ignore_error(resp_tx.send(ResponseData::Done(resp.0)))
+                            },
                         }
                     }
                 }
@@ -97,7 +109,10 @@ async fn handle_requests_inner(
                 e.map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
             }
 
-            // Same as above
+            // Nothing to do
+            _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {}
+
+            // Nothing to do
             _ = tokio::time::sleep(poll_interval) => {}
         }
 
@@ -106,10 +121,16 @@ async fn handle_requests_inner(
         while i < requests.len() {
             if requests[i].0.promise.state(&cx) != PromiseState::Pending {
                 let (pending, resp_tx) = requests.swap_remove(i);
-                // TODO: awaiting here makes other requests wait for this one
-                ignore_error(resp_tx.send(ResponseData::from_result(
-                    build_response_from_pending(&cx, pending).await,
-                )));
+                let response = build_response_from_pending(&cx, pending);
+                match response {
+                    Ok(response) => {
+                        if let Some(fut) = response.1 {
+                            stream_body_futures.push(fut);
+                        }
+                        ignore_error(resp_tx.send(ResponseData::Done(response.0)));
+                    }
+                    Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
+                }
             } else {
                 i += 1;
             }
@@ -121,9 +142,20 @@ async fn handle_requests_inner(
         .map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
 
     for (pending, resp_tx) in requests {
-        ignore_error(resp_tx.send(ResponseData::from_result(
-            build_response_from_pending(&cx, pending).await,
-        )));
+        let response = build_response_from_pending(&cx, pending);
+        match response {
+            Ok(response) => {
+                if let Some(fut) = response.1 {
+                    stream_body_futures.push(fut);
+                }
+                ignore_error(resp_tx.send(ResponseData::Done(response.0)));
+            }
+            Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
+        }
+    }
+
+    while !stream_body_futures.is_empty() {
+        stream_body_futures.next().await;
     }
 
     Ok(())
@@ -152,15 +184,20 @@ async fn handle_requests(
     }
 }
 
+struct ReadyResponse(
+    hyper::Response<hyper::Body>,
+    Option<Pin<Box<dyn Future<Output = ()>>>>,
+);
+
 struct PendingResponse {
     promise: ion::Promise,
 }
 
-async fn start_request<'cx>(
+fn start_request<'cx>(
     cx: &'cx Context,
     req: http::request::Parts,
     body: Option<bytes::Bytes>,
-) -> anyhow::Result<Either<PendingResponse, hyper::Response<hyper::Body>>> {
+) -> anyhow::Result<Either<PendingResponse, ReadyResponse>> {
     let fetch_event = ion::Object::from(cx.root_object(FetchEvent::new_object(
         cx,
         Box::new(FetchEvent::try_new(&cx, req, body)?),
@@ -192,7 +229,7 @@ async fn start_request<'cx>(
                     promise: unsafe { Promise::from_unchecked(response.into_local()) },
                 }))
             } else {
-                Ok(Either::Right(build_response(cx, response).await?))
+                Ok(Either::Right(build_response(cx, response)?))
             }
         }
     }
@@ -200,10 +237,10 @@ async fn start_request<'cx>(
 
 // The promise must be fulfilled or rejected before calling this function,
 // otherwise an error is returned
-async fn build_response_from_pending<'cx>(
+fn build_response_from_pending<'cx>(
     cx: &'cx Context,
     response: PendingResponse,
-) -> anyhow::Result<hyper::Response<hyper::Body>> {
+) -> anyhow::Result<ReadyResponse> {
     match response.promise.state(cx) {
         PromiseState::Pending => {
             bail!("Internal error: promise is not fulfilled yet");
@@ -228,15 +265,15 @@ async fn build_response_from_pending<'cx>(
             if !promise_result.handle().is_object() {
                 bail!("Script error: value provided to respondWith was not an object");
             }
-            build_response(cx, promise_result.to_object(cx)).await
+            build_response(cx, promise_result.to_object(cx))
         }
     }
 }
 
-async fn build_response<'cx>(
+fn build_response<'cx>(
     cx: &'cx Context,
     mut value: ion::Object<'cx>,
-) -> anyhow::Result<hyper::Response<hyper::Body>> {
+) -> anyhow::Result<ReadyResponse> {
     if !runtime::globals::fetch::Response::instance_of(cx, &value, None) {
         // TODO: support plain objects
         bail!("If an object is returned, it must be an instance of Response");
@@ -254,10 +291,16 @@ async fn build_response<'cx>(
     }
 
     let body = response
-        .take_body_bytes()
+        .take_body()
         .map_err(|e| anyhow!("Failed to read response body: {e:?}"))?;
 
-    Ok(hyper_response.body(hyper::Body::from(body))?)
+    let (body, future) = body
+        .into_http_body(cx.duplicate())
+        .map_err(|e| anyhow!("Failed to create HTTP body: {e:?}"))?;
+    Ok(ReadyResponse(
+        hyper_response.body(body)?,
+        future.map(|f| -> Pin<Box<dyn Future<Output = ()>>> { Box::pin(f) }),
+    ))
 }
 
 fn error_report_to_anyhow_error(cx: &Context, error_report: ErrorReport) -> anyhow::Error {
@@ -288,15 +331,6 @@ pub enum ResponseData {
     // The error can only be returned once, so future calls to the
     // thread will return None instead
     ScriptError(Option<anyhow::Error>),
-}
-
-impl ResponseData {
-    fn from_result(r: Result<hyper::Response<hyper::Body>, anyhow::Error>) -> Self {
-        match r {
-            Ok(o) => Self::Done(o),
-            Err(e) => Self::RequestError(e),
-        }
-    }
 }
 
 pub enum ControlMessage {

@@ -71,12 +71,12 @@ The following words are used to describe the status of an API:
 |API|Status|Notes|
 |:-:|:-:|:--|
 |`console`|✅ Stable|
-|`fetch`|🔶 Partial|`Request` and `Response` need to be stabilized before `fetch` can be considered Stable
+|`fetch`|🔶 Partial|`Request` needs to be stabilized before `fetch` can be considered Stable
 |`URL`|✅ Stable|
 |`URLSearchParams`|✅ Stable|
-|`Request`|🔶 Partial|`Request`s cannot be sent with `ReadableStream` bodies<br/>`Request.formData` does not support deserialization of `multipart/form-data` bodies
+|`Request`|🔶 Partial|`Request.formData` does not support deserialization of `multipart/form-data` bodies
 |`Headers`|✅ Stable|
-|`Response`|🔶 Partial|`Response`s with `ReadableStream` bodies cannot be returned to native code
+|`Response`|✅ Stable|
 |`Blob`|🔶 Partial|`Blob.stream()` is not implemented yet
 |`File`|🔶 Partial|`Blob` must be stabilized before `File` can be considered stable
 |`FormData`|✅ Stable|
@@ -92,4 +92,4 @@ The following words are used to describe the status of an API:
 |`performance.now()`|✅ Stable|
 |`performance.timeOrigin`|❌ Pending|
 |`crypto`|✅ Stable|
-|`crypto.subtle`|🔶 Partial|
+|`crypto.subtle`|🔶 Partial|Only MD5 and SHA algorithms are supported

@@ -120,6 +120,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-stream"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd56dd203fef61ac097dd65721a419ddccb106b2d2b70ba60a6b529f03961a51"
+dependencies = [
+ "async-stream-impl",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "async-stream-impl"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16e62a023e7c117e27523144c5d2459f4397fcc3cab0085af8e2224f643a0193"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.41",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -904,9 +926,10 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#33db554455e7d12ab880527a7bbefb3cc8ccafb3"
+source = "git+https://github.com/wasmerio/spiderfire.git#a77eddaa135ff36de96fb2ce1032e7e457d8a92b"
 dependencies = [
  "arrayvec",
+ "async-stream",
  "bitflags 2.4.1",
  "bytemuck",
  "byteorder",
@@ -927,7 +950,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#33db554455e7d12ab880527a7bbefb3cc8ccafb3"
+source = "git+https://github.com/wasmerio/spiderfire.git#a77eddaa135ff36de96fb2ce1032e7e457d8a92b"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1118,7 +1141,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#33db554455e7d12ab880527a7bbefb3cc8ccafb3"
+source = "git+https://github.com/wasmerio/spiderfire.git#a77eddaa135ff36de96fb2ce1032e7e457d8a92b"
 dependencies = [
  "bytes",
  "futures",
@@ -1549,7 +1572,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#33db554455e7d12ab880527a7bbefb3cc8ccafb3"
+source = "git+https://github.com/wasmerio/spiderfire.git#a77eddaa135ff36de96fb2ce1032e7e457d8a92b"
 dependencies = [
  "async-recursion",
  "base64",
