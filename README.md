@@ -71,20 +71,25 @@ The following words are used to describe the status of an API:
 |API|Status|Notes|
 |:-:|:-:|:--|
 |`console`|✅ Stable|
-|`fetch`|🔶 Partial|`Request`, `Response` and `ReadableStream` need to be stabilized before `fetch` can be considered Stable
+|`fetch`|🔶 Partial|`Request` needs to be stabilized before `fetch` can be considered Stable
 |`URL`|✅ Stable|
 |`URLSearchParams`|✅ Stable|
-|`Request`|🔶 Partial|`ReadableStream` needs to be stabilized before `Request` can be considered Stable<br/>Requests cannot be sent with `ReadableStream` bodies
+|`Request`|🔶 Partial|`Request.formData` does not support deserialization of `multipart/form-data` bodies
 |`Headers`|✅ Stable|
-|`Response`|🔶 Partial|`ReadableStream` needs to be stabilized before `Response` can be considered Stable.<br/>`Response.body` returns a Promise that resolves to a `ReadableStream` instead of returning a `ReadableStream` directly.
+|`Response`|✅ Stable|
 |`Blob`|🔶 Partial|`Blob.stream()` is not implemented yet
+|`File`|🔶 Partial|`Blob` must be stabilized before `File` can be considered stable
 |`FormData`|✅ Stable|
 |`TextDecoder`|✅ Stable|
+|`TextDecoderStream`|✅ Stable|
 |`TextEncoder`|✅ Stable|
-|`ReadableStream`|🔶 Partial|Creating `ReadableStream`s with `type: 'bytes'` is not supported yet.<br/>Returning `ReadableStream`s to native code is not supported yet.
+|`TextEncoderStream`|🔶 Partial|Surrogate pairs spread across two chunks are not handled correctly
+|`ReadableStream` and supporting types|✅ Stable|
+|`WritableStream` and supporting types|✅ Stable|
+|`TransformStream` and supporting types|🔶 Partial|Back-pressure is not implemented
 |`atob`|✅ Stable|
 |`btoa`|✅ Stable|
 |`performance.now()`|✅ Stable|
 |`performance.timeOrigin`|❌ Pending|
 |`crypto`|✅ Stable|
-|`crypto.subtle`|🔶 Partial|
+|`crypto.subtle`|🔶 Partial|Only MD5 and SHA algorithms are supported

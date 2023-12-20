@@ -1,4 +1,4 @@
-use ion::typedarray::ArrayBuffer;
+use ion::{typedarray::ArrayBuffer, Context};
 use sha2::Digest;
 
 use super::CryptoAlgorithm;
@@ -20,7 +20,12 @@ impl CryptoAlgorithm for Sha {
         }
     }
 
-    fn digest(&self, _params: ion::Object, data: super::BufferSource) -> ion::Result<ArrayBuffer> {
+    fn digest(
+        &self,
+        _cx: &Context,
+        _params: ion::Object,
+        data: super::BufferSource,
+    ) -> ion::Result<ArrayBuffer> {
         match self {
             Self::Sha1 => {
                 let data = sha1::Sha1::digest(data.as_slice());

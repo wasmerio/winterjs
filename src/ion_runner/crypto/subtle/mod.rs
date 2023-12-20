@@ -2,14 +2,15 @@ pub(super) mod algorithm;
 pub(super) mod crypto_key;
 pub(super) mod jwk;
 
-use ion::{function_spec, typedarray::ArrayBuffer, Context, Object};
+use ion::{function_spec, Context, Object, Promise};
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
+use runtime::promise::future_to_promise;
 use strum::ParseError;
 
 use algorithm::{md5::Md5, sha::Sha, CryptoAlgorithm};
 
 use self::{
-    crypto_key::{CryptoKey, KeyFormat, KeyType, KeyUsage},
+    crypto_key::{KeyFormat, KeyType, KeyUsage},
     jwk::JsonWebKey,
 };
 
@@ -96,62 +97,66 @@ impl AlgorithmIdentifier {
 }
 
 #[js_fn]
-async fn digest(
-    cx: &Context<'_>,
-    algorithm: AlgorithmIdentifier,
-    data: BufferSource,
-) -> ion::Result<ArrayBuffer> {
-    let alg = algorithm.get_algorithm(cx)?;
-    alg.digest(algorithm.into_params(cx), data)
+fn digest(cx: &Context, algorithm: AlgorithmIdentifier, data: BufferSource) -> Promise {
+    Promise::new_from_result(cx, {
+        algorithm
+            .get_algorithm(cx)
+            .and_then(|alg| alg.digest(cx, algorithm.into_params(cx), data))
+    })
 }
 
 #[js_fn]
-async fn import_key(
-    cx: &Context<'_>,
+fn import_key(
+    cx: &Context,
     key_format: KeyFormat,
     key_data: KeyData,
     algorithm: AlgorithmIdentifier,
     extractable: bool,
     key_usages: Vec<KeyUsage>,
-) -> ion::Result<CryptoKey> {
-    match (&key_format, &key_data) {
-        (KeyFormat::Jwk, KeyData::Jwk(_))
-        | (KeyFormat::Pkcs8, KeyData::BufferSource(_))
-        | (KeyFormat::Raw, KeyData::BufferSource(_))
-        | (KeyFormat::Spki, KeyData::BufferSource(_)) => (),
-        (KeyFormat::Jwk, _) => {
-            return Err(ion::Error::new(
-                "When keyFormat is 'jwk', keyData must be a JsonWebKey",
-                ion::ErrorKind::Type,
-            ))
-        }
-        (_, _) => {
-            return Err(ion::Error::new(
-                "keyData must be a BufferSource",
-                ion::ErrorKind::Type,
-            ))
-        }
+) -> Option<Promise> {
+    unsafe {
+        future_to_promise(cx, move |cx| async move {
+            match (&key_format, &key_data) {
+                (KeyFormat::Jwk, KeyData::Jwk(_))
+                | (KeyFormat::Pkcs8, KeyData::BufferSource(_))
+                | (KeyFormat::Raw, KeyData::BufferSource(_))
+                | (KeyFormat::Spki, KeyData::BufferSource(_)) => (),
+                (KeyFormat::Jwk, _) => {
+                    return Err(ion::Error::new(
+                        "When keyFormat is 'jwk', keyData must be a JsonWebKey",
+                        ion::ErrorKind::Type,
+                    ))
+                }
+                (_, _) => {
+                    return Err(ion::Error::new(
+                        "keyData must be a BufferSource",
+                        ion::ErrorKind::Type,
+                    ))
+                }
+            }
+
+            let no_usages = key_usages.is_empty();
+
+            let alg = algorithm.get_algorithm(&cx)?;
+            let key = alg.import_key(
+                &cx,
+                algorithm.into_params(&cx),
+                key_format,
+                key_data,
+                extractable,
+                key_usages,
+            )?;
+
+            if matches!(key.get_type(), KeyType::Private | KeyType::Secret) && no_usages {
+                return Err(ion::Error::new(
+                    "Private and secret keys must have a non-empty usages list.",
+                    ion::ErrorKind::Syntax,
+                ));
+            }
+
+            Ok(key.reflector.get())
+        })
     }
-
-    let no_usages = key_usages.is_empty();
-
-    let alg = algorithm.get_algorithm(cx)?;
-    let key = alg.import_key(
-        algorithm.into_params(cx),
-        key_format,
-        key_data,
-        extractable,
-        key_usages,
-    )?;
-
-    if matches!(key.key_type(), KeyType::Private | KeyType::Secret) && no_usages {
-        return Err(ion::Error::new(
-            "Private and secret keys must have a non-empty usages list.",
-            ion::ErrorKind::Syntax,
-        ));
-    }
-
-    Ok(key)
 }
 
 const METHODS: &[JSFunctionSpec] = &[function_spec!(digest, 2), JSFunctionSpec::ZERO];
@@ -166,15 +171,12 @@ macro_rules! enum_value {
         impl<'cx> FromValue<'cx> for $e {
             type Config = ();
 
-            fn from_value<'v>(
+            fn from_value(
                 cx: &'cx ion::Context,
-                value: &ion::Value<'v>,
+                value: &ion::Value,
                 _strict: bool,
                 _config: Self::Config,
-            ) -> ion::Result<Self>
-            where
-                'cx: 'v,
-            {
+            ) -> ion::Result<Self> {
                 if !value.handle().is_string() {
                     Err(ion::Error::new(
                         "Value must be a string",

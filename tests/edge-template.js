@@ -1,11 +1,13 @@
-async function handler(request) {
+async function handleRequest(request) {
   const out = JSON.stringify({
     success: true,
     package: "owner/package-name",
   });
-  request.respondWith(new Response(out, {
+  return new Response(out, {
     headers: { "content-type": "application/json" },
-  }));
+  });
 }
 
-addEventListener("fetch", handler);
+addEventListener("fetch", e => {
+  e.respondWith(handleRequest(e.request));
+});
