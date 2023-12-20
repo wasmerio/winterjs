@@ -3,7 +3,6 @@ use std::net::SocketAddr;
 
 use anyhow::Context as _;
 use async_trait::async_trait;
-use bytes::Bytes;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
@@ -46,7 +45,7 @@ pub trait RequestHandler: Send + Clone + 'static {
         &self,
         addr: SocketAddr,
         req: http::request::Parts,
-        body: Option<Bytes>,
+        body: hyper::Body,
     ) -> Result<hyper::Response<hyper::Body>, anyhow::Error>;
 }
 
@@ -81,13 +80,9 @@ async fn handle_inner(
     req: Request<Body>,
 ) -> Result<Response<Body>, anyhow::Error> {
     let (parts, body) = req.into_parts();
-    let body = hyper::body::to_bytes(body)
-        .await
-        .context("could not read body")?;
-
     context
         .handler
-        .handle(addr, parts, Some(body))
+        .handle(addr, parts, body)
         .await
         .context("JavaScript failed")
 }

@@ -196,7 +196,7 @@ struct PendingResponse {
 fn start_request<'cx>(
     cx: &'cx Context,
     req: http::request::Parts,
-    body: Option<bytes::Bytes>,
+    body: hyper::Body,
 ) -> anyhow::Result<Either<PendingResponse, ReadyResponse>> {
     let fetch_event = ion::Object::from(cx.root_object(FetchEvent::new_object(
         cx,
@@ -321,7 +321,7 @@ fn error_report_option_to_anyhow_error(
 pub struct RequestData {
     _addr: std::net::SocketAddr,
     req: http::request::Parts,
-    body: Option<bytes::Bytes>,
+    body: hyper::Body,
 }
 
 pub enum ResponseData {
@@ -451,7 +451,7 @@ impl crate::server::RequestHandler for Arc<Mutex<IonRunner>> {
         &self,
         _addr: std::net::SocketAddr,
         req: http::request::Parts,
-        body: Option<bytes::Bytes>,
+        body: hyper::Body,
     ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
         let mut this = self.lock().await;
         let thread = this.find_or_spawn_thread();

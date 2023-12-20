@@ -79,7 +79,7 @@ impl crate::server::RequestHandler for WatchRunner {
         &self,
         addr: std::net::SocketAddr,
         req: http::request::Parts,
-        body: Option<bytes::Bytes>,
+        body: hyper::Body,
     ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
         let runner = self.acquire_runner().await?;
         runner.handle(addr, req, body).await

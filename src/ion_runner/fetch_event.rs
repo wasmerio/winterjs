@@ -17,11 +17,10 @@ impl FetchEvent {
     pub fn try_new(
         cx: &Context,
         req: http::request::Parts,
-        body: Option<bytes::Bytes>,
+        body: hyper::Body,
     ) -> anyhow::Result<Self> {
-        let body_bytes = body.as_ref().map(|b| b.as_ref());
-        let body = match (&req.method, body_bytes) {
-            (&http::Method::GET, _) | (&http::Method::HEAD, _) | (_, Some(b"")) | (_, None) => None,
+        let body = match &req.method {
+            &http::Method::GET | &http::Method::HEAD => hyper::Body::empty(),
             _ => body,
         };
 
@@ -45,9 +44,7 @@ impl FetchEvent {
             method: Some(req.method.to_string()),
             headers: Some(HeadersInit::Array(header_entries)),
             body: Some(FetchBody {
-                body: body
-                    .map(FetchBodyInner::Bytes)
-                    .unwrap_or(FetchBodyInner::None),
+                body: FetchBodyInner::HyperBody(body),
                 kind: None,
                 source: None,
             }),
