@@ -318,8 +318,14 @@ fn build_response<'cx>(
 }
 
 fn error_report_to_anyhow_error(cx: &Context, error_report: ErrorReport) -> anyhow::Error {
-    // TODO: include stack
-    anyhow::anyhow!("Runtime error: {}", error_report.exception.format(cx))
+    match error_report.stack {
+        Some(stack) => anyhow::anyhow!(
+            "Script error: {}\nat:\n{}",
+            error_report.exception.format(cx),
+            stack.format()
+        ),
+        None => anyhow::anyhow!("Runtime error: {}", error_report.exception.format(cx)),
+    }
 }
 
 fn error_report_option_to_anyhow_error(
@@ -328,7 +334,7 @@ fn error_report_option_to_anyhow_error(
 ) -> anyhow::Error {
     match error_report {
         Some(e) => error_report_to_anyhow_error(cx, e),
-        None => anyhow!("Unknown runtime error"),
+        None => anyhow!("Unknown script error"),
     }
 }
 
