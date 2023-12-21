@@ -2,14 +2,17 @@ pub(super) mod algorithm;
 pub(super) mod crypto_key;
 pub(super) mod jwk;
 
-use ion::{function_spec, Context, Object, Promise};
+use ion::{conversions::ToValue, function_spec, ClassDefinition, Context, Object, Promise};
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
 use runtime::promise::future_to_promise;
 use strum::ParseError;
 
 use algorithm::{md5::Md5, sha::Sha, CryptoAlgorithm};
 
+use crate::ion_runner::crypto::subtle::crypto_key::CryptoKey;
+
 use self::{
+    algorithm::hmac::Hmac,
     crypto_key::{KeyFormat, KeyType, KeyUsage},
     jwk::JsonWebKey,
 };
@@ -80,6 +83,7 @@ impl AlgorithmIdentifier {
             "sha-384" => Ok(Box::new(Sha::Sha384)),
             "sha-512" => Ok(Box::new(Sha::Sha512)),
             "md5" => Ok(Box::new(Md5)),
+            "hmac" => Ok(Box::new(Hmac)),
 
             _ => Err(ion::Error::new(
                 "Unknown algorithm identifier",
@@ -88,10 +92,19 @@ impl AlgorithmIdentifier {
         }
     }
 
-    fn into_params<'cx>(self, cx: &'cx Context) -> Object<'cx> {
+    fn to_params<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
         match self {
             Self::String(_) => Object::new(cx),
-            Self::Object(o) => cx.root_object(o).into(),
+            Self::Object(o) => cx.root_object(*o).into(),
+        }
+    }
+}
+
+impl<'cx> ToValue<'cx> for AlgorithmIdentifier {
+    fn to_value(&self, cx: &'cx Context, value: &mut ion::Value) {
+        match self {
+            Self::Object(o) => o.to_value(cx, value),
+            Self::String(s) => s.to_value(cx, value),
         }
     }
 }
@@ -101,7 +114,7 @@ fn digest(cx: &Context, algorithm: AlgorithmIdentifier, data: BufferSource) -> P
     Promise::new_from_result(cx, {
         algorithm
             .get_algorithm(cx)
-            .and_then(|alg| alg.digest(cx, algorithm.into_params(cx), data))
+            .and_then(|alg| alg.digest(cx, algorithm.to_params(cx), data))
     })
 }
 
@@ -140,7 +153,7 @@ fn import_key(
             let alg = algorithm.get_algorithm(&cx)?;
             let key = alg.import_key(
                 &cx,
-                algorithm.into_params(&cx),
+                algorithm.to_params(&cx),
                 key_format,
                 key_data,
                 extractable,
@@ -154,12 +167,16 @@ fn import_key(
                 ));
             }
 
-            Ok(key.reflector.get())
+            Ok(CryptoKey::new_object(&cx, Box::new(key)))
         })
     }
 }
 
-const METHODS: &[JSFunctionSpec] = &[function_spec!(digest, 2), JSFunctionSpec::ZERO];
+const METHODS: &[JSFunctionSpec] = &[
+    function_spec!(digest, 2),
+    function_spec!(import_key, "importKey", 5),
+    JSFunctionSpec::ZERO,
+];
 
 pub fn define<'cx>(cx: &'cx Context, mut obj: Object) -> bool {
     unsafe { obj.define_methods(cx, METHODS) }

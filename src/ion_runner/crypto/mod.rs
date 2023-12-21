@@ -51,6 +51,8 @@ impl NativeModule for CryptoModule {
     }
 }
 
-pub fn define<'cx: 'o, 'o>(cx: &'cx Context, global: &mut ion::Object<'o>) -> bool {
+pub fn define(cx: &Context, global: &mut ion::Object) -> bool {
     subtle::crypto_key::CryptoKey::init_class(cx, global).0
+        && subtle::crypto_key::KeyAlgorithm::init_class(cx, global).0
+        && subtle::algorithm::hmac::HmacKeyAlgorithm::init_class(cx, global).0
 }

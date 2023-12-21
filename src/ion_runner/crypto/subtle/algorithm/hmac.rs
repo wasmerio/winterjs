@@ -1,23 +1,28 @@
+use std::borrow::Cow;
+
+use base64::Engine;
 use ion::{
+    class::NativeObject,
     conversions::{ConversionBehavior, FromValue, ToValue},
-    Context,
+    ClassDefinition, Context, Heap, Result,
 };
+use mozjs_sys::jsval::JSVal;
 
 use crate::{
+    ion_err, ion_mk_err,
     ion_runner::crypto::subtle::{
-        crypto_key::{CryptoKey, KeyFormat, KeyUsage},
+        crypto_key::{CryptoKey, KeyAlgorithm, KeyFormat, KeyType, KeyUsage},
         AlgorithmIdentifier, KeyData,
     },
-    ionerr,
 };
 
 use super::CryptoAlgorithm;
 
 macro_rules! validate_jwk_alg {
     ($hash_alg:ident, $jwk:ident, $name:expr, $jwk_name:expr) => {
-        if let Some(jwk_alg) = $jwk.alg {
+        if let Some(jwk_alg) = &$jwk.alg {
             if $hash_alg.name() == $name && jwk_alg != $jwk_name {
-                ionerr!(
+                ion_err!(
                     format!("alg field of JWK must be {}", $jwk_name).as_str(),
                     Normal
                 );
@@ -28,26 +33,59 @@ macro_rules! validate_jwk_alg {
 
 #[derive(FromValue)]
 pub struct HmacImportParams {
-    name: String,
-    hash: String,
+    hash: AlgorithmIdentifier,
     #[ion(convert = ConversionBehavior::EnforceRange, strict)]
-    length: u32,
+    length: Option<u32>,
 }
 
-#[derive(FromValue)]
+#[js_class]
 pub struct HmacKeyAlgorithm {
-    name: String,
-    hash: String,
-    #[ion(convert = ConversionBehavior::EnforceRange, strict)]
+    base: KeyAlgorithm,
+
+    hash: Heap<JSVal>, // AlgorithmIdentifier
     length: u32,
+
+    key_data: Vec<u8>,
+}
+
+impl HmacKeyAlgorithm {
+    pub fn new(hash: Heap<JSVal>, length: u32, key_data: Vec<u8>) -> Self {
+        Self {
+            base: KeyAlgorithm {
+                reflector: Default::default(),
+                name: "HMAC",
+            },
+
+            hash,
+            length,
+            key_data,
+        }
+    }
+}
+
+#[js_class]
+impl HmacKeyAlgorithm {
+    #[ion(constructor)]
+    pub fn constructor() -> Result<HmacKeyAlgorithm> {
+        ion_err!("Cannot construct this type", Type);
+    }
+
+    #[ion(get)]
+    pub fn get_hash(&self) -> JSVal {
+        self.hash.get()
+    }
+
+    #[ion(get)]
+    pub fn get_length(&self) -> u32 {
+        self.length
+    }
 }
 
 #[derive(FromValue)]
 pub struct HmacKeyGenParams {
-    name: String,
-    hash: String,
+    hash: AlgorithmIdentifier,
     #[ion(convert = ConversionBehavior::EnforceRange, strict)]
-    length: u32,
+    length: Option<u32>,
 }
 
 pub struct Hmac;
@@ -74,24 +112,24 @@ impl CryptoAlgorithm for Hmac {
         }
 
         let params = HmacImportParams::from_value(cx, &params.as_value(cx), false, ())?;
-        let hash_alg = AlgorithmIdentifier::String(params.hash).get_algorithm(cx)?;
+        let hash_alg = params.hash.get_algorithm(cx)?;
 
         let key_bytes = match format {
             KeyFormat::Raw => {
-                let KeyData::BufferSource(buffer) = key_data else {
+                let KeyData::BufferSource(buffer) = &key_data else {
                     panic!("Invalid key format/key data combination, should be validated before passing in");
                 };
-                buffer.as_slice()
+                Cow::Borrowed(buffer.as_slice())
             }
             KeyFormat::Jwk => {
                 let KeyData::Jwk(jwk) = key_data else {
                     panic!("Invalid key format/key data combination, should be validated before passing in");
                 };
                 if jwk.kty != "oct" {
-                    ionerr!("kty member of JWK key must be 'oct'", Normal);
+                    ion_err!("kty member of JWK key must be 'oct'", Normal);
                 }
                 let Some(k) = jwk.k else {
-                    ionerr!("Mandatory member k of JWK not specified", Normal);
+                    ion_err!("Mandatory member k of JWK not specified", Normal);
                 };
 
                 validate_jwk_alg!(hash_alg, jwk, "SHA-1", "HS1");
@@ -99,14 +137,38 @@ impl CryptoAlgorithm for Hmac {
                 validate_jwk_alg!(hash_alg, jwk, "SHA-384", "HS384");
                 validate_jwk_alg!(hash_alg, jwk, "SHA-512", "HS512");
 
-                /*
-                If usages is non-empty and the use field of jwk is present and is not "sign", then throw a DataError.
+                if let Some(r#use) = jwk.r#use {
+                    if r#use != "sign" && !usages.is_empty() {
+                        ion_err!("use member of JWK key must be 'sign'", Normal);
+                    }
+                }
 
-                If the key_ops field of jwk is present, and is invalid according to the requirements of JSON Web Key [JWK] or does not contain all of the specified usages values, then throw a DataError.
+                if let Some(key_ops) = jwk.key_ops {
+                    if usages
+                        .iter()
+                        .any(|u| !key_ops.iter().any(|o| o.as_str() == u.as_ref()))
+                    {
+                        ion_err!(
+                            "key_ops member of JWK must include all specified usages",
+                            Normal
+                        );
+                    }
+                }
 
-                If the ext field of jwk is present and has the value false and extractable is true, then throw a DataError.  */
+                if let Some(ext) = jwk.ext {
+                    if !ext && extractable {
+                        ion_err!(
+                            "ext member of JWK must be true when extractable is specified as true",
+                            Normal
+                        );
+                    }
+                }
 
-                k.as_bytes()
+                Cow::Owned(
+                    base64::prelude::BASE64_STANDARD.decode(k).map_err(|_| {
+                        ion_mk_err!("Invalid base64 data in k field of JWK", Normal)
+                    })?,
+                )
             }
             _ => {
                 return Err(ion::Error::new(
@@ -116,6 +178,32 @@ impl CryptoAlgorithm for Hmac {
             }
         };
 
-        ()
+        let mut length = key_bytes.len() as u32 * 8;
+        if length == 0 {
+            ion_err!("Key length cannot be zero", Normal);
+        }
+
+        if let Some(params_length) = params.length {
+            if params_length > length || params_length <= length - 8 {
+                ion_err!("Key data length must match the specified length", Normal);
+            }
+            length = params_length;
+        }
+
+        let algorithm = HmacKeyAlgorithm::new_object(
+            cx,
+            Box::new(HmacKeyAlgorithm::new(
+                Heap::from_local(&params.hash.as_value(cx)),
+                length,
+                key_bytes.into_owned(),
+            )),
+        );
+
+        Ok(CryptoKey::new(
+            extractable,
+            Heap::new(algorithm),
+            KeyType::Secret,
+            usages,
+        ))
     }
 }

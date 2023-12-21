@@ -6,7 +6,7 @@ use ion::{
 use mozjs_sys::jsapi::JSObject;
 use strum::{AsRefStr, EnumString};
 
-use crate::enum_value;
+use crate::{enum_value, ion_err};
 
 #[derive(EnumString, AsRefStr, Clone, Copy)]
 #[strum(serialize_all = "camelCase")]
@@ -48,7 +48,7 @@ enum_value!(KeyFormat);
 pub struct CryptoKey {
     pub reflector: Reflector,
     pub extractable: bool,
-    pub algorithm: Heap<*mut JSObject>,
+    pub algorithm: Heap<*mut JSObject>, // KeyAlgorithm
 
     #[ion(no_trace)]
     pub key_type: KeyType,
@@ -58,6 +58,21 @@ pub struct CryptoKey {
 }
 
 impl CryptoKey {
+    pub fn new(
+        extractable: bool,
+        algorithm: Heap<*mut JSObject>,
+        key_type: KeyType,
+        usages: Vec<KeyUsage>,
+    ) -> Self {
+        Self {
+            reflector: Default::default(),
+            extractable,
+            algorithm,
+            key_type,
+            usages,
+        }
+    }
+
     pub fn set_extractable(&mut self, extractable: bool) {
         self.extractable = extractable;
     }
@@ -98,5 +113,25 @@ impl CryptoKey {
         let mut val = Value::undefined(cx);
         self.usages.to_value(cx, &mut val);
         val
+    }
+}
+
+#[js_class]
+pub struct KeyAlgorithm {
+    pub reflector: Reflector,
+
+    pub name: &'static str,
+}
+
+#[js_class]
+impl KeyAlgorithm {
+    #[ion(constructor)]
+    pub fn constructor() -> Result<KeyAlgorithm> {
+        ion_err!("This type cannot be constructed", Type);
+    }
+
+    #[ion(get)]
+    pub fn get_name(&self) -> &'static str {
+        self.name
     }
 }

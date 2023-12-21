@@ -42,9 +42,16 @@ pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy
 });
 
 #[macro_export]
-macro_rules! ionerr {
+macro_rules! ion_mk_err {
     ($msg:expr, $ty:ident) => {
-        return Err(ion::Error::new($msg, ion::ErrorKind::$ty));
+        ion::Error::new($msg, ion::ErrorKind::$ty)
+    };
+}
+
+#[macro_export]
+macro_rules! ion_err {
+    ($msg:expr, $ty:ident) => {
+        return Err($crate::ion_mk_err!($msg, $ty));
     };
 }
 

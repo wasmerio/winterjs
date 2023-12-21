@@ -64,6 +64,7 @@ sha2 = "0.10.8"
 md5 = "0.7.0"
 clap = { version = "4.4.7", features = ["derive", "env"] }
 strum = { version = "0.25.0", features = ["derive"] }
+hmac = { version = "0.12.1", features = ["std"] }
 
 [patch.crates-io]
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "epoll" }

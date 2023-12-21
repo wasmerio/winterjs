@@ -486,6 +486,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -758,6 +759,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d77f7ec81a6d05a3abb01ab6eb7590f6083d08449fe5a1c8b1e620283546ccb7"
 
 [[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
+
+[[package]]
 name = "home"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -932,7 +942,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#70d9ee568c4df4ee8938ee8b9b332d3c0d6376ac"
+source = "git+https://github.com/wasmerio/spiderfire.git#d81bc7baad86f5cb083121fbc7a364528a5944cb"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -956,7 +966,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#70d9ee568c4df4ee8938ee8b9b332d3c0d6376ac"
+source = "git+https://github.com/wasmerio/spiderfire.git#d81bc7baad86f5cb083121fbc7a364528a5944cb"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1147,7 +1157,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#70d9ee568c4df4ee8938ee8b9b332d3c0d6376ac"
+source = "git+https://github.com/wasmerio/spiderfire.git#d81bc7baad86f5cb083121fbc7a364528a5944cb"
 dependencies = [
  "bytes",
  "futures",
@@ -1578,7 +1588,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#70d9ee568c4df4ee8938ee8b9b332d3c0d6376ac"
+source = "git+https://github.com/wasmerio/spiderfire.git#d81bc7baad86f5cb083121fbc7a364528a5944cb"
 dependencies = [
  "as-any",
  "async-recursion",
@@ -1994,6 +2004,12 @@ dependencies = [
  "rustversion",
  "syn 2.0.41",
 ]
+
+[[package]]
+name = "subtle"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 
 [[package]]
 name = "swc_atoms"
@@ -2767,6 +2783,7 @@ dependencies = [
  "form_urlencoded",
  "futures",
  "h2",
+ "hmac",
  "http",
  "hyper",
  "hyper-rustls",
