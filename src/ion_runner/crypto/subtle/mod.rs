@@ -2,14 +2,20 @@ pub(super) mod algorithm;
 pub(super) mod crypto_key;
 pub(super) mod jwk;
 
-use ion::{conversions::ToValue, function_spec, ClassDefinition, Context, Object, Promise};
+use ion::{
+    class::NativeObject, conversions::ToValue, function_spec, ClassDefinition, Context, Object,
+    Promise, TracedHeap,
+};
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
 use runtime::promise::future_to_promise;
 use strum::ParseError;
 
 use algorithm::{md5::Md5, sha::Sha, CryptoAlgorithm};
 
-use crate::ion_runner::crypto::subtle::crypto_key::CryptoKey;
+use crate::{
+    ion_err,
+    ion_runner::crypto::subtle::crypto_key::{CryptoKey, KeyAlgorithm},
+};
 
 use self::{
     algorithm::hmac::Hmac,
@@ -172,9 +178,27 @@ fn import_key(
     }
 }
 
+#[js_fn]
+fn export_key(cx: &Context, key_format: KeyFormat, key: &CryptoKey) -> Option<Promise> {
+    unsafe {
+        let key_heap = TracedHeap::new(key.reflector().get());
+        future_to_promise(cx, move |cx| async move {
+            let key = CryptoKey::get_private(&key_heap.root(&cx).into());
+            let alg_obj = key.algorithm.root(&cx).into();
+            let alg = KeyAlgorithm::get_private(&alg_obj);
+            let alg = AlgorithmIdentifier::String(alg.name.to_string()).get_algorithm(&cx)?;
+            if !key.extractable {
+                ion_err!("Key cannot be exported", Normal);
+            }
+            Ok(alg.export_key(&cx, key_format, key)?.get())
+        })
+    }
+}
+
 const METHODS: &[JSFunctionSpec] = &[
     function_spec!(digest, 2),
     function_spec!(import_key, "importKey", 5),
+    function_spec!(export_key, "exportKey", 2),
     JSFunctionSpec::ZERO,
 ];
 

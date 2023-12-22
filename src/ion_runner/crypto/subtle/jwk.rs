@@ -1,11 +1,11 @@
-#[derive(FromValue)]
+#[derive(FromValue, ToValue)]
 pub struct RsaOtherPrimesInfo {
     pub r: String,
     pub d: String,
     pub t: String,
 }
 
-#[derive(FromValue)]
+#[derive(FromValue, ToValue, Default)]
 pub struct JsonWebKey {
     pub kty: String,
     #[ion(name = "use")]

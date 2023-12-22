@@ -2,7 +2,7 @@ pub mod hmac;
 pub mod md5;
 pub mod sha;
 
-use ion::{typedarray::ArrayBuffer, Context, Object};
+use ion::{typedarray::ArrayBuffer, Context, Object, Value};
 
 use super::{
     crypto_key::{CryptoKey, KeyFormat, KeyUsage},
@@ -12,6 +12,13 @@ use super::{
 #[allow(unused_variables)]
 pub trait CryptoAlgorithm {
     fn name(&self) -> &'static str;
+
+    fn get_jwk_identifier(&self) -> ion::Result<&'static str> {
+        Err(ion::Error::new(
+            "Operation not supported by the specified algorithm",
+            ion::ErrorKind::Normal,
+        ))
+    }
 
     fn encrypt(
         &self,
@@ -144,7 +151,12 @@ pub trait CryptoAlgorithm {
         ))
     }
 
-    fn export_key(&self, cx: &Context, format: KeyFormat, key: CryptoKey) -> ion::Result<Object> {
+    fn export_key<'cx>(
+        &self,
+        cx: &'cx Context,
+        format: KeyFormat,
+        key: &CryptoKey,
+    ) -> ion::Result<Value<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,

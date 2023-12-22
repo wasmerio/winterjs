@@ -20,6 +20,15 @@ impl CryptoAlgorithm for Sha {
         }
     }
 
+    fn get_jwk_identifier(&self) -> ion::Result<&'static str> {
+        Ok(match self {
+            Self::Sha1 => "HS1",
+            Self::Sha256 => "HS256",
+            Self::Sha384 => "HS384",
+            Self::Sha512 => "HS512",
+        })
+    }
+
     fn digest(
         &self,
         _cx: &Context,

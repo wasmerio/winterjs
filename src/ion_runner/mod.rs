@@ -51,7 +51,7 @@ macro_rules! ion_mk_err {
 #[macro_export]
 macro_rules! ion_err {
     ($msg:expr, $ty:ident) => {
-        return Err($crate::ion_mk_err!($msg, $ty));
+        return Err($crate::ion_mk_err!($msg, $ty))
     };
 }
 

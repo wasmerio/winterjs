@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use base64::Engine;
 use ion::{
-    class::NativeObject,
     conversions::{ConversionBehavior, FromValue, ToValue},
+    typedarray::ArrayBuffer,
     ClassDefinition, Context, Heap, Result,
 };
 use mozjs_sys::jsval::JSVal;
@@ -12,6 +12,7 @@ use crate::{
     ion_err, ion_mk_err,
     ion_runner::crypto::subtle::{
         crypto_key::{CryptoKey, KeyAlgorithm, KeyFormat, KeyType, KeyUsage},
+        jwk::JsonWebKey,
         AlgorithmIdentifier, KeyData,
     },
 };
@@ -45,6 +46,11 @@ pub struct HmacKeyAlgorithm {
     hash: Heap<JSVal>, // AlgorithmIdentifier
     length: u32,
 
+    // This should live on the CryptoKey object as per
+    // the standard, but it makes more sense to keep it
+    // here since we can't be sure every algorithm uses
+    // a Vec<u8> and it'd be difficult to create a trait
+    // or enum to cover all algorithms.
     key_data: Vec<u8>,
 }
 
@@ -205,5 +211,47 @@ impl CryptoAlgorithm for Hmac {
             KeyType::Secret,
             usages,
         ))
+    }
+
+    fn export_key<'cx>(
+        &self,
+        cx: &'cx Context,
+        format: KeyFormat,
+        key: &CryptoKey,
+    ) -> ion::Result<ion::Value<'cx>> {
+        let alg = key.algorithm.root(cx).into();
+        if !HmacKeyAlgorithm::instance_of(cx, &alg, None) {
+            ion_err!(
+                "The algorithm of the key should be an instance of HmacKeyAlgorithm",
+                Type
+            );
+        }
+
+        let alg = HmacKeyAlgorithm::get_private(&alg);
+
+        match format {
+            KeyFormat::Raw => {
+                let ab = ArrayBuffer::from(alg.key_data.as_ref());
+                Ok(ab.as_value(cx))
+            }
+
+            KeyFormat::Jwk => {
+                let key_data = base64::prelude::BASE64_STANDARD_NO_PAD.encode(&alg.key_data);
+                let hash_alg =
+                    AlgorithmIdentifier::from_value(cx, &alg.hash.root(cx).into(), false, ())?;
+                let alg = hash_alg.get_algorithm(cx)?;
+                let jwk = JsonWebKey {
+                    kty: "oct".to_string(),
+                    k: Some(key_data),
+                    alg: Some(alg.get_jwk_identifier()?.to_string()),
+                    key_ops: Some(key.usages.iter().map(|u| u.as_ref().to_string()).collect()),
+                    ext: Some(key.extractable),
+                    ..Default::default()
+                };
+                Ok(jwk.as_value(cx))
+            }
+
+            _ => ion_err!("Unsupported key type", Normal),
+        }
     }
 }
