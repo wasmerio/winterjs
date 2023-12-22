@@ -254,4 +254,22 @@ impl CryptoAlgorithm for Hmac {
             _ => ion_err!("Unsupported key type", Normal),
         }
     }
+
+    fn get_key_length(&self, cx: &Context, params: ion::Object) -> ion::Result<usize> {
+        let params = HmacImportParams::from_value(cx, &params.as_value(cx), false, ())?;
+
+        match params.length {
+            None => {
+                let alg = params.hash.get_algorithm(cx)?;
+                return alg.get_key_length(cx, params.hash.to_params(cx));
+            }
+            Some(length) => {
+                if length > 0 {
+                    return Ok(length as usize);
+                }
+            }
+        }
+
+        ion_err!("Key length is unknown", Type);
+    }
 }
