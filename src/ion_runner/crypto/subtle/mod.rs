@@ -2,6 +2,8 @@ pub(super) mod algorithm;
 pub(super) mod crypto_key;
 pub(super) mod jwk;
 
+use std::borrow::Cow;
+
 use ion::{
     class::NativeObject, conversions::ToValue, function_spec, ClassDefinition, Context, Object,
     Promise, TracedHeap,
@@ -57,31 +59,28 @@ pub enum AlgorithmIdentifier {
 }
 
 impl AlgorithmIdentifier {
-    fn get_algorithm(&self, cx: &Context) -> ion::Result<Box<dyn CryptoAlgorithm>> {
-        let name_string;
-        let alg_name = match self {
-            Self::String(str) => str.as_str(),
+    fn get_algorithm_name(&self, cx: &Context) -> ion::Result<Cow<str>> {
+        match self {
+            Self::String(str) => Ok(Cow::Borrowed(str.as_str())),
             Self::Object(obj) => {
                 let obj = Object::from(cx.root_object(*obj));
                 if let Some(name) = obj.get(cx, "name") {
                     if name.get().is_string() {
-                        name_string =
-                            ion::String::from(cx.root_string(name.get().to_string())).to_owned(cx);
-                        name_string.as_str()
+                        Ok(Cow::Owned(
+                            ion::String::from(cx.root_string(name.get().to_string())).to_owned(cx),
+                        ))
                     } else {
-                        return Err(ion::Error::new(
-                            "name key of AlgorithmIdentifier must be a string",
-                            ion::ErrorKind::Type,
-                        ));
+                        ion_err!("name key of AlgorithmIdentifier must be a string", Type)
                     }
                 } else {
-                    return Err(ion::Error::new(
-                        "AlgorithmIdentifier must have a name key",
-                        ion::ErrorKind::Type,
-                    ));
+                    ion_err!("AlgorithmIdentifier must have a name key", Type)
                 }
             }
-        };
+        }
+    }
+
+    fn get_algorithm(&self, cx: &Context) -> ion::Result<Box<dyn CryptoAlgorithm>> {
+        let alg_name = self.get_algorithm_name(cx)?;
 
         match alg_name.to_ascii_lowercase().as_str() {
             "sha-1" => Ok(Box::new(Sha::Sha1)),
@@ -116,12 +115,99 @@ impl<'cx> ToValue<'cx> for AlgorithmIdentifier {
 }
 
 #[js_fn]
+fn sign(
+    cx: &Context,
+    algorithm: AlgorithmIdentifier,
+    key: &CryptoKey,
+    data: BufferSource,
+) -> Option<Promise> {
+    unsafe {
+        let key = TracedHeap::new(key.reflector().get());
+        future_to_promise(cx, move |cx| async move {
+            let key = CryptoKey::get_private(&key.root(&cx).into());
+            let alg = algorithm.get_algorithm(&cx)?;
+
+            let key_alg = KeyAlgorithm::get_private(&key.algorithm.root(&cx).into());
+            if alg.name().to_ascii_lowercase() != key_alg.name.to_ascii_lowercase() {
+                ion_err!(
+                    "Provided key does not correspond to specified algorithm",
+                    Normal
+                );
+            }
+
+            if !key.usages.iter().any(|u| matches!(u, KeyUsage::Sign)) {
+                ion_err!("Key does not support the 'sign' operation", Normal);
+            }
+
+            alg.sign(&cx, &algorithm.to_params(&cx), key, data)
+        })
+    }
+}
+
+#[js_fn]
+fn verify(
+    cx: &Context,
+    algorithm: AlgorithmIdentifier,
+    key: &CryptoKey,
+    signature: BufferSource,
+    data: BufferSource,
+) -> Option<Promise> {
+    unsafe {
+        let key = TracedHeap::new(key.reflector().get());
+        future_to_promise(cx, move |cx| async move {
+            let key = CryptoKey::get_private(&key.root(&cx).into());
+            let alg = algorithm.get_algorithm(&cx)?;
+
+            let key_alg = KeyAlgorithm::get_private(&key.algorithm.root(&cx).into());
+            if alg.name().to_ascii_lowercase() != key_alg.name.to_ascii_lowercase() {
+                ion_err!(
+                    "Provided key does not correspond to specified algorithm",
+                    Normal
+                );
+            }
+
+            if !key.usages.iter().any(|u| matches!(u, KeyUsage::Verify)) {
+                ion_err!("Key does not support the 'verify' operation", Normal);
+            }
+
+            alg.verify(&cx, &algorithm.to_params(&cx), key, signature, data)
+        })
+    }
+}
+
+#[js_fn]
 fn digest(cx: &Context, algorithm: AlgorithmIdentifier, data: BufferSource) -> Promise {
     Promise::new_from_result(cx, {
         algorithm
             .get_algorithm(cx)
-            .and_then(|alg| alg.digest(cx, algorithm.to_params(cx), data))
+            .and_then(|alg| alg.digest(cx, &algorithm.to_params(cx), data))
     })
+}
+
+#[js_fn]
+fn generate_key(
+    cx: &Context,
+    algorithm: AlgorithmIdentifier,
+    extractable: bool,
+    key_usages: Vec<KeyUsage>,
+) -> Option<Promise> {
+    unsafe {
+        future_to_promise(cx, move |cx| async move {
+            let alg = algorithm.get_algorithm(&cx)?;
+            let key = alg.generate_key(&cx, &algorithm.to_params(&cx), extractable, key_usages)?;
+
+            if matches!(key.key_type, KeyType::Secret | KeyType::Private) && key.usages.is_empty() {
+                ion_err!(
+                    "Usages must be specified for secret and private keys",
+                    Syntax
+                );
+            }
+
+            // TODO: handle CryptoKeyPair
+
+            Ok(CryptoKey::new_object(&cx, Box::new(key)))
+        })
+    }
 }
 
 #[js_fn]
@@ -159,7 +245,7 @@ fn import_key(
             let alg = algorithm.get_algorithm(&cx)?;
             let key = alg.import_key(
                 &cx,
-                algorithm.to_params(&cx),
+                &algorithm.to_params(&cx),
                 key_format,
                 key_data,
                 extractable,
@@ -197,6 +283,9 @@ fn export_key(cx: &Context, key_format: KeyFormat, key: &CryptoKey) -> Option<Pr
 
 const METHODS: &[JSFunctionSpec] = &[
     function_spec!(digest, 2),
+    function_spec!(sign, 3),
+    function_spec!(verify, 4),
+    function_spec!(generate_key, "generateKey", 3),
     function_spec!(import_key, "importKey", 5),
     function_spec!(export_key, "exportKey", 2),
     JSFunctionSpec::ZERO,

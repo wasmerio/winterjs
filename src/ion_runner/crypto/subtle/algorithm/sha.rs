@@ -32,7 +32,7 @@ impl CryptoAlgorithm for Sha {
     fn digest(
         &self,
         _cx: &Context,
-        _params: ion::Object,
+        _params: &ion::Object,
         data: super::BufferSource,
     ) -> ion::Result<ArrayBuffer> {
         match self {
@@ -55,6 +55,15 @@ impl CryptoAlgorithm for Sha {
                 let data = sha2::Sha512::digest(data.as_slice());
                 Ok(ArrayBuffer::from(&*data))
             }
+        }
+    }
+
+    fn get_key_length(&self, _cx: &Context, _params: &ion::Object) -> ion::Result<usize> {
+        match self {
+            Self::Sha1 => Ok(20),
+            Self::Sha256 => Ok(64),
+            Self::Sha384 => Ok(48),
+            Self::Sha512 => Ok(512),
         }
     }
 }

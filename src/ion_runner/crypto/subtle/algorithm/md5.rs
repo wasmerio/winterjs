@@ -12,7 +12,7 @@ impl CryptoAlgorithm for Md5 {
     fn digest(
         &self,
         _cx: &Context,
-        _params: ion::Object,
+        _params: &ion::Object,
         data: super::BufferSource,
     ) -> ion::Result<ArrayBuffer> {
         let data = md5::compute(data.as_slice()).0;

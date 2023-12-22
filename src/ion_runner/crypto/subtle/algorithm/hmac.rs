@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use base64::Engine;
+use hmac::{digest::generic_array::ArrayLength, Mac};
 use ion::{
     conversions::{ConversionBehavior, FromValue, ToValue},
     typedarray::ArrayBuffer,
@@ -11,7 +12,7 @@ use mozjs_sys::jsval::JSVal;
 use crate::{
     ion_err, ion_mk_err,
     ion_runner::crypto::subtle::{
-        crypto_key::{CryptoKey, KeyAlgorithm, KeyFormat, KeyType, KeyUsage},
+        crypto_key::{generate_random_key, CryptoKey, KeyAlgorithm, KeyFormat, KeyType, KeyUsage},
         jwk::JsonWebKey,
         AlgorithmIdentifier, KeyData,
     },
@@ -32,8 +33,10 @@ macro_rules! validate_jwk_alg {
     };
 }
 
+// The standard has two separate dictionaries, but they're the
+// exact same, so we use one.
 #[derive(FromValue)]
-pub struct HmacImportParams {
+pub struct HmacImportOrKeyGenParams {
     hash: AlgorithmIdentifier,
     #[ion(convert = ConversionBehavior::EnforceRange, strict)]
     length: Option<u32>,
@@ -87,13 +90,6 @@ impl HmacKeyAlgorithm {
     }
 }
 
-#[derive(FromValue)]
-pub struct HmacKeyGenParams {
-    hash: AlgorithmIdentifier,
-    #[ion(convert = ConversionBehavior::EnforceRange, strict)]
-    length: Option<u32>,
-}
-
 pub struct Hmac;
 
 impl CryptoAlgorithm for Hmac {
@@ -101,10 +97,84 @@ impl CryptoAlgorithm for Hmac {
         "HMAC"
     }
 
+    fn sign(
+        &self,
+        cx: &Context,
+        _params: &ion::Object,
+        key: &CryptoKey,
+        data: crate::ion_runner::crypto::subtle::BufferSource,
+    ) -> ion::Result<ArrayBuffer> {
+        let key_alg = key.algorithm.root(cx).into();
+        if !HmacKeyAlgorithm::instance_of(cx, &key_alg, None) {
+            ion_err!("The provided key is not an HMAC key", Type);
+        }
+
+        let key_alg = HmacKeyAlgorithm::get_private(&key_alg);
+        let hash_alg =
+            AlgorithmIdentifier::from_value(cx, &key_alg.hash.root(cx).into(), false, ())?;
+
+        let vec = sign(cx, &hash_alg, &key_alg.key_data, data.as_slice())?;
+        Ok(ArrayBuffer::from(&vec[..]))
+    }
+
+    fn verify(
+        &self,
+        cx: &Context,
+        params: &ion::Object,
+        key: &CryptoKey,
+        signature: crate::ion_runner::crypto::subtle::BufferSource,
+        data: crate::ion_runner::crypto::subtle::BufferSource,
+    ) -> ion::Result<bool> {
+        let calculated = self.sign(cx, params, key, data)?;
+        let calc_buf = (*calculated).as_ref();
+        let sign_but = signature.as_slice();
+        Ok(calc_buf == sign_but)
+    }
+
+    fn generate_key(
+        &self,
+        cx: &Context,
+        params: &ion::Object,
+        extractable: bool,
+        usages: Vec<KeyUsage>,
+    ) -> ion::Result<CryptoKey> {
+        if usages
+            .iter()
+            .any(|u| !matches!(u, KeyUsage::Sign | KeyUsage::Verify))
+        {
+            ion_err!(
+                "Invalid key usage specified; only 'sign' and 'verify' are allowed",
+                Syntax
+            );
+        }
+
+        let key_length = self.get_key_length(cx, params)?;
+        let key_data = generate_random_key(key_length / 8, &mut rand::thread_rng());
+
+        let params = HmacImportOrKeyGenParams::from_value(cx, &params.as_value(cx), false, ())?;
+
+        // Make sure the algorithm identifier is valid
+        let _ = params.hash.get_algorithm(cx)?;
+
+        let alg = HmacKeyAlgorithm::new(
+            Heap::new(params.hash.as_value(cx).get()),
+            key_length as u32,
+            key_data,
+        );
+        let alg = HmacKeyAlgorithm::new_object(cx, Box::new(alg));
+
+        Ok(CryptoKey::new(
+            extractable,
+            Heap::new(alg),
+            KeyType::Secret,
+            usages,
+        ))
+    }
+
     fn import_key(
         &self,
         cx: &Context,
-        params: ion::Object,
+        params: &ion::Object,
         format: KeyFormat,
         key_data: KeyData,
         extractable: bool,
@@ -117,7 +187,7 @@ impl CryptoAlgorithm for Hmac {
             return Err(ion::Error::new("Invalid key usage", ion::ErrorKind::Syntax));
         }
 
-        let params = HmacImportParams::from_value(cx, &params.as_value(cx), false, ())?;
+        let params = HmacImportOrKeyGenParams::from_value(cx, &params.as_value(cx), false, ())?;
         let hash_alg = params.hash.get_algorithm(cx)?;
 
         let key_bytes = match format {
@@ -255,13 +325,13 @@ impl CryptoAlgorithm for Hmac {
         }
     }
 
-    fn get_key_length(&self, cx: &Context, params: ion::Object) -> ion::Result<usize> {
-        let params = HmacImportParams::from_value(cx, &params.as_value(cx), false, ())?;
+    fn get_key_length(&self, cx: &Context, params: &ion::Object) -> ion::Result<usize> {
+        let params = HmacImportOrKeyGenParams::from_value(cx, &params.as_value(cx), false, ())?;
 
         match params.length {
             None => {
                 let alg = params.hash.get_algorithm(cx)?;
-                return alg.get_key_length(cx, params.hash.to_params(cx));
+                return alg.get_key_length(cx, &params.hash.to_params(cx));
             }
             Some(length) => {
                 if length > 0 {
@@ -272,4 +342,42 @@ impl CryptoAlgorithm for Hmac {
 
         ion_err!("Key length is unknown", Type);
     }
+}
+
+fn sign(
+    cx: &Context,
+    alg_id: &AlgorithmIdentifier,
+    key_data: &[u8],
+    data: &[u8],
+) -> Result<Vec<u8>> {
+    let alg_name = alg_id.get_algorithm_name(cx)?;
+
+    match alg_name.to_ascii_lowercase().as_str() {
+        "sha-1" => Ok(sign_generic(
+            hmac::Hmac::<sha1::Sha1>::new_from_slice(key_data)?,
+            data,
+        )),
+        "sha-256" => Ok(sign_generic(
+            hmac::Hmac::<sha2::Sha256>::new_from_slice(key_data)?,
+            data,
+        )),
+        "sha-384" => Ok(sign_generic(
+            hmac::Hmac::<sha2::Sha384>::new_from_slice(key_data)?,
+            data,
+        )),
+        "sha-512" => Ok(sign_generic(
+            hmac::Hmac::<sha2::Sha512>::new_from_slice(key_data)?,
+            data,
+        )),
+
+        _ => ion_err!("Unsupported algorithm for HMAC hash", Type),
+    }
+}
+
+fn sign_generic<OS: ArrayLength<u8> + 'static>(
+    mut mac: impl Mac<OutputSize = OS>,
+    data: &[u8],
+) -> Vec<u8> {
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
 }

@@ -4,6 +4,7 @@ use ion::{
     Context, Error, ErrorKind, Heap, Result, Value,
 };
 use mozjs_sys::jsapi::JSObject;
+use rand_core::CryptoRngCore;
 use strum::{AsRefStr, EnumString};
 
 use crate::{enum_value, ion_err};
@@ -134,4 +135,10 @@ impl KeyAlgorithm {
     pub fn get_name(&self) -> &'static str {
         self.name
     }
+}
+
+pub(crate) fn generate_random_key(length: usize, rng: &mut dyn CryptoRngCore) -> Vec<u8> {
+    let mut key = vec![0u8; length];
+    rng.fill_bytes(key.as_mut());
+    key
 }

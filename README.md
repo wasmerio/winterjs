@@ -92,4 +92,4 @@ The following words are used to describe the status of an API:
 |`performance.now()`|✅ Stable|
 |`performance.timeOrigin`|❌ Pending|
 |`crypto`|✅ Stable|
-|`crypto.subtle`|🔶 Partial|Only MD5 and SHA algorithms are supported
+|`crypto.subtle`|🔶 Partial|Only HMAC, MD5 and SHA algorithms are supported

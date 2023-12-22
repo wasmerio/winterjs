@@ -23,8 +23,8 @@ pub trait CryptoAlgorithm {
     fn encrypt(
         &self,
         cx: &Context,
-        params: Object,
-        key: CryptoKey,
+        params: &Object,
+        key: &CryptoKey,
         data: BufferSource,
     ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
@@ -36,8 +36,8 @@ pub trait CryptoAlgorithm {
     fn decrypt(
         &self,
         cx: &Context,
-        params: Object,
-        key: CryptoKey,
+        params: &Object,
+        key: &CryptoKey,
         data: BufferSource,
     ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
@@ -49,8 +49,8 @@ pub trait CryptoAlgorithm {
     fn sign(
         &self,
         cx: &Context,
-        params: Object,
-        key: CryptoKey,
+        params: &Object,
+        key: &CryptoKey,
         data: BufferSource,
     ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
@@ -62,8 +62,8 @@ pub trait CryptoAlgorithm {
     fn verify(
         &self,
         cx: &Context,
-        params: Object,
-        key: CryptoKey,
+        params: &Object,
+        key: &CryptoKey,
         signature: BufferSource,
         data: BufferSource,
     ) -> ion::Result<bool> {
@@ -73,7 +73,12 @@ pub trait CryptoAlgorithm {
         ))
     }
 
-    fn digest(&self, cx: &Context, params: Object, data: BufferSource) -> ion::Result<ArrayBuffer> {
+    fn digest(
+        &self,
+        cx: &Context,
+        params: &Object,
+        data: BufferSource,
+    ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
@@ -83,7 +88,7 @@ pub trait CryptoAlgorithm {
     fn derive_bits(
         &self,
         cx: &Context,
-        params: Object,
+        params: &Object,
         base_key: CryptoKey,
         length: usize,
     ) -> ion::Result<ArrayBuffer> {
@@ -96,9 +101,9 @@ pub trait CryptoAlgorithm {
     fn wrap_key(
         &self,
         cx: &Context,
-        params: Object,
+        params: &Object,
         format: KeyFormat,
-        key: CryptoKey,
+        key: &CryptoKey,
         wrapping_key: CryptoKey,
     ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
@@ -110,10 +115,10 @@ pub trait CryptoAlgorithm {
     fn unwrap_key(
         &self,
         cx: &Context,
-        params: Object,
+        params: &Object,
         format: KeyFormat,
         wrapped_key: BufferSource,
-        unwrapping_key: CryptoKey,
+        unwrapping_key: &CryptoKey,
         extractable: bool,
         usages: Vec<KeyUsage>,
     ) -> ion::Result<ArrayBuffer> {
@@ -126,10 +131,10 @@ pub trait CryptoAlgorithm {
     fn generate_key(
         &self,
         cx: &Context,
-        params: Object,
+        params: &Object,
         extractable: bool,
         usages: Vec<KeyUsage>,
-    ) -> ion::Result<Object> {
+    ) -> ion::Result<CryptoKey> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
@@ -139,7 +144,7 @@ pub trait CryptoAlgorithm {
     fn import_key(
         &self,
         cx: &Context,
-        params: Object,
+        params: &Object,
         format: KeyFormat,
         key_data: KeyData,
         extractable: bool,
@@ -163,7 +168,7 @@ pub trait CryptoAlgorithm {
         ))
     }
 
-    fn get_key_length(&self, cx: &Context, params: Object) -> ion::Result<usize> {
+    fn get_key_length(&self, cx: &Context, params: &Object) -> ion::Result<usize> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
