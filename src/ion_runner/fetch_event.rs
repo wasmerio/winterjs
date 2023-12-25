@@ -3,8 +3,9 @@ use ion::string::byte::ByteString;
 use ion::Heap;
 use ion::{class::Reflector, ClassDefinition, Context, Promise};
 use mozjs::jsapi::JSObject;
-use runtime::globals::fetch::{FetchBody, HeaderEntry, HeadersInit, Request};
-use runtime::globals::fetch::{FetchBodyInner, RequestInfo, RequestInit};
+use runtime::globals::fetch::{
+    hyper_body_to_stream, FetchBody, HeaderEntry, HeadersInit, Request, RequestInfo, RequestInit,
+};
 
 #[js_class]
 pub struct FetchEvent {
@@ -44,7 +45,8 @@ impl FetchEvent {
             method: Some(req.method.to_string()),
             headers: Some(HeadersInit::Array(header_entries)),
             body: Some(FetchBody {
-                body: FetchBodyInner::HyperBody(body),
+                length: None,
+                body: hyper_body_to_stream(cx, body),
                 kind: None,
                 source: None,
             }),
