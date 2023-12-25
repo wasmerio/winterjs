@@ -1,9 +1,10 @@
+mod cache;
 mod crypto;
 mod event_listener;
 mod fetch_event;
 mod performance;
-
 mod watch;
+
 pub use watch::WatchRunner;
 
 use std::{
@@ -537,6 +538,7 @@ impl StandardModules for Modules {
             && event_listener::define(cx, global)
             && fetch_event::FetchEvent::init_class(cx, global).0
             && crypto::define(cx, global)
+            && cache::define(cx, global)
     }
 
     fn init_globals(self, cx: &Context, global: &mut ion::Object) -> bool {
@@ -549,5 +551,6 @@ impl StandardModules for Modules {
             && event_listener::define(cx, global)
             && fetch_event::FetchEvent::init_class(cx, global).0
             && crypto::define(cx, global)
+            && cache::define(cx, global)
     }
 }
