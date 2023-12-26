@@ -94,7 +94,7 @@ impl Run for Runner {
             Runner::Winter => "winter".to_string(),
             Runner::Wrangler => "wrangler".to_string(),
             Runner::WorkerD => "workerd".to_string(),
-            Runner::CI(_) => todo!(),
+            Runner::CI(_) => "edge integration tests".to_string(),
         }
     }
 
