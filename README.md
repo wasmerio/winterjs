@@ -93,3 +93,11 @@ The following words are used to describe the status of an API:
 |`performance.timeOrigin`|❌ Pending|
 |`crypto`|✅ Stable|
 |`crypto.subtle`|🔶 Partial|Only HMAC, MD5 and SHA algorithms are supported
+
+# Other supported API
+
+The following (non-WinterCG) APIs are implemented and accessible in WinterJS:
+
+|API|Status|Notes|
+|:-:|:-:|:--|
+|[Service Workers Caches API](https://www.w3.org/TR/service-workers/#cache-objects)|✅ Stable|Accessible via `caches`. `caches.default` (similar to [Cloudflare workers](https://developers.cloudflare.com/workers/runtime-apis/cache/#accessing-cache)) is also available.<br/>The current implementation is memory-backed, and cached responses will *not* persist between multiple runs of WinterJS.
