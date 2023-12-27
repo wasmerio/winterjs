@@ -2,14 +2,14 @@ use futures::future::Either;
 use http::{header, Method};
 use ion::{
     class::{NativeObject, Reflector},
-    ClassDefinition, Context, Heap, Object, Promise, ReadableStream, Result, TracedHeap,
+    ClassDefinition, Context, Heap, Object, Promise, Result, TracedHeap,
 };
 use mozjs_sys::{
     jsapi::JSObject,
     jsval::{ObjectValue, UndefinedValue},
 };
 use runtime::{
-    globals::fetch::{FetchBody, Request, RequestInfo, Response},
+    globals::fetch::{FetchBody, FetchBodyInner, Request, RequestInfo, Response},
     promise::future_to_promise,
 };
 
@@ -193,7 +193,7 @@ impl Cache {
         }
 
         let response_body = response_ref.take_body()?;
-        if let Some(ref body) = response_body.body {
+        if let FetchBodyInner::Stream(ref body) = response_body.body {
             if body.is_locked(&cx) || body.is_disturbed(&cx) {
                 ion_err!(
                     "The response body must not be locked or disturbed before caching",
@@ -215,8 +215,7 @@ impl Cache {
         let cached_response = Heap::new(Response::new_object(
             &cx,
             Box::new(response_ref.clone_with_body(Some(FetchBody {
-                length: Some(body_bytes.len()),
-                body: Some(ReadableStream::from_bytes(&cx, body_bytes)),
+                body: FetchBodyInner::Bytes(body_bytes),
                 ..Default::default()
             }))),
         ));

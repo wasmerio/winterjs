@@ -4,7 +4,8 @@ use ion::Heap;
 use ion::{class::Reflector, ClassDefinition, Context, Promise};
 use mozjs::jsapi::JSObject;
 use runtime::globals::fetch::{
-    hyper_body_to_stream, FetchBody, HeaderEntry, HeadersInit, Request, RequestInfo, RequestInit,
+    hyper_body_to_stream, FetchBody, FetchBodyInner, HeaderEntry, HeadersInit, Request,
+    RequestInfo, RequestInit,
 };
 
 #[js_class]
@@ -41,17 +42,19 @@ impl FetchEvent {
             })
             .collect::<Result<_, _>>()?;
 
-        let request_init = RequestInit {
-            method: Some(req.method.to_string()),
-            headers: Some(HeadersInit::Array(header_entries)),
-            body: Some(FetchBody {
-                length: None,
-                body: hyper_body_to_stream(cx, body),
-                kind: None,
-                source: None,
-            }),
-            ..Default::default()
-        };
+        let request_init =
+            RequestInit {
+                method: Some(req.method.to_string()),
+                headers: Some(HeadersInit::Array(header_entries)),
+                body: Some(FetchBody {
+                    body: FetchBodyInner::Stream(hyper_body_to_stream(cx, body).ok_or_else(
+                        || anyhow!("Failed to create ReadableStream for request body"),
+                    )?),
+                    kind: None,
+                    source: None,
+                }),
+                ..Default::default()
+            };
 
         let request = Request::constructor(cx, request_info, Some(request_init))
             .map_err(|e| anyhow!("Failed to construct request: {e:?}"))?;
