@@ -76,3 +76,32 @@ This runner is used the run the `bundle.js` that we compiled above. Then this te
 4. `expected_response_status`: This is the response status we expect from hitting that specific endpoint.
 
 All these `test_cases` are deserialized from this toml file and read into a vector which the `test-suite` tests by making a request reading specific test_case.
+
+##### Runners
+
+There are 4 runners that are currently supported by the test suite:
+
+1. `Winter`
+2. `Wrangler`
+3. `WorkerD`
+4. `CI`
+
+First three are edge based runners and the last one is used to just run the tests against a deployed website on wasmer edge locally or on the cloud.
+
+The `CI` worker expects that you run the javascript bundle with `wasmer/winterjs` package for completing the testing with WASIX.
+
+> Note: For local integration tests, aka. first three workers please install all the three applications natively.
+
+## Usage
+
+### Running the test suite
+
+To run the test suite you can use the `cargo run` command.
+
+```bash
+cargo run
+```
+
+The program will take the runners from the `tests.toml` file and run the tests against them.
+
+For running some tests, `winter-fetch-tests` are required to run on a localhost port `3000` or once they are deployed to wasmer edge and work properly please remove that url in the file `11-fetch.js` line number 19 and uncomment the line above it.

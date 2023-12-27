@@ -1,4 +1,12 @@
-matrix_runners = ["Winter", "Wrangler"]
+[[matrix_runners]]
+type = "Winter"
+
+[[matrix_runners]]
+type = "Wrangler"
+
+# [[matrix_runners]]
+# type = "CI"
+# url = "http://localhost:12321"
 
 [[test_cases]]
 test_name = "1-hello"

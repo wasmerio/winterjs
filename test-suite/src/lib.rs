@@ -1,6 +1,6 @@
 use libtest_mimic::{Arguments, Trial};
-use reqwest::StatusCode;
-use serde::Deserialize;
+use reqwest::{StatusCode, Url};
+use serde::{Deserialize, Deserializer};
 
 // Sample Test Case
 // test_name = "3.7-headers"
@@ -17,8 +17,39 @@ pub struct TestCase {
 }
 
 #[derive(Debug, Clone)]
-pub struct URL(reqwest::Url);
+pub enum Runner {
+    Winter,
+    Wrangler,
+    WorkerD,
+    CI(URL),
+}
 
+impl<'de> Deserialize<'de> for Runner {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let config = RunnerConfig::deserialize(deserializer)?;
+
+        match config.runner_type.as_str() {
+            "Winter" => Ok(Runner::Winter),
+            "Wrangler" => Ok(Runner::Wrangler),
+            "WorkerD" => Ok(Runner::WorkerD),
+            "CI" => Ok(Runner::CI(
+                config
+                    .url
+                    .ok_or_else(|| serde::de::Error::missing_field("url"))?,
+            )),
+            _ => Err(serde::de::Error::unknown_variant(
+                &config.runner_type,
+                &["Winter", "Wrangler", "WorkerD", "CI"],
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct URL(Url);
 impl<'de> Deserialize<'de> for URL {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -30,12 +61,11 @@ impl<'de> Deserialize<'de> for URL {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub enum Runner {
-    Winter,
-    Wrangler,
-    WorkerD,
-    CI(URL),
+#[derive(Debug, Deserialize)]
+struct RunnerConfig {
+    #[serde(rename = "type")]
+    runner_type: String,
+    url: Option<URL>,
 }
 
 pub trait Run {
@@ -66,7 +96,7 @@ impl Runner {
                 "8787",
             ],
             Runner::WorkerD => vec!["--script", "./js-test-app/dist/bundle.js"],
-            Runner::CI(url) => todo!(),
+            Runner::CI(_) => vec![],
         };
         res.iter().map(|s| s.to_string()).collect()
     }
@@ -74,6 +104,10 @@ impl Runner {
 
 impl Run for Runner {
     fn run(&self) -> Result<(), anyhow::Error> {
+        if let Runner::CI(url) = self {
+            println!("Running CI tests against {}", url.0);
+            return Ok(());
+        }
         let mut command = std::process::Command::new(self.command());
         command.args(self.args());
         let output = command.output()?;
@@ -86,7 +120,11 @@ impl Run for Runner {
             Runner::Winter => 8080,
             Runner::Wrangler => 8787,
             Runner::WorkerD => 8789,
-            Runner::CI(url) => url.0.port().unwrap(),
+            Runner::CI(url) => {
+                url.0
+                    .port()
+                    .unwrap_or_else(|| if url.0.scheme() == "https" { 443 } else { 80 })
+            }
         }
     }
     fn name(&self) -> String {
@@ -116,7 +154,7 @@ impl Run for Runner {
 impl Drop for Runner {
     fn drop(&mut self) {
         match self {
-            Runner::CI(_) => todo!(),
+            Runner::CI(_) => (),
             Runner::Wrangler => {
                 // get the pid of the wrangler process
                 let output = std::process::Command::new("pgrep")
@@ -177,16 +215,22 @@ impl TestManager {
                 let runner_domain = runner.domain();
                 let runner_scheme = runner.scheme();
 
+                let url = if runner_domain == "localhost" {
+                    format!(
+                        "{}://{}:{}/{}",
+                        runner_scheme, runner_domain, runner_port, test_route
+                    )
+                } else {
+                    format!("{}://{}/{}", runner_scheme, runner_domain, test_route)
+                };
+
                 let test = Trial::test(test_name, move || {
                     let test_route = test_route.clone();
                     let expected_output = expected_output.clone();
                     let expected_response_status = expected_resp_status;
                     rt.block_on(async move {
                         let client = reqwest::Client::new();
-                        let url = format!(
-                            "{}://{}:{}/{}",
-                            runner_scheme, runner_domain, runner_port, test_route
-                        );
+                        let url = format!("{}/{}", url, test_route);
                         let response = client.get(&url).send().await?;
                         let response_status = response.status();
                         let response_body = response.text().await?;
