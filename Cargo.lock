@@ -964,19 +964,19 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#c3d526b1aad110a73c8ea7b3959122a3ecec2b17"
+source = "git+https://github.com/wasmerio/spiderfire.git#d26fa367f5fd3cb3afc1d9cc6a2c8a3d1ad7d454"
 dependencies = [
  "arrayvec",
  "bitflags 2.4.1",
  "bytemuck",
  "byteorder",
+ "bytes",
  "chrono",
  "colored",
  "derivative",
  "futures",
  "indent",
  "ion-proc",
- "libffi",
  "mozjs",
  "mozjs_sys",
  "sourcemap",
@@ -987,7 +987,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#c3d526b1aad110a73c8ea7b3959122a3ecec2b17"
+source = "git+https://github.com/wasmerio/spiderfire.git#d26fa367f5fd3cb3afc1d9cc6a2c8a3d1ad7d454"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1066,25 +1066,6 @@ name = "libc"
 version = "0.2.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a08173bc88b7955d1b3145aa561539096c421ac8debde8cbc3612ec635fee29b"
-
-[[package]]
-name = "libffi"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce826c243048e3d5cec441799724de52e2d42f820468431fc3fceee2341871e2"
-dependencies = [
- "libc 0.2.149",
- "libffi-sys",
-]
-
-[[package]]
-name = "libffi-sys"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f36115160c57e8529781b4183c2bb51fdc1f6d6d1ed345591d84be7703befb3c"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "libloading"
@@ -1197,7 +1178,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#c3d526b1aad110a73c8ea7b3959122a3ecec2b17"
+source = "git+https://github.com/wasmerio/spiderfire.git#d26fa367f5fd3cb3afc1d9cc6a2c8a3d1ad7d454"
 dependencies = [
  "bytes",
  "futures",
@@ -1214,7 +1195,7 @@ dependencies = [
 [[package]]
 name = "mozjs"
 version = "0.14.1"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#96e00dc30059054fe8466dd74031dadde19070d4"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#6f3e450948e26b63f0f1428bf610c3413825961d"
 dependencies = [
  "bindgen",
  "cc",
@@ -1228,7 +1209,7 @@ dependencies = [
 [[package]]
 name = "mozjs_sys"
 version = "0.68.2"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#96e00dc30059054fe8466dd74031dadde19070d4"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#6f3e450948e26b63f0f1428bf610c3413825961d"
 dependencies = [
  "bindgen",
  "cc",
@@ -1658,7 +1639,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#c3d526b1aad110a73c8ea7b3959122a3ecec2b17"
+source = "git+https://github.com/wasmerio/spiderfire.git#d26fa367f5fd3cb3afc1d9cc6a2c8a3d1ad7d454"
 dependencies = [
  "async-recursion",
  "base64 0.21.5",
@@ -2855,7 +2836,7 @@ checksum = "ca6ad05a4870b2bf5fe995117d3728437bd27d7cd5f06f13c17443ef369775a1"
 
 [[package]]
 name = "wasmer-winter"
-version = "0.1.8"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "async-trait",

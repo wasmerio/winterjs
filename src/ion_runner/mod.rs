@@ -105,7 +105,7 @@ async fn handle_requests_inner(
         // We have to do this convoluted bit of code because drain_filter is not stable
         let mut i = 0;
         while i < requests.len() {
-            if requests[i].0.promise.state() != PromiseState::Pending {
+            if requests[i].0.promise.state(&cx) != PromiseState::Pending {
                 let (pending, resp_tx) = requests.swap_remove(i);
                 // TODO: awaiting here makes other requests wait for this one
                 ignore_error(resp_tx.send(ResponseData(
@@ -151,15 +151,15 @@ async fn handle_requests(
     }
 }
 
-struct PendingResponse<'cx> {
-    promise: ion::Promise<'cx>,
+struct PendingResponse {
+    promise: ion::Promise,
 }
 
 async fn start_request<'cx>(
     cx: &'cx Context,
     req: http::request::Parts,
     body: Option<bytes::Bytes>,
-) -> anyhow::Result<Either<PendingResponse<'cx>, hyper::Response<hyper::Body>>> {
+) -> anyhow::Result<Either<PendingResponse, hyper::Response<hyper::Body>>> {
     let fetch_event = ion::Object::from(cx.root_object(FetchEvent::new_object(
         cx,
         Box::new(FetchEvent::try_new(&cx, req, body)?),
@@ -184,7 +184,7 @@ async fn start_request<'cx>(
             bail!("Script error: FetchEvent.respondWith must be called with a Response object before returning")
         }
         Some(response) => {
-            let response = ion::Object::from(cx.root_object(response.get()));
+            let response = ion::Object::from(response.root(cx));
 
             if Promise::is_promise(&response) {
                 Ok(Either::Left(PendingResponse {
@@ -201,9 +201,9 @@ async fn start_request<'cx>(
 // otherwise an error is returned
 async fn build_response_from_pending<'cx>(
     cx: &'cx Context,
-    response: PendingResponse<'cx>,
+    response: PendingResponse,
 ) -> anyhow::Result<hyper::Response<hyper::Body>> {
-    match response.promise.state() {
+    match response.promise.state(cx) {
         PromiseState::Pending => {
             bail!("Internal error: promise is not fulfilled yet");
         }

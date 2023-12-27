@@ -78,12 +78,15 @@ The following words are used to describe the status of an API:
 |`Headers`|✅ Stable|
 |`Response`|🔶 Partial|`Response.body` returns a Promise that resolves to a `ReadableStream` instead of returning a `ReadableStream` directly.<br/>`Response`s with `ReadableStream` bodies cannot be returned to native code.
 |`Blob`|🔶 Partial|`Blob.stream()` is not implemented yet
-|`File`|❌ Pending|
+|`File`|🔶 Partial|`Blob` must be stabilized before `File` can be considered stable
 |`FormData`|✅ Stable|
 |`TextDecoder`|✅ Stable|
+|`TextDecoderStream`|✅ Stable|
 |`TextEncoder`|✅ Stable|
+|`TextEncoderStream`|🔶 Partial|Surrogate pairs spread across two chunks are not handled correctly
 |`ReadableStream` and supporting types|✅ Stable|
 |`WritableStream` and supporting types|✅ Stable|
+|`TransformStream` and supporting types|🔶 Partial|Back-pressure is not implemented
 |`atob`|✅ Stable|
 |`btoa`|✅ Stable|
 |`performance.now()`|✅ Stable|

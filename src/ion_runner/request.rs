@@ -5,10 +5,9 @@ use ion::{
     conversions::ToValue,
     string::byte::ByteString,
     typedarray::ArrayBuffer,
-    ClassDefinition, Context, Promise, Value,
+    ClassDefinition, Context, Heap, Promise, Value,
 };
 use mozjs::jsapi::JSObject;
-use mozjs_sys::jsgc::Heap;
 use runtime::globals::form_data::FormData;
 
 #[derive(Clone)]
@@ -31,7 +30,7 @@ impl<'cx> ToValue<'cx> for Body {
 #[js_class]
 pub struct ExecuteRequest {
     pub(crate) reflector: Reflector,
-    pub(crate) url: Box<Heap<*mut JSObject>>,
+    pub(crate) url: Heap<*mut JSObject>,
     pub(crate) method: String,
     pub(crate) headers: runtime::globals::fetch::Headers,
     #[ion(no_trace)]
@@ -78,10 +77,7 @@ impl ExecuteRequest {
         match self.body.take() {
             None => Err(ion::Error::new("Body already used", ion::ErrorKind::Normal)),
             Some(body) => {
-                let stream = runtime::globals::readable_stream::new_memory_backed(
-                    cx,
-                    body.0.unwrap_or(vec![].into()),
-                );
+                let stream = ion::ReadableStream::from_bytes(cx, body.0.unwrap_or(vec![].into()));
 
                 Ok((*stream).get())
             }
@@ -94,7 +90,7 @@ impl ExecuteRequest {
     }
 
     #[ion(name = "arrayBuffer")]
-    pub fn array_buffer<'cx>(&'cx mut self, cx: &'cx Context) -> Promise<'cx> {
+    pub fn array_buffer<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
         Promise::new_resolved(
             cx,
             match self.body.take().and_then(|b| b.0) {
@@ -104,11 +100,11 @@ impl ExecuteRequest {
         )
     }
 
-    pub fn text<'cx>(&'cx mut self, cx: &'cx Context) -> Promise<'cx> {
+    pub fn text<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
         Promise::new_resolved(cx, self.text_impl())
     }
 
-    pub fn json<'cx>(&'cx mut self, cx: &'cx Context) -> Promise<'cx> {
+    pub fn json<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
         Promise::new_from_result(cx, 'f: {
             let text = self.text_impl();
             let Some(str) = ion::String::new(cx, text.as_str()) else {
@@ -133,7 +129,7 @@ impl ExecuteRequest {
     }
 
     #[ion(name = "formData")]
-    pub fn form_data<'cx>(&'cx mut self, cx: &'cx Context) -> Promise<'cx> {
+    pub fn form_data<'cx>(&'cx mut self, cx: &'cx Context) -> Promise {
         Promise::new_from_result(cx, 'f: {
             let content_type_string = ByteString::from(CONTENT_TYPE.to_string().into()).unwrap();
             let Some(content_type) = self.headers.get(content_type_string).unwrap() else {

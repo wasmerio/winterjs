@@ -1,12 +1,17 @@
 [package]
 name = "wasmer-winter"
 description = "The JavaScript runtime that brings JavaScript to Wasmer Edge."
-version = "0.1.9"
+version = "0.1.11"
 repository = "https://github.com/wasmerio/wasmer-winter/"
 license = "MIT"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# See https://github.com/Redfire75369/spiderfire/issues/41.
+# Interestingly, this is a work-around for that issue. Also,
+# this doesn't have much of an effect since most of the code
+# is from Spidermonkey which is being compiled separately.
+[profile.release]
+opt-level = 1
 
 [dependencies]
 lazy_static = "1.4.0"

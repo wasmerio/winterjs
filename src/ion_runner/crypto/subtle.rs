@@ -103,12 +103,14 @@ fn digest<'cx>(
     cx: &'cx Context,
     algorithm: AlgorithmIdentifier,
     data: BufferSource,
-) -> Option<ion::Promise<'cx>> {
+) -> Option<ion::Promise> {
     let cx2 = unsafe { Context::new_unchecked(cx.as_ptr()) };
-    future_to_promise(cx, async move {
-        let alg = algorithm.get_algorithm(&cx2)?;
-        alg.digest(algorithm.into_params(&cx2), data)
-    })
+    unsafe {
+        future_to_promise(cx, move |_| async move {
+            let alg = algorithm.get_algorithm(&cx2)?;
+            alg.digest(algorithm.into_params(&cx2), data)
+        })
+    }
 }
 
 const METHODS: &[JSFunctionSpec] = &[function_spec!(digest, 2), JSFunctionSpec::ZERO];
