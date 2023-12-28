@@ -1,0 +1,19 @@
+[package]
+name = "wasmer-tests/winterjs-integration-test"
+version = "0.1.0"
+description = "wasmer-tests/winterjs-integration-test js worker"
+
+[dependencies]
+"wasmer/winter" = "*"
+
+[fs]
+"." = "."
+
+[[command]]
+name = "script"
+module = "wasmer/winter:wasmer-winter"
+runner = "https://webc.org/runner/wasi"
+
+[command.annotations.wasi]
+env = ["JS_PATH=/bundle.js"]
+main-args = ["/bundle.js"]
