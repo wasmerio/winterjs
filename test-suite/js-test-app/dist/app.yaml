@@ -1,0 +1,6 @@
+---
+kind: wasmer.io/App.v0
+name: wasmer-tests-winterjs-integration-test-worker
+package: wasmer-tests/winterjs-integration-test
+cli_args:
+  - /bundle.js

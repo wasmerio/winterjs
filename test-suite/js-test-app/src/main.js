@@ -10,6 +10,8 @@ import {
   handleAtobBtoA9,
   handleFetch,
   handleStreams,
+  handleTransformStream,
+  handleReadableStream,
 } from "./test-files/index.js";
 
 function router(req) {
@@ -48,6 +50,12 @@ function router(req) {
   }
   if (path.startsWith("/12-streams")) {
     return handleStreams(req);
+  }
+  if (path.startsWith("/13-transform-stream")) {
+    return handleTransformStream(req);
+  }
+  if (path.startsWith("/14-more-streams")) {
+    return handleReadableStream(req);
   }
   return new Response(`Route Not Found - ${path}`, { status: 404 });
 }
