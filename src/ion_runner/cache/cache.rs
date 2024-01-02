@@ -234,7 +234,7 @@ impl Cache {
         options: Option<CacheQueryOptions>,
     ) -> Result<()> {
         let options = options.unwrap_or_default();
-        for i in (self.entries.len()..0).rev() {
+        for i in (0..self.entries.len()).rev() {
             if Self::is_match(
                 cx,
                 Some(key),
