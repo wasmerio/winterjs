@@ -2,7 +2,7 @@ pub(super) mod algorithm;
 pub(super) mod crypto_key;
 pub(super) mod jwk;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, marker::PhantomData};
 
 use ion::{
     class::NativeObject, conversions::ToValue, function_spec, ClassDefinition, Context, Object,
@@ -26,44 +26,87 @@ use self::{
 };
 
 #[derive(FromValue)]
-pub enum BufferSource {
+pub enum BufferSource<'cx> {
     #[ion(inherit)]
-    ArrayBuffer(mozjs::typedarray::ArrayBuffer),
+    ArrayBuffer(mozjs::typedarray::ArrayBuffer, PhantomData<&'cx ()>),
     #[ion(inherit)]
-    ArrayBufferView(mozjs::typedarray::ArrayBufferView),
+    ArrayBufferView(mozjs::typedarray::ArrayBufferView, PhantomData<&'cx ()>),
 }
 
-impl BufferSource {
-    pub fn as_slice(&self) -> &[u8] {
+impl<'cx> BufferSource<'cx> {
+    fn into_heap(self) -> HeapBufferSource {
         match self {
-            Self::ArrayBuffer(a) => unsafe { a.as_slice() },
-            Self::ArrayBufferView(a) => unsafe { a.as_slice() },
+            Self::ArrayBuffer(b, _) => {
+                HeapBufferSource::ArrayBuffer(TracedHeap::new(unsafe { *b.underlying_object() }))
+            }
+            Self::ArrayBufferView(b, _) => {
+                HeapBufferSource::ArrayBufferView(TracedHeap::new(unsafe {
+                    *b.underlying_object()
+                }))
+            }
+        }
+    }
+}
+
+pub enum HeapBufferSource {
+    ArrayBuffer(TracedHeap<*mut JSObject>),
+    ArrayBufferView(TracedHeap<*mut JSObject>),
+}
+
+impl HeapBufferSource {
+    unsafe fn as_slice(&self) -> &[u8] {
+        unsafe {
+            match self {
+                Self::ArrayBuffer(b) => {
+                    &*(mozjs::typedarray::ArrayBuffer::from(b.get())
+                        .expect("HeapBufferSource was not constructed correctly")
+                        .as_slice() as *const _)
+                }
+                Self::ArrayBufferView(b) => {
+                    &*(mozjs::typedarray::ArrayBufferView::from(b.get())
+                        .expect("HeapBufferSource was not constructed correctly")
+                        .as_slice() as *const _)
+                }
+            }
         }
     }
 }
 
 #[derive(FromValue)]
-pub enum KeyData {
+pub enum KeyData<'cx> {
     #[ion(inherit)]
-    BufferSource(BufferSource),
+    BufferSource(BufferSource<'cx>),
     #[ion(inherit)]
     Jwk(JsonWebKey),
 }
 
+impl<'cx> KeyData<'cx> {
+    fn into_heap(self) -> HeapKeyData {
+        match self {
+            Self::BufferSource(b) => HeapKeyData::BufferSource(b.into_heap()),
+            Self::Jwk(jwk) => HeapKeyData::Jwk(jwk),
+        }
+    }
+}
+
+pub enum HeapKeyData {
+    BufferSource(HeapBufferSource),
+    Jwk(JsonWebKey),
+}
+
 #[derive(FromValue)]
-pub enum AlgorithmIdentifier {
+pub enum AlgorithmIdentifier<'cx> {
     #[ion(inherit)]
-    Object(*mut JSObject),
+    Object(Object<'cx>),
     #[ion(inherit)]
     String(String),
 }
 
-impl AlgorithmIdentifier {
+impl<'cx> AlgorithmIdentifier<'cx> {
     fn get_algorithm_name(&self, cx: &Context) -> ion::Result<Cow<str>> {
         match self {
             Self::String(str) => Ok(Cow::Borrowed(str.as_str())),
             Self::Object(obj) => {
-                let obj = Object::from(cx.root_object(*obj));
                 if let Some(name) = obj.get(cx, "name") {
                     if name.get().is_string() {
                         Ok(Cow::Owned(
@@ -97,15 +140,15 @@ impl AlgorithmIdentifier {
         }
     }
 
-    fn to_params<'cx>(&self, cx: &'cx Context) -> Object<'cx> {
+    fn to_params(&self, cx: &'cx Context) -> Object<'cx> {
         match self {
             Self::String(_) => Object::new(cx),
-            Self::Object(o) => cx.root_object(*o).into(),
+            Self::Object(o) => cx.root_object((**o).get()).into(),
         }
     }
 }
 
-impl<'cx> ToValue<'cx> for AlgorithmIdentifier {
+impl<'cx> ToValue<'cx> for AlgorithmIdentifier<'cx> {
     fn to_value(&self, cx: &'cx Context, value: &mut ion::Value) {
         match self {
             Self::Object(o) => o.to_value(cx, value),
@@ -115,17 +158,21 @@ impl<'cx> ToValue<'cx> for AlgorithmIdentifier {
 }
 
 #[js_fn]
-fn sign(
-    cx: &Context,
-    algorithm: AlgorithmIdentifier,
+fn sign<'cx>(
+    cx: &'cx Context,
+    algorithm: AlgorithmIdentifier<'cx>,
     key: &CryptoKey,
     data: BufferSource,
 ) -> Option<Promise> {
     unsafe {
         let key = TracedHeap::new(key.reflector().get());
+        let alg = algorithm.get_algorithm(&cx);
+        let params = TracedHeap::from_local(&algorithm.to_params(cx));
+        let data = data.into_heap();
+
         future_to_promise(cx, move |cx| async move {
             let key = CryptoKey::get_private(&key.root(&cx).into());
-            let alg = algorithm.get_algorithm(&cx)?;
+            let alg = alg?;
 
             let key_alg = KeyAlgorithm::get_private(&key.algorithm.root(&cx).into());
             if alg.name().to_ascii_lowercase() != key_alg.name.to_ascii_lowercase() {
@@ -139,24 +186,29 @@ fn sign(
                 ion_err!("Key does not support the 'sign' operation", Normal);
             }
 
-            alg.sign(&cx, &algorithm.to_params(&cx), key, data)
+            alg.sign(&cx, &params.root(&cx).into(), key, data)
         })
     }
 }
 
 #[js_fn]
-fn verify(
-    cx: &Context,
-    algorithm: AlgorithmIdentifier,
+fn verify<'cx>(
+    cx: &'cx Context,
+    algorithm: AlgorithmIdentifier<'cx>,
     key: &CryptoKey,
     signature: BufferSource,
     data: BufferSource,
 ) -> Option<Promise> {
     unsafe {
         let key = TracedHeap::new(key.reflector().get());
+        let alg = algorithm.get_algorithm(&cx);
+        let params = TracedHeap::from_local(&algorithm.to_params(cx));
+        let data = data.into_heap();
+        let signature = signature.into_heap();
+
         future_to_promise(cx, move |cx| async move {
             let key = CryptoKey::get_private(&key.root(&cx).into());
-            let alg = algorithm.get_algorithm(&cx)?;
+            let alg = alg?;
 
             let key_alg = KeyAlgorithm::get_private(&key.algorithm.root(&cx).into());
             if alg.name().to_ascii_lowercase() != key_alg.name.to_ascii_lowercase() {
@@ -170,31 +222,38 @@ fn verify(
                 ion_err!("Key does not support the 'verify' operation", Normal);
             }
 
-            alg.verify(&cx, &algorithm.to_params(&cx), key, signature, data)
+            alg.verify(&cx, &params.root(&cx).into(), key, signature, data)
         })
     }
 }
 
 #[js_fn]
-fn digest(cx: &Context, algorithm: AlgorithmIdentifier, data: BufferSource) -> Promise {
+fn digest<'cx>(
+    cx: &'cx Context,
+    algorithm: AlgorithmIdentifier<'cx>,
+    data: BufferSource,
+) -> Promise {
     Promise::new_from_result(cx, {
         algorithm
             .get_algorithm(cx)
-            .and_then(|alg| alg.digest(cx, &algorithm.to_params(cx), data))
+            .and_then(|alg| alg.digest(cx, &algorithm.to_params(cx), data.into_heap()))
     })
 }
 
 #[js_fn]
-fn generate_key(
-    cx: &Context,
-    algorithm: AlgorithmIdentifier,
+fn generate_key<'cx>(
+    cx: &'cx Context,
+    algorithm: AlgorithmIdentifier<'cx>,
     extractable: bool,
     key_usages: Vec<KeyUsage>,
 ) -> Option<Promise> {
     unsafe {
+        let alg = algorithm.get_algorithm(&cx);
+        let params = TracedHeap::from_local(&algorithm.to_params(cx));
+
         future_to_promise(cx, move |cx| async move {
-            let alg = algorithm.get_algorithm(&cx)?;
-            let key = alg.generate_key(&cx, &algorithm.to_params(&cx), extractable, key_usages)?;
+            let alg = alg?;
+            let key = alg.generate_key(&cx, &params.root(&cx).into(), extractable, key_usages)?;
 
             if matches!(key.key_type, KeyType::Secret | KeyType::Private) && key.usages.is_empty() {
                 ion_err!(
@@ -211,21 +270,25 @@ fn generate_key(
 }
 
 #[js_fn]
-fn import_key(
-    cx: &Context,
+fn import_key<'cx>(
+    cx: &'cx Context,
     key_format: KeyFormat,
     key_data: KeyData,
-    algorithm: AlgorithmIdentifier,
+    algorithm: AlgorithmIdentifier<'cx>,
     extractable: bool,
     key_usages: Vec<KeyUsage>,
 ) -> Option<Promise> {
     unsafe {
+        let alg = algorithm.get_algorithm(&cx);
+        let params = TracedHeap::from_local(&algorithm.to_params(cx));
+        let key_data = key_data.into_heap();
+
         future_to_promise(cx, move |cx| async move {
             match (&key_format, &key_data) {
-                (KeyFormat::Jwk, KeyData::Jwk(_))
-                | (KeyFormat::Pkcs8, KeyData::BufferSource(_))
-                | (KeyFormat::Raw, KeyData::BufferSource(_))
-                | (KeyFormat::Spki, KeyData::BufferSource(_)) => (),
+                (KeyFormat::Jwk, HeapKeyData::Jwk(_))
+                | (KeyFormat::Pkcs8, HeapKeyData::BufferSource(_))
+                | (KeyFormat::Raw, HeapKeyData::BufferSource(_))
+                | (KeyFormat::Spki, HeapKeyData::BufferSource(_)) => (),
                 (KeyFormat::Jwk, _) => {
                     return Err(ion::Error::new(
                         "When keyFormat is 'jwk', keyData must be a JsonWebKey",
@@ -242,10 +305,10 @@ fn import_key(
 
             let no_usages = key_usages.is_empty();
 
-            let alg = algorithm.get_algorithm(&cx)?;
+            let alg = alg?;
             let key = alg.import_key(
                 &cx,
-                &algorithm.to_params(&cx),
+                &params.root(&cx).into(),
                 key_format,
                 key_data,
                 extractable,
@@ -259,7 +322,7 @@ fn import_key(
                 ));
             }
 
-            Ok(CryptoKey::new_object(&cx, Box::new(key)))
+            ion::Result::Ok(CryptoKey::new_object(&cx, Box::new(key)))
         })
     }
 }

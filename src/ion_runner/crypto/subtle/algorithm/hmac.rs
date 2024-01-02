@@ -14,7 +14,7 @@ use crate::{
     ion_runner::crypto::subtle::{
         crypto_key::{generate_random_key, CryptoKey, KeyAlgorithm, KeyFormat, KeyType, KeyUsage},
         jwk::JsonWebKey,
-        AlgorithmIdentifier, KeyData,
+        AlgorithmIdentifier, HeapKeyData,
     },
 };
 
@@ -36,8 +36,8 @@ macro_rules! validate_jwk_alg {
 // The standard has two separate dictionaries, but they're the
 // exact same, so we use one.
 #[derive(FromValue)]
-pub struct HmacImportOrKeyGenParams {
-    hash: AlgorithmIdentifier,
+pub struct HmacImportOrKeyGenParams<'cx> {
+    hash: AlgorithmIdentifier<'cx>,
     #[ion(convert = ConversionBehavior::EnforceRange, strict)]
     length: Option<u32>,
 }
@@ -102,7 +102,7 @@ impl CryptoAlgorithm for Hmac {
         cx: &Context,
         _params: &ion::Object,
         key: &CryptoKey,
-        data: crate::ion_runner::crypto::subtle::BufferSource,
+        data: crate::ion_runner::crypto::subtle::HeapBufferSource,
     ) -> ion::Result<ArrayBuffer> {
         let key_alg = key.algorithm.root(cx).into();
         if !HmacKeyAlgorithm::instance_of(cx, &key_alg, None) {
@@ -113,7 +113,7 @@ impl CryptoAlgorithm for Hmac {
         let hash_alg =
             AlgorithmIdentifier::from_value(cx, &key_alg.hash.root(cx).into(), false, ())?;
 
-        let vec = sign(cx, &hash_alg, &key_alg.key_data, data.as_slice())?;
+        let vec = sign(cx, &hash_alg, &key_alg.key_data, unsafe { data.as_slice() })?;
         Ok(ArrayBuffer::from(&vec[..]))
     }
 
@@ -122,12 +122,12 @@ impl CryptoAlgorithm for Hmac {
         cx: &Context,
         params: &ion::Object,
         key: &CryptoKey,
-        signature: crate::ion_runner::crypto::subtle::BufferSource,
-        data: crate::ion_runner::crypto::subtle::BufferSource,
+        signature: crate::ion_runner::crypto::subtle::HeapBufferSource,
+        data: crate::ion_runner::crypto::subtle::HeapBufferSource,
     ) -> ion::Result<bool> {
         let calculated = self.sign(cx, params, key, data)?;
         let calc_buf = (*calculated).as_ref();
-        let sign_but = signature.as_slice();
+        let sign_but = unsafe { signature.as_slice() };
         Ok(calc_buf == sign_but)
     }
 
@@ -176,7 +176,7 @@ impl CryptoAlgorithm for Hmac {
         cx: &Context,
         params: &ion::Object,
         format: KeyFormat,
-        key_data: KeyData,
+        key_data: HeapKeyData,
         extractable: bool,
         usages: Vec<KeyUsage>,
     ) -> ion::Result<CryptoKey> {
@@ -192,13 +192,13 @@ impl CryptoAlgorithm for Hmac {
 
         let key_bytes = match format {
             KeyFormat::Raw => {
-                let KeyData::BufferSource(buffer) = &key_data else {
+                let HeapKeyData::BufferSource(buffer) = &key_data else {
                     panic!("Invalid key format/key data combination, should be validated before passing in");
                 };
-                Cow::Borrowed(buffer.as_slice())
+                Cow::Borrowed(unsafe { buffer.as_slice() })
             }
             KeyFormat::Jwk => {
-                let KeyData::Jwk(jwk) = key_data else {
+                let HeapKeyData::Jwk(jwk) = key_data else {
                     panic!("Invalid key format/key data combination, should be validated before passing in");
                 };
                 if jwk.kty != "oct" {

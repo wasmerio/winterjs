@@ -6,7 +6,7 @@ use ion::{typedarray::ArrayBuffer, Context, Object, Value};
 
 use super::{
     crypto_key::{CryptoKey, KeyFormat, KeyUsage},
-    BufferSource, KeyData,
+    HeapBufferSource, HeapKeyData,
 };
 
 #[allow(unused_variables)]
@@ -25,7 +25,7 @@ pub trait CryptoAlgorithm {
         cx: &Context,
         params: &Object,
         key: &CryptoKey,
-        data: BufferSource,
+        data: HeapBufferSource,
     ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -38,7 +38,7 @@ pub trait CryptoAlgorithm {
         cx: &Context,
         params: &Object,
         key: &CryptoKey,
-        data: BufferSource,
+        data: HeapBufferSource,
     ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -51,7 +51,7 @@ pub trait CryptoAlgorithm {
         cx: &Context,
         params: &Object,
         key: &CryptoKey,
-        data: BufferSource,
+        data: HeapBufferSource,
     ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -64,8 +64,8 @@ pub trait CryptoAlgorithm {
         cx: &Context,
         params: &Object,
         key: &CryptoKey,
-        signature: BufferSource,
-        data: BufferSource,
+        signature: HeapBufferSource,
+        data: HeapBufferSource,
     ) -> ion::Result<bool> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -77,7 +77,7 @@ pub trait CryptoAlgorithm {
         &self,
         cx: &Context,
         params: &Object,
-        data: BufferSource,
+        data: HeapBufferSource,
     ) -> ion::Result<ArrayBuffer> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -117,7 +117,7 @@ pub trait CryptoAlgorithm {
         cx: &Context,
         params: &Object,
         format: KeyFormat,
-        wrapped_key: BufferSource,
+        wrapped_key: HeapBufferSource,
         unwrapping_key: &CryptoKey,
         extractable: bool,
         usages: Vec<KeyUsage>,
@@ -146,7 +146,7 @@ pub trait CryptoAlgorithm {
         cx: &Context,
         params: &Object,
         format: KeyFormat,
-        key_data: KeyData,
+        key_data: HeapKeyData,
         extractable: bool,
         usages: Vec<KeyUsage>,
     ) -> ion::Result<CryptoKey> {

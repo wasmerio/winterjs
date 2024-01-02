@@ -13,9 +13,9 @@ impl CryptoAlgorithm for Md5 {
         &self,
         _cx: &Context,
         _params: &ion::Object,
-        data: super::BufferSource,
+        data: super::HeapBufferSource,
     ) -> ion::Result<ArrayBuffer> {
-        let data = md5::compute(data.as_slice()).0;
+        let data = md5::compute(unsafe { data.as_slice() }).0;
         Ok(ArrayBuffer::from(&data[..]))
     }
 }

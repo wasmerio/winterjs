@@ -33,26 +33,26 @@ impl CryptoAlgorithm for Sha {
         &self,
         _cx: &Context,
         _params: &ion::Object,
-        data: super::BufferSource,
+        data: super::HeapBufferSource,
     ) -> ion::Result<ArrayBuffer> {
         match self {
             Self::Sha1 => {
-                let data = sha1::Sha1::digest(data.as_slice());
+                let data = sha1::Sha1::digest(unsafe { data.as_slice() });
                 Ok(ArrayBuffer::from(&*data))
             }
 
             Self::Sha256 => {
-                let data = sha2::Sha256::digest(data.as_slice());
+                let data = sha2::Sha256::digest(unsafe { data.as_slice() });
                 Ok(ArrayBuffer::from(&*data))
             }
 
             Self::Sha384 => {
-                let data = sha2::Sha384::digest(data.as_slice());
+                let data = sha2::Sha384::digest(unsafe { data.as_slice() });
                 Ok(ArrayBuffer::from(&*data))
             }
 
             Self::Sha512 => {
-                let data = sha2::Sha512::digest(data.as_slice());
+                let data = sha2::Sha512::digest(unsafe { data.as_slice() });
                 Ok(ArrayBuffer::from(&*data))
             }
         }
