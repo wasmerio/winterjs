@@ -1,8 +1,8 @@
 [package]
-name = "wasmer-winter"
+name = "winterjs"
 description = "The JavaScript runtime that brings JavaScript to Wasmer Edge."
 version = "0.1.11"
-repository = "https://github.com/wasmerio/wasmer-winter/"
+repository = "https://github.com/wasmerio/winterjs/"
 license = "MIT"
 edition = "2021"
 

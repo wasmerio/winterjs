@@ -47,7 +47,7 @@ async fn run() -> Result<(), anyhow::Error> {
     // Initialize logging.
     if std::env::var("RUST_LOG").is_err() {
         // Set default log level.
-        std::env::set_var("RUST_LOG", "wasmer_winter=info,warn");
+        std::env::set_var("RUST_LOG", "winterjs=info,warn");
     }
     tracing_subscriber::fmt::init();
 
