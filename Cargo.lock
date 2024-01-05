@@ -942,7 +942,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#60a20609e6b490137815d1bcc644afbc0feef5db"
+source = "git+https://github.com/wasmerio/spiderfire.git#ccc865e240e93e07855a6cdab6487abfdc0a507f"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -966,7 +966,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#60a20609e6b490137815d1bcc644afbc0feef5db"
+source = "git+https://github.com/wasmerio/spiderfire.git#ccc865e240e93e07855a6cdab6487abfdc0a507f"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1157,7 +1157,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#60a20609e6b490137815d1bcc644afbc0feef5db"
+source = "git+https://github.com/wasmerio/spiderfire.git#ccc865e240e93e07855a6cdab6487abfdc0a507f"
 dependencies = [
  "bytes",
  "futures",
@@ -1588,7 +1588,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#60a20609e6b490137815d1bcc644afbc0feef5db"
+source = "git+https://github.com/wasmerio/spiderfire.git#ccc865e240e93e07855a6cdab6487abfdc0a507f"
 dependencies = [
  "as-any",
  "async-recursion",
@@ -2772,49 +2772,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca6ad05a4870b2bf5fe995117d3728437bd27d7cd5f06f13c17443ef369775a1"
 
 [[package]]
-name = "wasmer-winter"
-version = "0.1.11"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "bytes",
- "clap",
- "form_urlencoded",
- "futures",
- "h2",
- "hmac",
- "http",
- "hyper",
- "hyper-rustls",
- "ion",
- "ion-proc",
- "lazy_static",
- "libc 0.2.139",
- "md5",
- "modules",
- "mozjs",
- "mozjs_sys",
- "once_cell",
- "parking_lot 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "rand",
- "rand_core",
- "runtime",
- "rustls",
- "serde",
- "serde_derive",
- "serde_json",
- "sha1",
- "sha2",
- "strum",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "webpki-roots"
 version = "0.24.0"
 source = "git+https://github.com/wasix-org/webpki-roots.git?branch=v0.24.0#a9ef804104f0ce70b80a04052940a6fa3fdae740"
@@ -2982,3 +2939,46 @@ name = "windows_x86_64_msvc"
 version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed94fce61571a4006852b7389a063ab983c02eb1bb37b47f8272ce92d06d9538"
+
+[[package]]
+name = "winterjs"
+version = "0.1.12"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "bytes",
+ "clap",
+ "form_urlencoded",
+ "futures",
+ "h2",
+ "hmac",
+ "http",
+ "hyper",
+ "hyper-rustls",
+ "ion",
+ "ion-proc",
+ "lazy_static",
+ "libc 0.2.139",
+ "md5",
+ "modules",
+ "mozjs",
+ "mozjs_sys",
+ "once_cell",
+ "parking_lot 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand",
+ "rand_core",
+ "runtime",
+ "rustls",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "strum",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
