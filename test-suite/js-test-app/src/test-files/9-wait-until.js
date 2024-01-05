@@ -13,10 +13,12 @@ async function handleRequest(request) {
 addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
-      const responsePromise = handleRequest(event.request);
-      console.log(responsePromise instanceof Response);
-      await event.waitUntil(responsePromise);
-      return responsePromise;
+      // by definition, waitUntil is used to perform work *after* the handler
+      // has returned, so we can't verify it's working since any verification
+      // we do would be within the handler itself. We just check that it doesn't
+      // throw an error here.
+      event.waitUntil(handleRequest(event.request));
+      return handleRequest(event.request);
     })()
   );
 });

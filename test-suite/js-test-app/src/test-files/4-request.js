@@ -1,7 +1,8 @@
 async function handleRequest(request) {
   // Clone the request to ensure it's a new, mutable Request object
+  let newRequest;
   try {
-    let newRequest = new Request(request);
+    newRequest = new Request(request);
   } catch (error) {
     let message = "Error while cloning the request\n";
     message += error.message;
@@ -30,11 +31,11 @@ async function handleRequest(request) {
     return new Response(message, { status: 500 });
   }
 
+  let responseDetails;
   try {
     // Construct a response containing details from the Request object
-    const responseDetails = {
+    responseDetails = {
       method: newRequest.method,
-      url: newRequest.url,
       headers: [...newRequest.headers].reduce((obj, [key, value]) => {
         obj[key] = value;
         return obj;
@@ -59,7 +60,7 @@ async function handleRequest(request) {
   }
 
   // Return a JSON response with the Request details
-  return new Response(JSON.stringify(responseDetails, null, 2), {
+  return new Response(JSON.stringify(responseDetails), {
     headers: { "Content-Type": "application/json" },
   });
 }

@@ -21,23 +21,20 @@ async function handleRequest(request) {
   try {
     // Test the TextDecoder constructor
     try {
-      const decoder = new TextDecoder("invalid-encoding");
-      console.error(
-        "Failed: The constructor should throw a RangeError for an invalid encoding."
+      const _ = new TextDecoder("invalid-encoding");
+      return new Response(
+        "Failed: The constructor should throw a RangeError for an invalid encoding.",
+        { status: 500 }
       );
     } catch (e) {
-      if (e instanceof RangeError) {
-        console.log(
-          "Passed: Constructor throws RangeError for invalid encoding as expected."
-        );
-      } else {
+      if (!(e instanceof RangeError)) {
         throw new Error("Failed: The error thrown is not a RangeError.");
       }
     }
 
     try {
       const encoding = "utf-8";
-      let decoder = new TextDecoder(encoding);
+      let _ = new TextDecoder(encoding);
     } catch (error) {
       throw new Error(
         "Failed: The constructor should not throw an error for a valid encoding."
@@ -78,15 +75,12 @@ async function handleRequest(request) {
     try {
       const decoder = new TextDecoder("utf-8", { fatal: true });
       decoder.decode(invalidData);
-      console.error(
-        "Failed: Decoding should throw a TypeError in fatal error mode."
+      return new Response(
+        "Failed: Decoding should throw a TypeError in fatal error mode.",
+        { status: 500 }
       );
     } catch (e) {
-      if (e instanceof TypeError) {
-        console.log(
-          "Passed: TypeError thrown in fatal error mode as expected."
-        );
-      } else {
+      if (!(e instanceof TypeError)) {
         throw new Error("Failed: The error thrown is not a TypeError.");
       }
     }

@@ -15,8 +15,7 @@ async function handleRequest(request) {
     // Test fetch with following methods
     // GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH, TRACE
 
-    // const url = "https://winter-fetch-tests.wasmer.app";
-    const url = "http://localhost:3000";
+    const url = "https://winter-fetch-tests.wasmer.app";
 
     // Test GET
     try {
@@ -187,21 +186,19 @@ async function handleRequest(request) {
       const response = await fetch(url + "?name=Winter", {
         method: REQUEST_METHOD,
       });
-
-      assertEquals(
-        response.status,
-        200,
-        `Status code mismatch for ${REQUEST_METHOD}, expected 200 but got ${response.status}`
-      );
-
-      const text = await response.text();
-      assertEquals(
-        text,
-        "name=Winter",
-        `Unexpected response body for ${REQUEST_METHOD} request. Expected 'name=Winter' but got ${text}`
-      );
+      return new Response('TRACE request succeeded when it should have failed', { status: 500 });
     } catch (error) {
-      assert(false, `TRACE request failed: ${error}`);
+    }
+
+    // Test CONNECT
+    try {
+      const REQUEST_METHOD = "CONNECT";
+      // create request with some query params
+      const response = await fetch(url + "?name=Winter", {
+        method: REQUEST_METHOD,
+      });
+      return new Response('CONNECT request succeeded when it should have failed', { status: 500 });
+    } catch (error) {
     }
 
     // Test OPTIONS
@@ -227,10 +224,11 @@ async function handleRequest(request) {
       //   check the allow header
       assertEquals(
         response.headers.get("allow"),
-        "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE",
-        `Allow header is incorrect for ${REQUEST_METHOD} request. Expected 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE' but got ${response.headers.get(
+        // TODO: fix the deployed app to not return two spaces before TRACE, and fix here
+        "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS,  TRACE",
+        `Allow header is incorrect for ${REQUEST_METHOD} request. Expected 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS,  TRACE' but got "${response.headers.get(
           "allow"
-        )}`
+        )}"`
       );
     } catch (error) {
       assert(false, `OPTIONS request failed: ${error}`);
