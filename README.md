@@ -76,9 +76,9 @@ The following words are used to describe the status of an API:
 |`URLSearchParams`|✅ Stable|
 |`Request`|🔶 Partial|`Request.formData` does not support deserialization of `multipart/form-data` bodies
 |`Headers`|✅ Stable|
-|`Response`|🔶 Partial|`Response.error()` is not implemented
-|`Blob`|🔶 Partial|`Blob.stream()` is not implemented yet
-|`File`|🔶 Partial|`Blob` must be stabilized before `File` can be considered stable
+|`Response`|✅ Stable|
+|`Blob`|✅ Stable|
+|`File`|✅ Stable|
 |`FormData`|✅ Stable|
 |`TextDecoder`|✅ Stable|
 |`TextDecoderStream`|✅ Stable|
