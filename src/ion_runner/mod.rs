@@ -86,6 +86,8 @@ async fn handle_requests_inner(
 
     // Wait for any promises resulting from running the script to be resolved, giving
     // scripts a chance to initialize before accepting requests
+    // Note we will return the error here if one happens, since an error happening
+    // in this stage means the script didn't initialize successfully.
     rt.run_event_loop()
         .await
         .map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
@@ -105,7 +107,7 @@ async fn handle_requests_inner(
                 match msg {
                     None | Some(ControlMessage::Shutdown) => break,
                     Some(ControlMessage::HandleRequest(req, resp_tx)) => {
-                        match start_request(&cx, req.req, req.body) {
+                        match start_request(cx.duplicate(), req.req, req.body) {
                             Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
                             Ok(Either::Left(pending)) => requests.push((pending, resp_tx)),
                             Ok(Either::Right(resp)) => {
@@ -121,7 +123,10 @@ async fn handle_requests_inner(
 
             // Nothing to do here except check the error, the promises are checked further down
             e = rt.run_event_loop() => {
-                e.map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
+                // Note: an error in this stage is an unhandled error happening in the request
+                // logic, and such an error should not terminate the whole request processing
+                // thread.
+                handle_event_loop_result(&cx.duplicate(), e)
             }
 
             // Nothing to do
@@ -134,9 +139,9 @@ async fn handle_requests_inner(
         // We have to do this convoluted bit of code because drain_filter is not stable
         let mut i = 0;
         while i < requests.len() {
-            if requests[i].0.promise.state(&cx) != PromiseState::Pending {
+            if requests[i].0.promise.state(&cx.duplicate()) != PromiseState::Pending {
                 let (pending, resp_tx) = requests.swap_remove(i);
-                let response = build_response_from_pending(&cx, pending);
+                let response = build_response_from_pending(cx.duplicate(), pending);
                 match response {
                     Ok(response) => {
                         if let Some(fut) = response.1 {
@@ -152,12 +157,10 @@ async fn handle_requests_inner(
         }
     }
 
-    rt.run_event_loop()
-        .await
-        .map_err(|e| error_report_option_to_anyhow_error(&cx, e))?;
+    handle_event_loop_result(&cx.duplicate(), rt.run_event_loop().await);
 
     for (pending, resp_tx) in requests {
-        let response = build_response_from_pending(&cx, pending);
+        let response = build_response_from_pending(cx.duplicate(), pending);
         match response {
             Ok(response) => {
                 if let Some(fut) = response.1 {
@@ -199,6 +202,15 @@ async fn handle_requests(
     }
 }
 
+fn handle_event_loop_result(cx: &Context, r: Result<(), Option<ErrorReport>>) {
+    if let Err(e) = r {
+        println!(
+            "Unhandled error from event loop: {}",
+            error_report_option_to_anyhow_error(cx, e)
+        )
+    }
+}
+
 struct ReadyResponse(
     hyper::Response<hyper::Body>,
     Option<Pin<Box<dyn Future<Output = ()>>>>,
@@ -208,18 +220,18 @@ struct PendingResponse {
     promise: ion::Promise,
 }
 
-fn start_request<'cx>(
-    cx: &'cx Context,
+fn start_request(
+    cx: Context,
     req: http::request::Parts,
     body: hyper::Body,
 ) -> anyhow::Result<Either<PendingResponse, ReadyResponse>> {
     let fetch_event = ion::Object::from(cx.root_object(FetchEvent::new_object(
-        cx,
+        &cx,
         Box::new(FetchEvent::try_new(&cx, req, body)?),
     )));
 
     let callback_rval =
-        event_listener::invoke_fetch_event_callback(&cx, &[fetch_event.as_value(cx)]).map_err(
+        event_listener::invoke_fetch_event_callback(&cx, &[fetch_event.as_value(&cx)]).map_err(
             |e| {
                 e.map(|e| error_report_to_anyhow_error(&cx, e))
                     .unwrap_or(anyhow::anyhow!("Script execution failed"))
@@ -237,14 +249,14 @@ fn start_request<'cx>(
             bail!("Script error: FetchEvent.respondWith must be called with a Response object before returning")
         }
         Some(response) => {
-            let response = ion::Object::from(response.root(cx));
+            let response = ion::Object::from(response.root(&cx));
 
             if Promise::is_promise(&response) {
                 Ok(Either::Left(PendingResponse {
                     promise: unsafe { Promise::from_unchecked(response.into_local()) },
                 }))
             } else {
-                Ok(Either::Right(build_response(cx, response)?))
+                Ok(Either::Right(build_response(&cx, response)?))
             }
         }
     }
@@ -252,22 +264,22 @@ fn start_request<'cx>(
 
 // The promise must be fulfilled or rejected before calling this function,
 // otherwise an error is returned
-fn build_response_from_pending<'cx>(
-    cx: &'cx Context,
+fn build_response_from_pending(
+    cx: Context,
     response: PendingResponse,
 ) -> anyhow::Result<ReadyResponse> {
-    match response.promise.state(cx) {
+    match response.promise.state(&cx) {
         PromiseState::Pending => {
             bail!("Internal error: promise is not fulfilled yet");
         }
         PromiseState::Rejected => {
-            let result = response.promise.result(cx);
+            let result = response.promise.result(&cx);
             let message = result
-                .to_object(cx)
-                .get(cx, "message")
+                .to_object(&cx)
+                .get(&cx, "message")
                 .and_then(|v| {
                     if v.get().is_string() {
-                        Some(ion::String::from(cx.root_string(v.get().to_string())).to_owned(cx))
+                        Some(ion::String::from(cx.root_string(v.get().to_string())).to_owned(&cx))
                     } else {
                         None
                     }
@@ -276,11 +288,11 @@ fn build_response_from_pending<'cx>(
             bail!("Script execution failed: {message}")
         }
         PromiseState::Fulfilled => {
-            let promise_result = response.promise.result(cx);
+            let promise_result = response.promise.result(&cx);
             if !promise_result.handle().is_object() {
                 bail!("Script error: value provided to respondWith was not an object");
             }
-            build_response(cx, promise_result.to_object(cx))
+            build_response(&cx, promise_result.to_object(&cx))
         }
     }
 }
