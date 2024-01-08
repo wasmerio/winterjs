@@ -76,7 +76,6 @@ test_name = "5-response"
 test_route = "5-response"
 expected_output = "All tests passed"
 expected_response_status = 200
-skip = "Response.error is not implemented"
 
 [[test_case]]
 test_name = "6-text-encoder"
