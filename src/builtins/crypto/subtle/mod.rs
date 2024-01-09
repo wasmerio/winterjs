@@ -15,8 +15,8 @@ use strum::ParseError;
 use algorithm::{md5::Md5, sha::Sha, CryptoAlgorithm};
 
 use crate::{
+    builtins::crypto::subtle::crypto_key::{CryptoKey, KeyAlgorithm},
     ion_err,
-    ion_runner::crypto::subtle::crypto_key::{CryptoKey, KeyAlgorithm},
 };
 
 use self::{
@@ -379,7 +379,7 @@ macro_rules! enum_value {
                     ion::String::from(cx.root_string(value.handle().to_string()))
                         .to_owned(cx)
                         .parse()
-                        .map_err(crate::ion_runner::crypto::subtle::parse_error_to_type_error)
+                        .map_err(crate::builtins::crypto::subtle::parse_error_to_type_error)
                 }
             }
         }

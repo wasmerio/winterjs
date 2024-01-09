@@ -10,12 +10,13 @@ use ion::{
 use mozjs_sys::jsval::JSVal;
 
 use crate::{
-    ion_err, ion_mk_err,
-    ion_runner::crypto::subtle::{
+    builtins::crypto::subtle::{
+        self,
         crypto_key::{generate_random_key, CryptoKey, KeyAlgorithm, KeyFormat, KeyType, KeyUsage},
         jwk::JsonWebKey,
         AlgorithmIdentifier, HeapKeyData,
     },
+    ion_err, ion_mk_err,
 };
 
 use super::CryptoAlgorithm;
@@ -102,7 +103,7 @@ impl CryptoAlgorithm for Hmac {
         cx: &Context,
         _params: &ion::Object,
         key: &CryptoKey,
-        data: crate::ion_runner::crypto::subtle::HeapBufferSource,
+        data: subtle::HeapBufferSource,
     ) -> ion::Result<ArrayBuffer> {
         let key_alg = key.algorithm.root(cx).into();
         if !HmacKeyAlgorithm::instance_of(cx, &key_alg, None) {
@@ -122,8 +123,8 @@ impl CryptoAlgorithm for Hmac {
         cx: &Context,
         params: &ion::Object,
         key: &CryptoKey,
-        signature: crate::ion_runner::crypto::subtle::HeapBufferSource,
-        data: crate::ion_runner::crypto::subtle::HeapBufferSource,
+        signature: subtle::HeapBufferSource,
+        data: subtle::HeapBufferSource,
     ) -> ion::Result<bool> {
         let calculated = self.sign(cx, params, key, data)?;
         let calc_buf = (*calculated).as_ref();

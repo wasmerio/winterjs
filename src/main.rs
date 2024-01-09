@@ -35,6 +35,7 @@ macro_rules! js_try {
     };
 }
 
+mod builtins;
 mod ion_runner;
 mod server;
 

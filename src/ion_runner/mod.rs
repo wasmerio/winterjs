@@ -1,8 +1,3 @@
-mod cache;
-mod crypto;
-mod event_listener;
-mod fetch_event;
-mod performance;
 mod watch;
 
 pub use watch::WatchRunner;
@@ -33,7 +28,11 @@ use runtime::{
 use tokio::{select, sync::Mutex, task::LocalSet};
 use tracing::debug;
 
-use self::{fetch_event::FetchEvent, performance::PerformanceModule};
+use crate::builtins::{
+    cache, crypto, event_listener,
+    fetch_event::{self, FetchEvent},
+    performance::PerformanceModule,
+};
 
 pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy::new(|| {
     let engine = JSEngine::init().expect("could not create engine");
