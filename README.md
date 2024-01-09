@@ -71,10 +71,10 @@ The following words are used to describe the status of an API:
 |API|Status|Notes|
 |:-:|:-:|:--|
 |`console`|✅ Stable|
-|`fetch`|🔶 Partial|`Request` needs to be stabilized before `fetch` can be considered Stable
+|`fetch`|✅ Stable|
 |`URL`|✅ Stable|
 |`URLSearchParams`|✅ Stable|
-|`Request`|🔶 Partial|`Request.formData` does not support deserialization of `multipart/form-data` bodies
+|`Request`|✅ Stable|
 |`Headers`|✅ Stable|
 |`Response`|✅ Stable|
 |`Blob`|✅ Stable|
