@@ -8,7 +8,7 @@ lazy_static::lazy_static! {
 
 #[js_fn]
 fn now() -> f64 {
-    PERFORMANCE_ORIGIN.elapsed().as_secs_f64() * 1_000_000.0
+    PERFORMANCE_ORIGIN.elapsed().as_secs_f64() * 1_000.0
 }
 
 const METHODS: &[JSFunctionSpec] = &[function_spec!(now, 0), JSFunctionSpec::ZERO];
@@ -23,7 +23,7 @@ impl NativeModule for PerformanceModule {
 
     fn module<'cx>(cx: &'cx ion::Context) -> Option<ion::Object<'cx>> {
         let mut ret = Object::new(cx);
-        if unsafe { ret.define_methods(cx, METHODS) } {
+        if unsafe { ret.define_methods(cx, METHODS) } && ret.set_as(cx, "timeOrigin", &0.0f64) {
             Some(ret)
         } else {
             None
