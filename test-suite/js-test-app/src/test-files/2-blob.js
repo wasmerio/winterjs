@@ -1,7 +1,7 @@
 async function handleRequest(request) {
   try {
     // Create a new Blob with some text
-    const blobParts = ["Hello, world!"];
+    const blobParts = ["Hello,", " world!"];
     const myBlob = new Blob(blobParts, { type: "text/plain" });
 
     // Use the text() method to read the Blob's text
