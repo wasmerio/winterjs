@@ -1,4 +1,4 @@
-use ion::{typedarray::ArrayBuffer, Context};
+use ion::{typedarray::ArrayBuffer, Context, Error, ErrorKind};
 
 use super::CryptoAlgorithm;
 
@@ -9,13 +9,14 @@ impl CryptoAlgorithm for Md5 {
         "MD5"
     }
 
-    fn digest(
+    fn digest<'cx>(
         &self,
-        _cx: &Context,
+        cx: &'cx Context,
         _params: &ion::Object,
         data: super::HeapBufferSource,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         let data = md5::compute(unsafe { data.as_slice() }).0;
-        Ok(ArrayBuffer::from(&data[..]))
+        ArrayBuffer::copy_from_bytes(cx, &data[..])
+            .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
     }
 }

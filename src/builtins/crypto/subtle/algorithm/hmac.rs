@@ -5,7 +5,7 @@ use hmac::{digest::generic_array::ArrayLength, Mac};
 use ion::{
     conversions::{ConversionBehavior, FromValue, ToValue},
     typedarray::ArrayBuffer,
-    ClassDefinition, Context, Heap, Result,
+    ClassDefinition, Context, Error, ErrorKind, Heap, Result,
 };
 use mozjs_sys::jsval::JSVal;
 
@@ -98,13 +98,13 @@ impl CryptoAlgorithm for Hmac {
         "HMAC"
     }
 
-    fn sign(
+    fn sign<'cx>(
         &self,
-        cx: &Context,
+        cx: &'cx Context,
         _params: &ion::Object,
         key: &CryptoKey,
         data: subtle::HeapBufferSource,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         let key_alg = key.algorithm.root(cx).into();
         if !HmacKeyAlgorithm::instance_of(cx, &key_alg, None) {
             ion_err!("The provided key is not an HMAC key", Type);
@@ -115,7 +115,8 @@ impl CryptoAlgorithm for Hmac {
             AlgorithmIdentifier::from_value(cx, &key_alg.hash.root(cx).into(), false, ())?;
 
         let vec = sign(cx, &hash_alg, &key_alg.key_data, unsafe { data.as_slice() })?;
-        Ok(ArrayBuffer::from(&vec[..]))
+        ArrayBuffer::copy_from_bytes(cx, &vec[..])
+            .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
     }
 
     fn verify(
@@ -127,9 +128,9 @@ impl CryptoAlgorithm for Hmac {
         data: subtle::HeapBufferSource,
     ) -> ion::Result<bool> {
         let calculated = self.sign(cx, params, key, data)?;
-        let calc_buf = (*calculated).as_ref();
-        let sign_but = unsafe { signature.as_slice() };
-        Ok(calc_buf == sign_but)
+        let calc_buf = unsafe { calculated.as_slice() };
+        let sign_buf = unsafe { signature.as_slice() };
+        Ok(calc_buf == sign_buf)
     }
 
     fn generate_key(
@@ -302,7 +303,8 @@ impl CryptoAlgorithm for Hmac {
 
         match format {
             KeyFormat::Raw => {
-                let ab = ArrayBuffer::from(alg.key_data.as_ref());
+                let ab = ArrayBuffer::copy_from_bytes(cx, alg.key_data.as_ref())
+                    .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))?;
                 Ok(ab.as_value(cx))
             }
 

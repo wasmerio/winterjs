@@ -1,4 +1,4 @@
-use ion::{typedarray::ArrayBuffer, Context};
+use ion::{typedarray::ArrayBuffer, Context, Error, ErrorKind};
 use sha2::Digest;
 
 use super::CryptoAlgorithm;
@@ -29,31 +29,35 @@ impl CryptoAlgorithm for Sha {
         })
     }
 
-    fn digest(
+    fn digest<'cx>(
         &self,
-        _cx: &Context,
+        cx: &'cx Context,
         _params: &ion::Object,
         data: super::HeapBufferSource,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         match self {
             Self::Sha1 => {
                 let data = sha1::Sha1::digest(unsafe { data.as_slice() });
-                Ok(ArrayBuffer::from(&*data))
+                ArrayBuffer::copy_from_bytes(cx, &*data)
+                    .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
             }
 
             Self::Sha256 => {
                 let data = sha2::Sha256::digest(unsafe { data.as_slice() });
-                Ok(ArrayBuffer::from(&*data))
+                ArrayBuffer::copy_from_bytes(cx, &*data)
+                    .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
             }
 
             Self::Sha384 => {
                 let data = sha2::Sha384::digest(unsafe { data.as_slice() });
-                Ok(ArrayBuffer::from(&*data))
+                ArrayBuffer::copy_from_bytes(cx, &*data)
+                    .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
             }
 
             Self::Sha512 => {
                 let data = sha2::Sha512::digest(unsafe { data.as_slice() });
-                Ok(ArrayBuffer::from(&*data))
+                ArrayBuffer::copy_from_bytes(cx, &*data)
+                    .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
             }
         }
     }

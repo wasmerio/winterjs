@@ -20,39 +20,39 @@ pub trait CryptoAlgorithm {
         ))
     }
 
-    fn encrypt(
+    fn encrypt<'cx>(
         &self,
-        cx: &Context,
+        cx: &'cx Context,
         params: &Object,
         key: &CryptoKey,
         data: HeapBufferSource,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
         ))
     }
 
-    fn decrypt(
+    fn decrypt<'cx>(
         &self,
-        cx: &Context,
+        cx: &'cx Context,
         params: &Object,
         key: &CryptoKey,
         data: HeapBufferSource,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
         ))
     }
 
-    fn sign(
+    fn sign<'cx>(
         &self,
-        cx: &Context,
+        cx: &'cx Context,
         params: &Object,
         key: &CryptoKey,
         data: HeapBufferSource,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
@@ -73,55 +73,55 @@ pub trait CryptoAlgorithm {
         ))
     }
 
-    fn digest(
+    fn digest<'cx>(
         &self,
-        cx: &Context,
+        cx: &'cx Context,
         params: &Object,
         data: HeapBufferSource,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
         ))
     }
 
-    fn derive_bits(
+    fn derive_bits<'cx>(
         &self,
-        cx: &Context,
+        cx: &'cx Context,
         params: &Object,
         base_key: CryptoKey,
         length: usize,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
         ))
     }
 
-    fn wrap_key(
+    fn wrap_key<'cx>(
         &self,
-        cx: &Context,
+        cx: &'cx Context,
         params: &Object,
         format: KeyFormat,
         key: &CryptoKey,
         wrapping_key: CryptoKey,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,
         ))
     }
 
-    fn unwrap_key(
+    fn unwrap_key<'cx>(
         &self,
-        cx: &Context,
+        cx: &'cx Context,
         params: &Object,
         format: KeyFormat,
         wrapped_key: HeapBufferSource,
         unwrapping_key: &CryptoKey,
         extractable: bool,
         usages: Vec<KeyUsage>,
-    ) -> ion::Result<ArrayBuffer> {
+    ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
             ion::ErrorKind::Normal,

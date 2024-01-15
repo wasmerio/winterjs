@@ -51,10 +51,10 @@ pub struct CryptoKey {
     pub extractable: bool,
     pub algorithm: Heap<*mut JSObject>, // KeyAlgorithm
 
-    #[ion(no_trace)]
+    #[trace(no_trace)]
     pub key_type: KeyType,
 
-    #[ion(no_trace)]
+    #[trace(no_trace)]
     pub usages: Vec<KeyUsage>,
 }
 

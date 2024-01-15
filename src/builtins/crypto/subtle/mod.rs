@@ -186,7 +186,7 @@ fn sign<'cx>(
                 ion_err!("Key does not support the 'sign' operation", Normal);
             }
 
-            alg.sign(&cx, &params.root(&cx).into(), key, data)
+            Ok(alg.sign(&cx, &params.root(&cx).into(), key, data)?.get())
         })
     }
 }
