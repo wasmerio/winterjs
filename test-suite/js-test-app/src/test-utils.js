@@ -1,6 +1,7 @@
 const assert = (condition, message) => {
   if (!condition) {
-    throw new Error(message || "Assertion failed");
+    let msg = typeof (message) === 'function' ? message() : (message || "Assertion failed");
+    throw new Error(msg);
   }
 };
 
@@ -18,19 +19,19 @@ const assert_false = (condition, message) => {
 
 const assert_array_equals = (array1, array2, message) => {
   if (array1.length != array2.length || array1.length === undefined) {
-    throw new Error(message || "Assertion failed");
+    throw new Error(`Expected ${array1} to be equal to ${array2}: ${message}`);
   }
 
   for (let i in array1) {
     if (array1[i] != array2[i]) {
-      throw new Error(message || "Assertion failed");
+      throw new Error(`Expected ${array1} to be equal to ${array2}: ${message}`);
     }
   }
 
   // Make sure array2 has no keys that array1 doesn't
   for (let i in array2) {
     if (array1[i] != array2[i]) {
-      throw new Error(message || "Assertion failed");
+      throw new Error(`Expected ${array1} to be equal to ${array2}: ${message}`);
     }
   }
 }
@@ -54,14 +55,14 @@ const assert_throws_js = (f, message) => {
 const assert_equals = (actual, expected, message) => {
   assert(
     actual === expected,
-    message || `Expected ${expected} but got ${actual}`
+    () => `Expected ${expected} but got ${actual}: ${message}`
   );
 };
 
 const assert_not_equals = (actual, expected, message) => {
   assert(
     actual !== expected,
-    message || `Expected ${expected} but got ${actual}`
+    () => `Expected ${expected} to be unequal to ${actual}: ${message}`
   );
 };
 

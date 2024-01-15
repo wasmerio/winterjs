@@ -7,6 +7,7 @@ import { handleRequest as handleResponse } from "./test-files/5-response.js";
 import { handleRequest as handleTextEncoder } from "./test-files/6-text-encoder.js";
 import { handleRequest as handleTextDecoder } from "./test-files/7-text-decoder.js";
 import { handleRequest as handleURL } from "./test-files/8-url.js";
+import { handleRequest as handleSearchParams } from "./test-files/8.1-search-params.js";
 import { handleRequest as handleAtobBtoA } from "./test-files/10-atob-btoa.js";
 import { handleRequest as handleFetch } from "./test-files/11-fetch.js";
 import { handleRequest as handleStreams } from "./test-files/12-streams.js";
@@ -44,6 +45,9 @@ function router(req) {
   }
   if (path.startsWith("/8-url")) {
     return handleURL(req);
+  }
+  if (path.startsWith("/8.1-search-params")) {
+    return handleSearchParams(req);
   }
   if (path.startsWith("/10-atob-btoa")) {
     return handleAtobBtoA(req);
