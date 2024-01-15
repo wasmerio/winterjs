@@ -121,3 +121,9 @@ test_name = "13-performance"
 test_route = "13-performance"
 expected_output = "All Tests Passed!"
 expected_response_status = 200
+
+[[test_case]]
+test_name = "14-form-data"
+test_route = "14-form-data"
+expected_output = "All Tests Passed!"
+expected_response_status = 200

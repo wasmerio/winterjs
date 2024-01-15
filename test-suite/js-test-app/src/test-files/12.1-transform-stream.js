@@ -1,3 +1,16 @@
+import {
+  assert_array_equals,
+  assert_equals,
+  assert_false,
+  assert_throws_js,
+  assert_true,
+  assert_unreached,
+  delay,
+  flushAsyncEvents,
+  promise_test,
+  test,
+} from '../test-utils.js';
+
 class LipFuzzTransformer {
   constructor(substitutions) {
     this.substitutions = substitutions;
@@ -132,88 +145,6 @@ const lipFuzzTestCases = [
 
 
 async function handleRequest(request) {
-  const assert = (condition, message) => {
-    if (!condition) {
-      throw new Error(message || "Assertion failed");
-    }
-  };
-
-  const assertTrue = (condition, message) => {
-    if (condition !== true) {
-      throw new Error(message || "Assertion failed");
-    }
-  }
-
-  const assertFalse = (condition, message) => {
-    if (condition !== false) {
-      throw new Error(message || "Assertion failed");
-    }
-  }
-
-  const assertArrayEquals = (array1, array2, message) => {
-    if (array1.length != array2.length || array1.length === undefined) {
-      throw new Error(message || "Assertion failed");
-    }
-
-    for (let i in array1) {
-      if (array1[i] != array2[i]) {
-        throw new Error(message || "Assertion failed");
-      }
-    }
-
-    // Make sure array2 has no keys that array1 doesn't
-    for (let i in array2) {
-      if (array1[i] != array2[i]) {
-        throw new Error(message || "Assertion failed");
-      }
-    }
-  }
-
-  const assertUnreached = (message) => {
-    throw new Error(message || "Assertion failed: should not be reached");
-  }
-
-  const assertThrowsJs = (f, message) => {
-    try {
-      f();
-      throw undefined;
-    }
-    catch (e) {
-      if (e === undefined) {
-        throw new Error(`Should have thrown error: ${message}`);
-      }
-    }
-  }
-
-  const assertEquals = (actual, expected, message) => {
-    assert(
-      actual === expected,
-      message || `Expected ${expected} but got ${actual}`
-    );
-  };
-
-  const test = (f, desc) => {
-    try {
-      f();
-    }
-    catch (e) {
-      throw new Error(`Test ${desc} failed with ${e}`);
-    }
-  }
-
-  const promiseTest = async (f, desc) => {
-    try {
-      await f();
-    }
-    catch (e) {
-      throw new Error(`Test ${desc} failed with ${e}`);
-    }
-  }
-
-  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-  const flushAsyncEvents = () => delay(0).then(() => delay(0)).then(() => delay(0)).then(() => delay(0));
-
   function readableStreamToArray(stream) {
     var array = [];
     var writable = new WritableStream({
@@ -238,26 +169,26 @@ async function handleRequest(request) {
       const ts = new TransformStream({ transform() { } });
 
       const writer = ts.writable.getWriter();
-      assertEquals(writer.desiredSize, 1, 'writer.desiredSize should be 1');
+      assert_equals(writer.desiredSize, 1, 'writer.desiredSize should be 1');
     }, 'TransformStream writable starts in the writable state');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       const ts = new TransformStream();
 
       const writer = ts.writable.getWriter();
       writer.write('a');
-      assertEquals(writer.desiredSize, 0, 'writer.desiredSize should be 0 after write()');
+      assert_equals(writer.desiredSize, 0, 'writer.desiredSize should be 0 after write()');
 
       return ts.readable.getReader().read().then(result => {
-        assertEquals(result.value, 'a',
+        assert_equals(result.value, 'a',
           'result from reading the readable is the same as was written to writable');
-        assertFalse(result.done, 'stream should not be done');
+        assert_false(result.done, 'stream should not be done');
 
-        return delay(0).then(() => assertEquals(writer.desiredSize, 1, 'desiredSize should be 1 again'));
+        return delay(0).then(() => assert_equals(writer.desiredSize, 1, 'desiredSize should be 1 again'));
       });
     }, 'Identity TransformStream: can read from readable what is put into writable');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let c;
       const ts = new TransformStream({
         start(controller) {
@@ -272,13 +203,13 @@ async function handleRequest(request) {
       writer.write('a');
 
       return ts.readable.getReader().read().then(result => {
-        assertEquals(result.value, 'A',
+        assert_equals(result.value, 'A',
           'result from reading the readable is the transformation of what was written to writable');
-        assertFalse(result.done, 'stream should not be done');
+        assert_false(result.done, 'stream should not be done');
       });
     }, 'Uppercaser sync TransformStream: can read from readable transformed version of what is put into writable');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let c;
       const ts = new TransformStream({
         start(controller) {
@@ -296,19 +227,19 @@ async function handleRequest(request) {
       const reader = ts.readable.getReader();
 
       return reader.read().then(result1 => {
-        assertEquals(result1.value, 'A',
+        assert_equals(result1.value, 'A',
           'the first chunk read is the transformation of the single chunk written');
-        assertFalse(result1.done, 'stream should not be done');
+        assert_false(result1.done, 'stream should not be done');
 
         return reader.read().then(result2 => {
-          assertEquals(result2.value, 'A',
+          assert_equals(result2.value, 'A',
             'the second chunk read is also the transformation of the single chunk written');
-          assertFalse(result2.done, 'stream should not be done');
+          assert_false(result2.done, 'stream should not be done');
         });
       });
     }, 'Uppercaser-doubler sync TransformStream: can read both chunks put into the readable');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let c;
       const ts = new TransformStream({
         start(controller) {
@@ -323,13 +254,13 @@ async function handleRequest(request) {
       writer.write('a');
 
       return ts.readable.getReader().read().then(result => {
-        assertEquals(result.value, 'A',
+        assert_equals(result.value, 'A',
           'result from reading the readable is the transformation of what was written to writable');
-        assertFalse(result.done, 'stream should not be done');
+        assert_false(result.done, 'stream should not be done');
       });
     }, 'Uppercaser async TransformStream: can read from readable transformed version of what is put into writable');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let doSecondEnqueue;
       let returnFromTransform;
       const ts = new TransformStream({
@@ -348,21 +279,21 @@ async function handleRequest(request) {
       writer.write('a');
 
       return reader.read().then(result1 => {
-        assertEquals(result1.value, 'A',
+        assert_equals(result1.value, 'A',
           'the first chunk read is the transformation of the single chunk written');
-        assertFalse(result1.done, 'stream should not be done');
+        assert_false(result1.done, 'stream should not be done');
         doSecondEnqueue();
 
         return reader.read().then(result2 => {
-          assertEquals(result2.value, 'A',
+          assert_equals(result2.value, 'A',
             'the second chunk read is also the transformation of the single chunk written');
-          assertFalse(result2.done, 'stream should not be done');
+          assert_false(result2.done, 'stream should not be done');
           returnFromTransform();
         });
       });
     }, 'Uppercaser-doubler async TransformStream: can read both chunks put into the readable');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       const ts = new TransformStream({ transform() { } });
 
       const writer = ts.writable.getWriter();
@@ -371,7 +302,7 @@ async function handleRequest(request) {
       return Promise.all([writer.closed, ts.readable.getReader().closed]);
     }, 'TransformStream: by default, closing the writable closes the readable (when there are no queued writes)');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let transformResolve;
       const transformPromise = new Promise(resolve => {
         transformResolve = resolve;
@@ -392,17 +323,17 @@ async function handleRequest(request) {
       });
 
       return delay(0).then(() => {
-        assertEquals(rsClosed, false, 'readable is not closed after a tick');
+        assert_equals(rsClosed, false, 'readable is not closed after a tick');
         transformResolve();
 
         return writer.closed.then(() => {
           // TODO: Is this expectation correct?
-          assertEquals(rsClosed, true, 'readable is closed at that point');
+          assert_equals(rsClosed, true, 'readable is closed at that point');
         });
       });
     }, 'TransformStream: by default, closing the writable waits for transforms to finish before closing both');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let c;
       const ts = new TransformStream({
         start(controller) {
@@ -423,12 +354,12 @@ async function handleRequest(request) {
 
       return writer.closed.then(() => {
         return readableChunks.then(chunks => {
-          assertArrayEquals(chunks, ['x', 'y'], 'both enqueued chunks can be read from the readable');
+          assert_array_equals(chunks, ['x', 'y'], 'both enqueued chunks can be read from the readable');
         });
       });
     }, 'TransformStream: by default, closing the writable closes the readable after sync enqueues and async done');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let c;
       const ts = new TransformStream({
         start(controller) {
@@ -450,12 +381,12 @@ async function handleRequest(request) {
 
       return writer.closed.then(() => {
         return readableChunks.then(chunks => {
-          assertArrayEquals(chunks, ['x', 'y'], 'both enqueued chunks can be read from the readable');
+          assert_array_equals(chunks, ['x', 'y'], 'both enqueued chunks can be read from the readable');
         });
       });
     }, 'TransformStream: by default, closing the writable closes the readable after async enqueues and async done');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let c;
       const ts = new TransformStream({
         suffix: '-suffix',
@@ -482,15 +413,15 @@ async function handleRequest(request) {
 
       return writer.closed.then(() => {
         return readableChunks.then(chunks => {
-          assertArrayEquals(chunks, ['start-suffix', 'a-suffix', 'flushed-suffix'], 'all enqueued chunks have suffixes');
+          assert_array_equals(chunks, ['start-suffix', 'a-suffix', 'flushed-suffix'], 'all enqueued chunks have suffixes');
         });
       });
     }, 'Transform stream should call transformer methods as methods');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       function functionWithOverloads() { }
-      functionWithOverloads.apply = () => assertUnreached('apply() should not be called');
-      functionWithOverloads.call = () => assertUnreached('call() should not be called');
+      functionWithOverloads.apply = () => assert_unreached('apply() should not be called');
+      functionWithOverloads.call = () => assert_unreached('call() should not be called');
       const ts = new TransformStream({
         start: functionWithOverloads,
         transform: functionWithOverloads,
@@ -503,7 +434,7 @@ async function handleRequest(request) {
       return readableStreamToArray(ts.readable);
     }, 'methods should not not have .apply() or .call() called');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let transformCalled = false;
       const ts = new TransformStream({
         transform() {
@@ -513,12 +444,12 @@ async function handleRequest(request) {
       // transform() is only called synchronously when there is no backpressure and all microtasks have run.
       return delay(0).then(() => {
         const writePromise = ts.writable.getWriter().write();
-        assertTrue(transformCalled, 'transform() should have been called');
+        assert_true(transformCalled, 'transform() should have been called');
         return writePromise;
       });
     }, 'it should be possible to call transform() synchronously');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       const ts = new TransformStream({}, undefined, { highWaterMark: 0 });
 
       const writer = ts.writable.getWriter();
@@ -531,12 +462,12 @@ async function handleRequest(request) {
       new TransformStream({
         start(controller) {
           controller.terminate();
-          assertThrowsJs(() => controller.enqueue(), 'enqueue should throw');
+          assert_throws_js(() => controller.enqueue(), 'enqueue should throw');
         }
       });
     }, 'enqueue() should throw after controller.terminate()');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let controller;
       const ts = new TransformStream({
         start(c) {
@@ -544,7 +475,7 @@ async function handleRequest(request) {
         }
       });
       const cancelPromise = ts.readable.cancel();
-      assertThrowsJs(() => controller.enqueue(), 'enqueue should throw');
+      assert_throws_js(() => controller.enqueue(), 'enqueue should throw');
       return cancelPromise;
     }, 'enqueue() should throw after readable.cancel()');
 
@@ -557,7 +488,7 @@ async function handleRequest(request) {
       });
     }, 'controller.terminate() should do nothing the second time it is called');
 
-    await promiseTest(() => {
+    await promise_test(() => {
       let calls = 0;
       new TransformStream({
         start() {
@@ -565,7 +496,7 @@ async function handleRequest(request) {
         }
       });
       return flushAsyncEvents().then(() => {
-        assertEquals(calls, 1, 'start() should have been called exactly once');
+        assert_equals(calls, 1, 'start() should have been called exactly once');
       });
     }, 'start() should not be called twice');
 
@@ -575,28 +506,28 @@ async function handleRequest(request) {
           return true;
         }
       }
-      assertEquals(
+      assert_equals(
         Object.getPrototypeOf(Subclass.prototype), TransformStream.prototype,
         'Subclass.prototype\'s prototype should be TransformStream.prototype');
-      assertEquals(Object.getPrototypeOf(Subclass), TransformStream,
+      assert_equals(Object.getPrototypeOf(Subclass), TransformStream,
         'Subclass\'s prototype should be TransformStream');
       const sub = new Subclass();
-      assertTrue(sub instanceof TransformStream,
+      assert_true(sub instanceof TransformStream,
         'Subclass object should be an instance of TransformStream');
-      assertTrue(sub instanceof Subclass,
+      assert_true(sub instanceof Subclass,
         'Subclass object should be an instance of Subclass');
       const readableGetter = Object.getOwnPropertyDescriptor(
         TransformStream.prototype, 'readable').get;
-      assertEquals(readableGetter.call(sub), sub.readable,
+      assert_equals(readableGetter.call(sub), sub.readable,
         'Subclass object should pass brand check');
-      assertTrue(sub.extraFunction(),
+      assert_true(sub.extraFunction(),
         'extraFunction() should be present on Subclass object');
     }, 'Subclassing TransformStream should work');
 
     for (const testCase of lipFuzzTestCases) {
       const inputChunks = testCase.input;
       const outputChunks = testCase.output;
-      promiseTest(() => {
+      promise_test(() => {
         const lft = new TransformStream(new LipFuzzTransformer(substitutions));
         const writer = lft.writable.getWriter();
         const promises = [];
@@ -609,13 +540,13 @@ async function handleRequest(request) {
         for (const outputChunk of outputChunks) {
           readerChain = readerChain.then(() => {
             return reader.read().then(({ value, done }) => {
-              assertFalse(done, `done should be false when reading ${outputChunk}`);
-              assertEquals(value, outputChunk, `value should match outputChunk`);
+              assert_false(done, `done should be false when reading ${outputChunk}`);
+              assert_equals(value, outputChunk, `value should match outputChunk`);
             });
           });
         }
         readerChain = readerChain.then(() => {
-          return reader.read().then(({ done }) => assertTrue(done, `done should be true`));
+          return reader.read().then(({ done }) => assert_true(done, `done should be true`));
         });
         promises.push(readerChain);
         return Promise.all(promises);
