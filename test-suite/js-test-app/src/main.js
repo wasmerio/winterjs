@@ -1,5 +1,6 @@
 import { handleRequest as handleHello } from "./test-files/1-hello.js";
 import { handleRequest as handleBlob } from "./test-files/2-blob.js";
+import { handleRequest as handleFile } from "./test-files/2.1-file.js";
 import { handleRequest as handleHeaders } from "./test-files/3-headers.js";
 import { handleRequest as handleRequest } from "./test-files/4-request.js";
 import { handleRequest as handleResponse } from "./test-files/5-response.js";
@@ -22,6 +23,9 @@ function router(req) {
   }
   if (path.startsWith("/2-blob")) {
     return handleBlob(req);
+  }
+  if (path.startsWith("/2.1-file")) {
+    return handleFile(req);
   }
   if (path.startsWith("/3-headers")) {
     return handleHeaders(req);

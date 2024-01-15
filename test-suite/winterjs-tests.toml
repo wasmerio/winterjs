@@ -21,6 +21,12 @@ expected_output = "Hello, world!"
 expected_response_status = 200
 
 [[test_case]]
+test_name = "2.1-file"
+test_route = "2.1-file"
+expected_output = "All tests passed!"
+expected_response_status = 200
+
+[[test_case]]
 test_name = "3.1-headers"
 test_route = "3-headers"
 expected_output = "All Headers:\ncontent-type: text/plain\nx-custom-header: CustomValue\n"

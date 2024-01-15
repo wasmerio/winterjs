@@ -111,6 +111,19 @@ const promise_test = async (f, desc) => {
   }
 }
 
+const readStream = async (stream) => {
+  let reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+  let result = "";
+  while (true) {
+    let chunk = await reader.read();
+    if (chunk.done) {
+      break;
+    }
+    result += chunk.value.toString();
+  }
+  return result;
+}
+
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const flushAsyncEvents = () => delay(0).then(() => delay(0)).then(() => delay(0)).then(() => delay(0));
@@ -132,4 +145,5 @@ export {
   flushAsyncEvents,
   promise_test,
   test,
+  readStream,
 };
