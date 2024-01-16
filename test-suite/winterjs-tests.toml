@@ -117,6 +117,12 @@ expected_output = "All Tests Passed!"
 expected_response_status = 200
 
 [[test_case]]
+test_name = "11.1-fetch-body"
+test_route = "11.1-fetch-body"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
+
+[[test_case]]
 test_name = "12-streams"
 test_route = "12-streams"
 expected_output = "All Tests Passed!"

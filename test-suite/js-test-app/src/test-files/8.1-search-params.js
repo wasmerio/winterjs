@@ -1,4 +1,11 @@
-import { assert_array_equals, assert_equals, assert_false, assert_throws_js, assert_true, test } from "../test-utils";
+import {
+  assert_array_equals,
+  assert_equals,
+  assert_false,
+  assert_throws_js,
+  assert_true,
+  test
+} from "../test-utils";
 
 async function handleRequest(request) {
   try {

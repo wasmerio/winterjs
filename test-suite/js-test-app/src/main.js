@@ -10,6 +10,7 @@ import { handleRequest as handleURL } from "./test-files/8-url.js";
 import { handleRequest as handleSearchParams } from "./test-files/8.1-search-params.js";
 import { handleRequest as handleAtobBtoA } from "./test-files/10-atob-btoa.js";
 import { handleRequest as handleFetch } from "./test-files/11-fetch.js";
+import { handleRequest as handleFetchBody } from "./test-files/11.1-fetch-body.js";
 import { handleRequest as handleStreams } from "./test-files/12-streams.js";
 import { handleRequest as handleTransformStream } from "./test-files/12.1-transform-stream.js";
 import { handleRequest as handlePerformance } from "./test-files/13-performance.js";
@@ -54,6 +55,9 @@ function router(req) {
   }
   if (path.startsWith("/11-fetch")) {
     return handleFetch(req);
+  }
+  if (path.startsWith("/11.1-fetch-body")) {
+    return handleFetchBody(req);
   }
   if (path.startsWith("/12-streams")) {
     return handleStreams(req);
