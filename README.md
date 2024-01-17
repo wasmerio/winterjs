@@ -83,14 +83,14 @@ The following words are used to describe the status of an API:
 |`TextDecoder`|✅ Stable|
 |`TextDecoderStream`|✅ Stable|
 |`TextEncoder`|✅ Stable|
-|`TextEncoderStream`|🔶 Partial|Surrogate pairs spread across two chunks are not handled correctly
+|`TextEncoderStream`|✅ Stable|
 |`ReadableStream` and supporting types|✅ Stable|
 |`WritableStream` and supporting types|✅ Stable|
 |`TransformStream` and supporting types|🔶 Partial|Back-pressure is not implemented
 |`atob`|✅ Stable|
 |`btoa`|✅ Stable|
 |`performance.now()`|✅ Stable|
-|`performance.timeOrigin`|❌ Pending|
+|`performance.timeOrigin`|✅ Stable|
 |`crypto`|✅ Stable|
 |`crypto.subtle`|🔶 Partial|Only HMAC, MD5 and SHA algorithms are supported
 

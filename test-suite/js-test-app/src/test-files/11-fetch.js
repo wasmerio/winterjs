@@ -245,7 +245,3 @@ async function handleRequest(request) {
 }
 
 export { handleRequest };
-
-// addEventListener("fetch", (fetchEvent) => {
-//   fetchEvent.respondWith(handleRequest(fetchEvent.request));
-// });

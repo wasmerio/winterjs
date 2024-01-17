@@ -13,8 +13,10 @@ import { handleRequest as handleFetch } from "./test-files/11-fetch.js";
 import { handleRequest as handleFetchBody } from "./test-files/11.1-fetch-body.js";
 import { handleRequest as handleStreams } from "./test-files/12-streams.js";
 import { handleRequest as handleTransformStream } from "./test-files/12.1-transform-stream.js";
+import { handleRequest as handleTextEncoderStream } from "./test-files/12.2-text-encoder-stream.js";
 import { handleRequest as handlePerformance } from "./test-files/13-performance.js";
 import { handleRequest as handleFormData } from "./test-files/14-form-data.js";
+import { handleRequest as handleTimers } from "./test-files/15-timers.js";
 
 function router(req) {
   const url = new URL(req.url);
@@ -65,11 +67,17 @@ function router(req) {
   if (path.startsWith("/12.1-transform-stream")) {
     return handleTransformStream(req);
   }
+  if (path.startsWith("/12.2-text-encoder-stream")) {
+    return handleTextEncoderStream(req);
+  }
   if (path.startsWith("/13-performance")) {
     return handlePerformance(req);
   }
   if (path.startsWith("/14-form-data")) {
     return handleFormData(req);
+  }
+  if (path.startsWith("/15-timers")) {
+    return handleTimers(req);
   }
   return new Response(`Route Not Found - ${path}`, { status: 404 });
 }

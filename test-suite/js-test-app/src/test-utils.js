@@ -112,6 +112,19 @@ const promise_test = async (f, desc) => {
   }
 }
 
+const promise_rejects_exactly = async (error, p, message) => {
+  try {
+    await p;
+    throw undefined;
+  } catch (e) {
+    if (e === undefined) {
+      throw new Error(`Promise should throw but succeeded: ${message}`);
+    } else if (e !== error) {
+      throw new Error(`Promise should reject with ${error} but rejected with ${e}: ${message}`);
+    }
+  }
+}
+
 const readStream = async (stream) => {
   let reader = stream.pipeThrough(new TextDecoderStream()).getReader();
   let result = "";
@@ -123,6 +136,67 @@ const readStream = async (stream) => {
     result += chunk.value.toString();
   }
   return result;
+}
+
+const readableStreamFromArray = arr => {
+  let s = new ReadableStream({
+    start: controller => {
+      for (let a of arr) {
+        controller.enqueue(a);
+      }
+      controller.close();
+    }
+  })
+  return s;
+}
+
+const readableStreamToArray = async stream => {
+  let reader = stream.getReader();
+  let result = [];
+  while (true) {
+    let chunk = await reader.read();
+    if (chunk.done) {
+      break;
+    }
+    result.push(chunk.value);
+  }
+  return result;
+}
+
+const async_test = (f) => {
+  let resolve, reject;
+  let p = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  let t = {
+    step_func: (f) => {
+      return () => {
+        try {
+          f();
+        } catch (e) {
+          reject(e);
+        }
+      };
+    },
+    step_timeout: (f, t) => {
+      setTimeout(() => {
+        try {
+          f();
+        } catch (e) {
+          reject(e);
+        }
+      }, t);
+    },
+    done: () => {
+      resolve();
+    }
+  };
+
+  f(t);
+
+  return p;
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -145,6 +219,10 @@ export {
   delay,
   flushAsyncEvents,
   promise_test,
+  promise_rejects_exactly,
   test,
   readStream,
+  readableStreamFromArray,
+  readableStreamToArray,
+  async_test,
 };
