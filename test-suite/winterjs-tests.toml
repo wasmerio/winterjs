@@ -141,6 +141,12 @@ expected_output = "All Tests Passed!"
 expected_response_status = 200
 
 [[test_case]]
+test_name = "12.3-text-decoder-stream"
+test_route = "12.3-text-decoder-stream"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
+
+[[test_case]]
 test_name = "13-performance"
 test_route = "13-performance"
 expected_output = "All Tests Passed!"

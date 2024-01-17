@@ -112,6 +112,18 @@ const promise_test = async (f, desc) => {
   }
 }
 
+const promise_rejects_js = async (p, message) => {
+  let result;
+  try {
+    result = await p;
+    throw undefined;
+  } catch (e) {
+    if (e === undefined) {
+      throw new Error(`Promise should throw but succeeded with ${result}: ${message}`);
+    }
+  }
+}
+
 const promise_rejects_exactly = async (error, p, message) => {
   try {
     await p;
@@ -219,6 +231,7 @@ export {
   delay,
   flushAsyncEvents,
   promise_test,
+  promise_rejects_js,
   promise_rejects_exactly,
   test,
   readStream,

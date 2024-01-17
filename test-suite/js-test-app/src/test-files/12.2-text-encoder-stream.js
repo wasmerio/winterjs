@@ -1,4 +1,4 @@
-import { assert_equals, promise_rejects_exactly, promise_test, readableStreamFromArray, readableStreamToArray } from "../test-utils";
+import { assert_equals, promise_rejects_exactly, promise_test, readableStreamFromArray, readableStreamToArray, test } from "../test-utils";
 
 async function handleRequest(request) {
   try {
@@ -64,6 +64,14 @@ async function handleRequest(request) {
         assert_equals(output[0], input.expected, 'output should be correct');
       }, `input of type ${input.name} should be converted correctly to string`);
     }
+
+    test(() => {
+      const te = new TextEncoderStream();
+      assert_equals(typeof ReadableStream.prototype.getReader.call(te.readable),
+        'object', 'readable property must pass brand check');
+      assert_equals(typeof WritableStream.prototype.getWriter.call(te.writable),
+        'object', 'writable property must pass brand check');
+    }, 'TextEncoderStream readable and writable properties must pass brand checks');
 
     return new Response("All Tests Passed!", {
       headers: { "content-type": "text/plain" },

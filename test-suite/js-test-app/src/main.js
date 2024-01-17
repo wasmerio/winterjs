@@ -14,6 +14,7 @@ import { handleRequest as handleFetchBody } from "./test-files/11.1-fetch-body.j
 import { handleRequest as handleStreams } from "./test-files/12-streams.js";
 import { handleRequest as handleTransformStream } from "./test-files/12.1-transform-stream.js";
 import { handleRequest as handleTextEncoderStream } from "./test-files/12.2-text-encoder-stream.js";
+import { handleRequest as handleTextDecoderStream } from "./test-files/12.3-text-decoder-stream.js";
 import { handleRequest as handlePerformance } from "./test-files/13-performance.js";
 import { handleRequest as handleFormData } from "./test-files/14-form-data.js";
 import { handleRequest as handleTimers } from "./test-files/15-timers.js";
@@ -69,6 +70,9 @@ function router(req) {
   }
   if (path.startsWith("/12.2-text-encoder-stream")) {
     return handleTextEncoderStream(req);
+  }
+  if (path.startsWith("/12.3-text-decoder-stream")) {
+    return handleTextDecoderStream(req);
   }
   if (path.startsWith("/13-performance")) {
     return handlePerformance(req);
