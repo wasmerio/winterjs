@@ -1,0 +1,6 @@
+---
+kind: wasmer.io/App.v0
+name: httpinfo-winterjs
+package: wasmer-examples/http-echo-winterjs@0.1.0
+debug: false
+app_id: da_p2qMIbt8UvX2

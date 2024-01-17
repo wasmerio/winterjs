@@ -1,0 +1,18 @@
+[package]
+name = "wasmer-examples/http-echo-winterjs"
+version = "0.1.0"
+description = "A simple HTTP echo server using WinterJS - responds with request information."
+
+[dependencies]
+"wasmer/winterjs" = "*"
+
+[fs]
+"/src" = "./src"
+
+[[command]]
+name = "script"
+module = "wasmer/winterjs:wasmer-winter"
+runner = "https://webc.org/runner/wasi"
+
+[command.annotations.wasi]
+main-args = ["/src/index.js"]
