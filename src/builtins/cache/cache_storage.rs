@@ -7,9 +7,9 @@ use runtime::globals::fetch::RequestInfo;
 
 use crate::{ion_err, ion_mk_err};
 
-use super::cache::{Cache, CacheQueryOptions};
+use super::{Cache, CacheQueryOptions};
 
-const DEFAULT_CACHE_KEY: &'static str = "_____WINTERJS_DEFAULT_CACHE_____";
+const DEFAULT_CACHE_KEY: &str = "_____WINTERJS_DEFAULT_CACHE_____";
 
 #[derive(FromValue)]
 pub struct MultiCacheQueryOptions {
@@ -67,7 +67,7 @@ impl CacheStorage {
                 Err(e) => return Promise::new_rejected(cx, e),
             };
 
-            if responses.len() > 0 {
+            if !responses.is_empty() {
                 return Promise::new_resolved(cx, responses[0]);
             }
         }
@@ -117,7 +117,7 @@ impl CacheStorage {
 
     #[ion(get)]
     pub fn get_default(&self) -> *mut JSObject {
-        assert!(self.caches.len() >= 1 && self.caches[0].0.as_str() == DEFAULT_CACHE_KEY);
+        assert!(!self.caches.is_empty() && self.caches[0].0.as_str() == DEFAULT_CACHE_KEY);
         self.caches[0].1.get()
     }
 }
