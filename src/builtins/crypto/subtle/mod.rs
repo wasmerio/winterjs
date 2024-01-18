@@ -8,7 +8,7 @@ use ion::{
     class::NativeObject, conversions::ToValue, function_spec, ClassDefinition, Context, Object,
     Promise, TracedHeap,
 };
-use mozjs_sys::jsapi::{JSFunctionSpec, JSObject};
+use mozjs_sys::jsapi::JSFunctionSpec;
 use runtime::promise::future_to_promise;
 use strum::ParseError;
 
@@ -34,39 +34,11 @@ pub enum BufferSource<'cx> {
 }
 
 impl<'cx> BufferSource<'cx> {
-    fn into_heap(self) -> HeapBufferSource {
-        match self {
-            Self::ArrayBuffer(b, _) => {
-                HeapBufferSource::ArrayBuffer(TracedHeap::new(unsafe { *b.underlying_object() }))
-            }
-            Self::ArrayBufferView(b, _) => {
-                HeapBufferSource::ArrayBufferView(TracedHeap::new(unsafe {
-                    *b.underlying_object()
-                }))
-            }
-        }
-    }
-}
-
-pub enum HeapBufferSource {
-    ArrayBuffer(TracedHeap<*mut JSObject>),
-    ArrayBufferView(TracedHeap<*mut JSObject>),
-}
-
-impl HeapBufferSource {
-    unsafe fn as_slice(&self) -> &[u8] {
+    fn to_owned(&self) -> Vec<u8> {
         unsafe {
             match self {
-                Self::ArrayBuffer(b) => {
-                    &*(mozjs::typedarray::ArrayBuffer::from(b.get())
-                        .expect("HeapBufferSource was not constructed correctly")
-                        .as_slice() as *const _)
-                }
-                Self::ArrayBufferView(b) => {
-                    &*(mozjs::typedarray::ArrayBufferView::from(b.get())
-                        .expect("HeapBufferSource was not constructed correctly")
-                        .as_slice() as *const _)
-                }
+                Self::ArrayBuffer(buf, _) => buf.as_slice().to_vec(),
+                Self::ArrayBufferView(buf, _) => buf.as_slice().to_vec(),
             }
         }
     }
@@ -83,14 +55,14 @@ pub enum KeyData<'cx> {
 impl<'cx> KeyData<'cx> {
     fn into_heap(self) -> HeapKeyData {
         match self {
-            Self::BufferSource(b) => HeapKeyData::BufferSource(b.into_heap()),
+            Self::BufferSource(b) => HeapKeyData::Buffer(b.to_owned()),
             Self::Jwk(jwk) => HeapKeyData::Jwk(jwk),
         }
     }
 }
 
 pub enum HeapKeyData {
-    BufferSource(HeapBufferSource),
+    Buffer(Vec<u8>),
     Jwk(Box<JsonWebKey>),
 }
 
@@ -168,7 +140,7 @@ fn sign<'cx>(
         let key = TracedHeap::new(key.reflector().get());
         let alg = algorithm.get_algorithm(cx);
         let params = TracedHeap::from_local(&algorithm.to_params(cx));
-        let data = data.into_heap();
+        let data = data.to_owned();
 
         future_to_promise(cx, move |cx| async move {
             let key = CryptoKey::get_private(&key.root(&cx).into());
@@ -203,8 +175,8 @@ fn verify<'cx>(
         let key = TracedHeap::new(key.reflector().get());
         let alg = algorithm.get_algorithm(cx);
         let params = TracedHeap::from_local(&algorithm.to_params(cx));
-        let data = data.into_heap();
-        let signature = signature.into_heap();
+        let data = data.to_owned();
+        let signature = signature.to_owned();
 
         future_to_promise(cx, move |cx| async move {
             let key = CryptoKey::get_private(&key.root(&cx).into());
@@ -232,12 +204,17 @@ fn digest<'cx>(
     cx: &'cx Context,
     algorithm: AlgorithmIdentifier<'cx>,
     data: BufferSource,
-) -> Promise {
-    Promise::new_from_result(cx, {
-        algorithm
-            .get_algorithm(cx)
-            .and_then(|alg| alg.digest(cx, &algorithm.to_params(cx), data.into_heap()))
-    })
+) -> Option<Promise> {
+    let alg = algorithm.get_algorithm(cx);
+    let params = TracedHeap::from_local(&algorithm.to_params(cx));
+    let data = data.to_owned();
+
+    unsafe {
+        future_to_promise::<_, _, _, ion::Error>(cx, move |cx| async move {
+            let alg = alg?;
+            Ok(alg.digest(&cx, &params.root(&cx).into(), data)?.get())
+        })
+    }
 }
 
 #[js_fn]
@@ -286,9 +263,9 @@ fn import_key<'cx>(
         future_to_promise(cx, move |cx| async move {
             match (&key_format, &key_data) {
                 (KeyFormat::Jwk, HeapKeyData::Jwk(_))
-                | (KeyFormat::Pkcs8, HeapKeyData::BufferSource(_))
-                | (KeyFormat::Raw, HeapKeyData::BufferSource(_))
-                | (KeyFormat::Spki, HeapKeyData::BufferSource(_)) => (),
+                | (KeyFormat::Pkcs8, HeapKeyData::Buffer(_))
+                | (KeyFormat::Raw, HeapKeyData::Buffer(_))
+                | (KeyFormat::Spki, HeapKeyData::Buffer(_)) => (),
                 (KeyFormat::Jwk, _) => {
                     return Err(ion::Error::new(
                         "When keyFormat is 'jwk', keyData must be a JsonWebKey",

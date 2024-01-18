@@ -11,7 +11,6 @@ use mozjs_sys::jsval::JSVal;
 
 use crate::{
     builtins::crypto::subtle::{
-        self,
         crypto_key::{generate_random_key, CryptoKey, KeyAlgorithm, KeyFormat, KeyType, KeyUsage},
         jwk::JsonWebKey,
         AlgorithmIdentifier, HeapKeyData,
@@ -103,7 +102,7 @@ impl CryptoAlgorithm for Hmac {
         cx: &'cx Context,
         _params: &ion::Object,
         key: &CryptoKey,
-        data: subtle::HeapBufferSource,
+        data: Vec<u8>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
         let key_alg = key.algorithm.root(cx).into();
         if !HmacKeyAlgorithm::instance_of(cx, &key_alg, None) {
@@ -114,7 +113,7 @@ impl CryptoAlgorithm for Hmac {
         let hash_alg =
             AlgorithmIdentifier::from_value(cx, &key_alg.hash.root(cx).into(), false, ())?;
 
-        let vec = sign(cx, &hash_alg, &key_alg.key_data, unsafe { data.as_slice() })?;
+        let vec = sign(cx, &hash_alg, &key_alg.key_data, data.as_slice())?;
         ArrayBuffer::copy_from_bytes(cx, &vec[..])
             .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
     }
@@ -124,12 +123,12 @@ impl CryptoAlgorithm for Hmac {
         cx: &Context,
         params: &ion::Object,
         key: &CryptoKey,
-        signature: subtle::HeapBufferSource,
-        data: subtle::HeapBufferSource,
+        signature: Vec<u8>,
+        data: Vec<u8>,
     ) -> ion::Result<bool> {
         let calculated = self.sign(cx, params, key, data)?;
         let calc_buf = unsafe { calculated.as_slice() };
-        let sign_buf = unsafe { signature.as_slice() };
+        let sign_buf = signature.as_slice();
         Ok(calc_buf == sign_buf)
     }
 
@@ -194,10 +193,10 @@ impl CryptoAlgorithm for Hmac {
 
         let key_bytes = match format {
             KeyFormat::Raw => {
-                let HeapKeyData::BufferSource(buffer) = &key_data else {
+                let HeapKeyData::Buffer(buffer) = &key_data else {
                     panic!("Invalid key format/key data combination, should be validated before passing in");
                 };
-                Cow::Borrowed(unsafe { buffer.as_slice() })
+                Cow::Borrowed(buffer.as_slice())
             }
             KeyFormat::Jwk => {
                 let HeapKeyData::Jwk(jwk) = key_data else {

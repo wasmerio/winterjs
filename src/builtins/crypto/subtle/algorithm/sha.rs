@@ -33,29 +33,29 @@ impl CryptoAlgorithm for Sha {
         &self,
         cx: &'cx Context,
         _params: &ion::Object,
-        data: super::HeapBufferSource,
+        data: Vec<u8>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
         match self {
             Self::Sha1 => {
-                let data = sha1::Sha1::digest(unsafe { data.as_slice() });
+                let data = sha1::Sha1::digest(data.as_slice());
                 ArrayBuffer::copy_from_bytes(cx, &data)
                     .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
             }
 
             Self::Sha256 => {
-                let data = sha2::Sha256::digest(unsafe { data.as_slice() });
+                let data = sha2::Sha256::digest(data.as_slice());
                 ArrayBuffer::copy_from_bytes(cx, &data)
                     .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
             }
 
             Self::Sha384 => {
-                let data = sha2::Sha384::digest(unsafe { data.as_slice() });
+                let data = sha2::Sha384::digest(data.as_slice());
                 ArrayBuffer::copy_from_bytes(cx, &data)
                     .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
             }
 
             Self::Sha512 => {
-                let data = sha2::Sha512::digest(unsafe { data.as_slice() });
+                let data = sha2::Sha512::digest(data.as_slice());
                 ArrayBuffer::copy_from_bytes(cx, &data)
                     .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
             }

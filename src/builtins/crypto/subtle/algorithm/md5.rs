@@ -13,9 +13,9 @@ impl CryptoAlgorithm for Md5 {
         &self,
         cx: &'cx Context,
         _params: &ion::Object,
-        data: super::HeapBufferSource,
+        data: Vec<u8>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
-        let data = md5::compute(unsafe { data.as_slice() }).0;
+        let data = md5::compute(data.as_slice()).0;
         ArrayBuffer::copy_from_bytes(cx, &data[..])
             .ok_or_else(|| Error::new("Failed to allocate array", ErrorKind::Normal))
     }

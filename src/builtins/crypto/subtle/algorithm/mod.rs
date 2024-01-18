@@ -6,7 +6,7 @@ use ion::{typedarray::ArrayBuffer, Context, Object, Value};
 
 use super::{
     crypto_key::{CryptoKey, KeyFormat, KeyUsage},
-    HeapBufferSource, HeapKeyData,
+    HeapKeyData,
 };
 
 #[allow(unused_variables)]
@@ -25,7 +25,7 @@ pub trait CryptoAlgorithm {
         cx: &'cx Context,
         params: &Object,
         key: &CryptoKey,
-        data: HeapBufferSource,
+        data: Vec<u8>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -38,7 +38,7 @@ pub trait CryptoAlgorithm {
         cx: &'cx Context,
         params: &Object,
         key: &CryptoKey,
-        data: HeapBufferSource,
+        data: Vec<u8>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -51,7 +51,7 @@ pub trait CryptoAlgorithm {
         cx: &'cx Context,
         params: &Object,
         key: &CryptoKey,
-        data: HeapBufferSource,
+        data: Vec<u8>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -64,8 +64,8 @@ pub trait CryptoAlgorithm {
         cx: &Context,
         params: &Object,
         key: &CryptoKey,
-        signature: HeapBufferSource,
-        data: HeapBufferSource,
+        signature: Vec<u8>,
+        data: Vec<u8>,
     ) -> ion::Result<bool> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -77,7 +77,7 @@ pub trait CryptoAlgorithm {
         &self,
         cx: &'cx Context,
         params: &Object,
-        data: HeapBufferSource,
+        data: Vec<u8>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",
@@ -118,7 +118,7 @@ pub trait CryptoAlgorithm {
         _cx: &'cx Context,
         _params: &Object,
         _format: KeyFormat,
-        _wrapped_key: HeapBufferSource,
+        _wrapped_key: Vec<u8>,
         _unwrapping_key: &CryptoKey,
         _extractable: bool,
         _usages: Vec<KeyUsage>,
