@@ -57,7 +57,7 @@ async fn run() -> Result<(), anyhow::Error> {
         Err(err1) => {
             // Fall back to parsing the serve command for backwards compatibility.
 
-            match CmdServe::try_parse_from(&mut std::env::args_os()) {
+            match CmdServe::try_parse_from(std::env::args_os()) {
                 Ok(a) => Args { cmd: Cmd::Serve(a) },
                 Err(_) => {
                     // Neither the main args nor the serve command args could be parsed.

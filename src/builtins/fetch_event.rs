@@ -26,7 +26,7 @@ impl FetchEvent {
             _ => body,
         };
 
-        let uri = format!("https://app.wasmer.internal{}", req.uri.to_string());
+        let uri = format!("https://app.wasmer.internal{}", req.uri);
         let request_info = RequestInfo::String(uri);
 
         let header_entries = req

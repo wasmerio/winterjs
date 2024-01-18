@@ -77,7 +77,7 @@ pub enum KeyData<'cx> {
     #[ion(inherit)]
     BufferSource(BufferSource<'cx>),
     #[ion(inherit)]
-    Jwk(JsonWebKey),
+    Jwk(Box<JsonWebKey>),
 }
 
 impl<'cx> KeyData<'cx> {
@@ -91,7 +91,7 @@ impl<'cx> KeyData<'cx> {
 
 pub enum HeapKeyData {
     BufferSource(HeapBufferSource),
-    Jwk(JsonWebKey),
+    Jwk(Box<JsonWebKey>),
 }
 
 #[derive(FromValue)]
@@ -166,7 +166,7 @@ fn sign<'cx>(
 ) -> Option<Promise> {
     unsafe {
         let key = TracedHeap::new(key.reflector().get());
-        let alg = algorithm.get_algorithm(&cx);
+        let alg = algorithm.get_algorithm(cx);
         let params = TracedHeap::from_local(&algorithm.to_params(cx));
         let data = data.into_heap();
 
@@ -201,7 +201,7 @@ fn verify<'cx>(
 ) -> Option<Promise> {
     unsafe {
         let key = TracedHeap::new(key.reflector().get());
-        let alg = algorithm.get_algorithm(&cx);
+        let alg = algorithm.get_algorithm(cx);
         let params = TracedHeap::from_local(&algorithm.to_params(cx));
         let data = data.into_heap();
         let signature = signature.into_heap();
@@ -248,7 +248,7 @@ fn generate_key<'cx>(
     key_usages: Vec<KeyUsage>,
 ) -> Option<Promise> {
     unsafe {
-        let alg = algorithm.get_algorithm(&cx);
+        let alg = algorithm.get_algorithm(cx);
         let params = TracedHeap::from_local(&algorithm.to_params(cx));
 
         future_to_promise(cx, move |cx| async move {
@@ -279,7 +279,7 @@ fn import_key<'cx>(
     key_usages: Vec<KeyUsage>,
 ) -> Option<Promise> {
     unsafe {
-        let alg = algorithm.get_algorithm(&cx);
+        let alg = algorithm.get_algorithm(cx);
         let params = TracedHeap::from_local(&algorithm.to_params(cx));
         let key_data = key_data.into_heap();
 
@@ -354,7 +354,7 @@ const METHODS: &[JSFunctionSpec] = &[
     JSFunctionSpec::ZERO,
 ];
 
-pub fn define<'cx>(cx: &'cx Context, mut obj: Object) -> bool {
+pub fn define(cx: &Context, mut obj: Object) -> bool {
     unsafe { obj.define_methods(cx, METHODS) }
 }
 
@@ -379,7 +379,7 @@ macro_rules! enum_value {
                     ion::String::from(cx.root_string(value.handle().to_string()))
                         .to_owned(cx)
                         .parse()
-                        .map_err(crate::builtins::crypto::subtle::parse_error_to_type_error)
+                        .map_err($crate::builtins::crypto::subtle::parse_error_to_type_error)
                 }
             }
         }

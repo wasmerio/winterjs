@@ -37,7 +37,7 @@ impl NativeModule for CryptoModule {
 
     const SOURCE: &'static str = include_str!("crypto.js");
 
-    fn module<'cx>(cx: &'cx ion::Context) -> Option<ion::Object<'cx>> {
+    fn module(cx: &ion::Context) -> Option<ion::Object> {
         let mut ret = Object::new(cx);
 
         let subtle = Object::new(cx);

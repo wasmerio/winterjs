@@ -112,15 +112,16 @@ pub trait CryptoAlgorithm {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn unwrap_key<'cx>(
         &self,
-        cx: &'cx Context,
-        params: &Object,
-        format: KeyFormat,
-        wrapped_key: HeapBufferSource,
-        unwrapping_key: &CryptoKey,
-        extractable: bool,
-        usages: Vec<KeyUsage>,
+        _cx: &'cx Context,
+        _params: &Object,
+        _format: KeyFormat,
+        _wrapped_key: HeapBufferSource,
+        _unwrapping_key: &CryptoKey,
+        _extractable: bool,
+        _usages: Vec<KeyUsage>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
         Err(ion::Error::new(
             "Operation not supported by the specified algorithm",

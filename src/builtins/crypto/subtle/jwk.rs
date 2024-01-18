@@ -1,3 +1,5 @@
+use ion::conversions::FromValue;
+
 #[derive(FromValue, ToValue)]
 pub struct RsaOtherPrimesInfo {
     pub r: String,
@@ -28,4 +30,18 @@ pub struct JsonWebKey {
     pub qi: Option<String>,
     pub oth: Option<Vec<RsaOtherPrimesInfo>>,
     pub k: Option<String>,
+}
+
+impl<'cx> FromValue<'cx> for Box<JsonWebKey> {
+    type Config = ();
+
+    fn from_value(
+        cx: &'cx ion::Context,
+        value: &ion::Value,
+        strict: bool,
+        config: Self::Config,
+    ) -> ion::Result<Self> {
+        let jwk = JsonWebKey::from_value(cx, value, strict, config)?;
+        Ok(Box::new(jwk))
+    }
 }

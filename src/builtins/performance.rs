@@ -21,7 +21,7 @@ impl NativeModule for PerformanceModule {
 
     const SOURCE: &'static str = include_str!("performance.js");
 
-    fn module<'cx>(cx: &'cx ion::Context) -> Option<ion::Object<'cx>> {
+    fn module(cx: &ion::Context) -> Option<ion::Object> {
         let mut ret = Object::new(cx);
         if unsafe { ret.define_methods(cx, METHODS) } && ret.set_as(cx, "timeOrigin", &0.0f64) {
             Some(ret)
