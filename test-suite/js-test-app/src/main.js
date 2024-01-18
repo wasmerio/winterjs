@@ -20,6 +20,7 @@ import { handleRequest as handleFormData } from "./test-files/14-form-data.js";
 import { handleRequest as handleTimers } from "./test-files/15-timers.js";
 import { handleRequest as handleCrypto } from "./test-files/16-crypto.js";
 import { handleRequest as handleCryptoHmac } from "./test-files/16.1-crypto-hmac.js";
+import { handleRequest as handleCryptoSha } from "./test-files/16.2-crypto-sha.js";
 
 function router(req) {
   const url = new URL(req.url);
@@ -90,6 +91,9 @@ function router(req) {
   }
   if (path.startsWith("/16.1-crypto-hmac")) {
     return handleCryptoHmac(req);
+  }
+  if (path.startsWith("/16.2-crypto-sha")) {
+    return handleCryptoSha(req);
   }
   return new Response(`Route Not Found - ${path}`, { status: 404 });
 }

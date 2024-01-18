@@ -169,3 +169,15 @@ test_name = "16-crypto"
 test_route = "16-crypto"
 expected_output = "All Tests Passed!"
 expected_response_status = 200
+
+[[test_case]]
+test_name = "16.1-crypto-hmac"
+test_route = "16.1-crypto-hmac"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
+
+[[test_case]]
+test_name = "16.2-crypto-sha"
+test_route = "16.2-crypto-sha"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
