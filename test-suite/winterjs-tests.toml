@@ -163,3 +163,9 @@ test_name = "15-timers"
 test_route = "15-timers"
 expected_output = "All Tests Passed!"
 expected_response_status = 200
+
+[[test_case]]
+test_name = "16-crypto"
+test_route = "16-crypto"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
