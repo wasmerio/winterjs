@@ -1,3 +1,9 @@
+use std::{
+    cell::RefCell,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
+
 use futures::future::Either;
 use http::{header, Method};
 use ion::{
@@ -15,6 +21,8 @@ use runtime::{
 
 use crate::ion_err;
 
+use self::cache_storage::CacheEntryList;
+
 mod cache_storage;
 
 #[derive(FromValue, Default)]
@@ -25,20 +33,35 @@ pub struct CacheQueryOptions {
 }
 
 #[js_class]
-#[derive(Default)]
 pub struct Cache {
     reflector: Reflector,
 
-    entries: Vec<(Heap<*mut JSObject>, Heap<*mut JSObject>)>, // (Request, Response)
+    #[trace(no_trace)]
+    entries: Rc<RefCell<CacheEntryList>>,
 }
 
 impl Cache {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(entries: Rc<RefCell<CacheEntryList>>) -> Self {
+        Self {
+            reflector: Default::default(),
+            entries,
+        }
+    }
+
+    pub fn entries(&self) -> impl Deref<Target = CacheEntryList> + '_ {
+        self.entries
+            .try_borrow()
+            .expect("Should be able to borrow entries")
+    }
+
+    pub fn entries_mut(&mut self) -> impl DerefMut<Target = CacheEntryList> + '_ {
+        self.entries
+            .try_borrow_mut()
+            .expect("Should be able to borrow entries mutably")
     }
 
     pub fn match_all_impl(
-        &self,
+        entries: impl Deref<Target = CacheEntryList>,
         cx: &Context,
         key: Option<RequestInfo>,
         max_entries: usize,
@@ -54,7 +77,7 @@ impl Cache {
 
         let mut responses = vec![];
 
-        for (req, resp) in &self.entries {
+        for (req, resp) in &*entries {
             let response = Response::get_mut_private(&mut resp.root(cx).into());
             if Self::is_match(
                 cx,
@@ -104,7 +127,7 @@ impl Cache {
             return false;
         }
 
-        if options.ignore_vary == Some(true) {
+        if options.ignore_vary == Some(true) || value.get_type().as_str() == "opaque" {
             return true;
         }
 
@@ -176,19 +199,21 @@ impl Cache {
             );
         }
 
-        if let Some(vary) = response_ref.headers(&cx).get(header::VARY) {
-            let Ok(vary_header) = vary.to_str() else {
-                ion_err!(
-                    "The response has an invalid value for the Vary header",
-                    Type
-                );
-            };
-            let mut values = vary_header.split(',');
-            if values.any(|v| v.trim() == "*") {
-                ion_err!(
-                    "The response has the 'Vary: *' header, which cannot be cached",
-                    Type
-                );
+        if response_ref.get_type().as_str() != "opaque" {
+            if let Some(vary) = response_ref.headers(&cx).get(header::VARY) {
+                let Ok(vary_header) = vary.to_str() else {
+                    ion_err!(
+                        "The response has an invalid value for the Vary header",
+                        Type
+                    );
+                };
+                let mut values = vary_header.split(',');
+                if values.any(|v| v.trim() == "*") {
+                    ion_err!(
+                        "The response has the 'Vary: *' header, which cannot be cached",
+                        Type
+                    );
+                }
             }
         }
 
@@ -210,7 +235,7 @@ impl Cache {
 
         let this_ref = Self::get_mut_private(&mut this.root(&cx).into());
         let request_ref = Request::get_private(&request.root(&cx).into());
-        this_ref.delete_impl(&cx, request_ref, None)?;
+        Self::delete_impl(this_ref.entries_mut(), &cx, request_ref, None);
 
         let cached_response = Heap::new(Response::new_object(
             &cx,
@@ -221,31 +246,33 @@ impl Cache {
         ));
 
         this_ref
-            .entries
+            .entries_mut()
             .push((Heap::new(request.get()), cached_response));
 
         Ok(())
     }
 
     pub fn delete_impl(
-        &mut self,
+        mut entries: impl DerefMut<Target = CacheEntryList>,
         cx: &Context,
         key: &Request,
         options: Option<CacheQueryOptions>,
-    ) -> Result<()> {
+    ) -> bool {
+        let mut result = false;
         let options = options.unwrap_or_default();
-        for i in (0..self.entries.len()).rev() {
+        for i in (0..entries.len()).rev() {
             if Self::is_match(
                 cx,
                 Some(key),
-                Request::get_private(&self.entries[i].0.root(cx).into()),
-                Response::get_private(&self.entries[i].1.root(cx).into()),
+                Request::get_private(&entries[i].0.root(cx).into()),
+                Response::get_private(&entries[i].1.root(cx).into()),
                 &options,
             ) {
-                self.entries.remove(i);
+                entries.remove(i);
+                result = true;
             }
         }
-        Ok(())
+        result
     }
 }
 
@@ -265,14 +292,20 @@ impl Cache {
     ) -> Promise {
         Promise::new_from_result(
             cx,
-            self.match_all_impl(cx, Some(key), 1, &options.unwrap_or_default())
-                .map(|r| {
-                    if !r.is_empty() {
-                        ObjectValue(r[0])
-                    } else {
-                        UndefinedValue()
-                    }
-                }),
+            Self::match_all_impl(
+                self.entries(),
+                cx,
+                Some(key),
+                1,
+                &options.unwrap_or_default(),
+            )
+            .map(|r| {
+                if !r.is_empty() {
+                    ObjectValue(r[0])
+                } else {
+                    UndefinedValue()
+                }
+            }),
         )
     }
 
@@ -284,7 +317,13 @@ impl Cache {
     ) -> Promise {
         Promise::new_from_result(
             cx,
-            self.match_all_impl(cx, key, usize::MAX, &options.unwrap_or_default()),
+            Self::match_all_impl(
+                self.entries(),
+                cx,
+                key,
+                usize::MAX,
+                &options.unwrap_or_default(),
+            ),
         )
     }
 
@@ -332,6 +371,22 @@ impl Cache {
                         Either::Right(r) => r.clone(),
                     };
                     let req_obj = &mut req_heap.to_local().into();
+
+                    let req = Request::get_private(req_obj);
+                    for (prev_req, prev_resp) in &to_commit {
+                        let prev_req = Request::get_private(&prev_req.to_local().into());
+                        let prev_resp = Response::get_private(&prev_resp.to_local().into());
+                        if Cache::is_match(
+                            &cx,
+                            Some(req),
+                            prev_req,
+                            prev_resp,
+                            &CacheQueryOptions::default(),
+                        ) {
+                            ion_err!("Cannot cache matching requests with addAll", Normal);
+                        }
+                    }
+
                     let response;
                     (cx, response) = cx
                         .await_native_cx(move |cx| {
@@ -417,7 +472,10 @@ impl Cache {
             Ok(x) => x,
             Err(e) => return Promise::new_rejected(cx, e),
         };
-        Promise::new_from_result(cx, self.delete_impl(cx, request, options))
+        Promise::new_resolved(
+            cx,
+            Self::delete_impl(self.entries_mut(), cx, request, options),
+        )
     }
 
     pub fn keys(
@@ -429,7 +487,7 @@ impl Cache {
         match request {
             None => Promise::new_from_result(
                 cx,
-                self.entries
+                self.entries()
                     .iter()
                     .map(|r| {
                         let req = Request::get_mut_private(&mut r.0.root(cx).into());
@@ -446,7 +504,7 @@ impl Cache {
                 let mut result = vec![];
                 let options = options.unwrap_or_default();
 
-                for entry in &self.entries {
+                for entry in &*self.entries() {
                     let cached_req = Request::get_mut_private(&mut entry.0.root(cx).into());
                     let cached_resp = Response::get_private(&entry.1.root(cx).into());
                     if Self::is_match(cx, Some(request), cached_req, cached_resp, &options) {

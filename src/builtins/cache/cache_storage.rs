@@ -1,7 +1,12 @@
+use std::{cell::RefCell, rc::Rc};
+
 use ion::{
-    class::Reflector, conversions::ToValue, ClassDefinition, Context, Heap, Object, Promise,
-    Result, Value,
+    class::Reflector,
+    conversions::ToValue,
+    string::byte::{ByteString, VerbatimBytes},
+    ClassDefinition, Context, Heap, Object, Promise, Result, Value,
 };
+use lazy_static::lazy_static;
 use mozjs_sys::jsapi::JSObject;
 use runtime::globals::fetch::RequestInfo;
 
@@ -9,22 +14,30 @@ use crate::{ion_err, ion_mk_err};
 
 use super::{Cache, CacheQueryOptions};
 
-const DEFAULT_CACHE_KEY: &str = "_____WINTERJS_DEFAULT_CACHE_____";
+lazy_static! {
+    static ref DEFAULT_CACHE_KEY: ByteString<VerbatimBytes> =
+        ByteString::from("_____WINTERJS_DEFAULT_CACHE_____".to_string().into())
+            .expect("Should be able to create default cache key");
+}
 
 #[derive(FromValue)]
 pub struct MultiCacheQueryOptions {
     ignore_search: Option<bool>,
     ignore_method: Option<bool>,
     ignore_vary: Option<bool>,
-    cache_name: Option<String>,
+    cache_name: Option<ByteString<VerbatimBytes>>,
 }
+
+// (Request, Response)
+pub(super) type CacheEntryList = Vec<(Heap<*mut JSObject>, Heap<*mut JSObject>)>;
 
 #[js_class]
 pub struct CacheStorage {
     reflector: Reflector,
 
     // Note: The order of the caches is important, so we can't naively use a hashmap here
-    caches: Vec<(String, Heap<*mut JSObject>)>,
+    #[trace(no_trace)]
+    pub(super) caches: Vec<(ByteString<VerbatimBytes>, Rc<RefCell<CacheEntryList>>)>,
 }
 
 #[js_class]
@@ -52,12 +65,13 @@ impl CacheStorage {
             .unwrap_or_default();
         for c in &self.caches {
             if let Some(cache_name) = cache_name {
-                if c.0.as_str() != cache_name.as_str() {
+                if &c.0 != cache_name {
                     continue;
                 }
             }
 
-            let responses = match Cache::get_private(&c.1.root(cx).into()).match_all_impl(
+            let responses = match Cache::match_all_impl(
+                c.1.try_borrow().expect("Should be able to borrow entries"),
                 cx,
                 Some(key.clone()),
                 1,
@@ -75,24 +89,31 @@ impl CacheStorage {
         Promise::new_resolved(cx, Value::undefined(cx))
     }
 
-    pub fn has(&self, cx: &Context, key: String) -> Promise {
+    pub fn has(&self, cx: &Context, key: ByteString<VerbatimBytes>) -> Promise {
         Promise::new_resolved(cx, self.caches.iter().any(|c| c.0 == key))
     }
 
-    pub fn open(&mut self, cx: &Context, key: String) -> Promise {
-        for c in &self.caches {
-            if c.0 == key {
-                return Promise::new_resolved(cx, c.1.get());
-            }
-        }
+    pub fn open(&mut self, cx: &Context, key: ByteString<VerbatimBytes>) -> Promise {
+        let index =
+            match self
+                .caches
+                .iter()
+                .enumerate()
+                .find_map(|(i, c)| if c.0 == key { Some(i) } else { None })
+            {
+                Some(i) => i,
+                None => {
+                    self.caches.push((key, Rc::new(RefCell::new(vec![]))));
+                    self.caches.len() - 1
+                }
+            };
 
-        let cache = Cache::new_object(cx, Box::new(Cache::new()));
-        self.caches.push((key, Heap::new(cache)));
+        let cache = Cache::new_object(cx, Box::new(Cache::new(self.caches[index].1.clone())));
         Promise::new_resolved(cx, cache)
     }
 
-    pub fn delete(&mut self, cx: &Context, key: String) -> Promise {
-        if key.as_str() == DEFAULT_CACHE_KEY {
+    pub fn delete(&mut self, cx: &Context, key: ByteString<VerbatimBytes>) -> Promise {
+        if key == *DEFAULT_CACHE_KEY {
             return Promise::new_rejected(cx, ion_mk_err!("Cannot delete the default cache", Type));
         }
 
@@ -116,9 +137,9 @@ impl CacheStorage {
     }
 
     #[ion(get)]
-    pub fn get_default(&self) -> *mut JSObject {
-        assert!(!self.caches.is_empty() && self.caches[0].0.as_str() == DEFAULT_CACHE_KEY);
-        self.caches[0].1.get()
+    pub fn get_default(&self, cx: &Context) -> *mut JSObject {
+        assert!(!self.caches.is_empty() && self.caches[0].0 == *DEFAULT_CACHE_KEY);
+        Cache::new_object(cx, Box::new(Cache::new(self.caches[0].1.clone())))
     }
 }
 
@@ -132,10 +153,9 @@ pub fn define(cx: &Context, global: &mut Object) -> bool {
         caches: Default::default(),
     };
 
-    caches.caches.push((
-        DEFAULT_CACHE_KEY.to_string(),
-        Heap::new(Cache::new_object(cx, Box::new(Cache::new()))),
-    ));
+    caches
+        .caches
+        .push((DEFAULT_CACHE_KEY.clone(), Rc::new(RefCell::new(vec![]))));
 
     let caches_obj = CacheStorage::new_object(cx, Box::new(caches));
     global.set(
