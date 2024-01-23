@@ -15,7 +15,7 @@ async function handleRequest(request) {
     // Test fetch with following methods
     // GET, POST, PUT, DELETE, HEAD, OPTIONS, PATCH, TRACE
 
-    const url = "https://winter-fetch-tests.wasmer.app";
+    const url = process.env.TESTS_BACKEND_URL;
 
     // Test GET
     try {
