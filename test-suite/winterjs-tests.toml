@@ -1,9 +1,9 @@
 [[engine]]
 engine = "WinterJS"
-# stress_duration = 10
-# max_concurrent_connections = 100
-# min_connections = 2000
-# max_connections = 20000
+stress_duration = 10
+max_concurrent_connections = 100
+min_connections = 2000
+max_connections = 20000
 
 # [[engine]]
 # engine = "Wrangler"
@@ -179,5 +179,11 @@ expected_response_status = 200
 [[test_case]]
 test_name = "16.2-crypto-sha"
 test_route = "16.2-crypto-sha"
+expected_output = "All Tests Passed!"
+expected_response_status = 200
+
+[[test_case]]
+test_name = "17-cache"
+test_route = "17-cache"
 expected_output = "All Tests Passed!"
 expected_response_status = 200

@@ -17,6 +17,16 @@ const assert_false = (condition, message) => {
   }
 }
 
+const assert_class_string = (obj, clsName, message) => {
+  if (typeof (obj) !== 'object') {
+    throw new Error(`Expected ${obj} to an object: ${message}`);
+  }
+
+  if (obj.constructor.name !== clsName) {
+    throw new Error(`Expected ${obj} to be of type ${clsName}: ${message}`);
+  }
+}
+
 const assert_array_equals = (array1, array2, message) => {
   if (array1.length != array2.length || array1.length === undefined) {
     throw new Error(`Expected ${array1} to be equal to ${array2}: ${message}`);
@@ -112,29 +122,22 @@ const promise_test = async (f, desc) => {
   }
 }
 
-const promise_rejects_js = async (p, message) => {
-  let result;
-  try {
-    result = await p;
-    throw undefined;
-  } catch (e) {
-    if (e === undefined) {
-      throw new Error(`Promise should throw but succeeded with ${result}: ${message}`);
-    }
-  }
+const promise_rejects_js = (p, message) => {
+  return p.then(
+    result => assert_unreached(
+      `Promise should throw but succeeded with ${result}: ${message}`
+    ),
+    _ => { }
+  );
 }
 
-const promise_rejects_exactly = async (error, p, message) => {
-  try {
-    await p;
-    throw undefined;
-  } catch (e) {
-    if (e === undefined) {
-      throw new Error(`Promise should throw but succeeded: ${message}`);
-    } else if (e !== error) {
-      throw new Error(`Promise should reject with ${error} but rejected with ${e}: ${message}`);
-    }
-  }
+const promise_rejects_exactly = (error, p, message) => {
+  return p.then(
+    result => assert_unreached(
+      `Promise should throw but succeeded with ${result}: ${message}`
+    ),
+    e => assert_equals(e, error, message)
+  );
 }
 
 const readStream = async (stream) => {
@@ -217,6 +220,7 @@ const flushAsyncEvents = () => delay(0).then(() => delay(0)).then(() => delay(0)
 
 export {
   assert,
+  assert_class_string,
   assert_array_equals,
   assert_equals,
   assert_not_equals,
