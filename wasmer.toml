@@ -1,6 +1,6 @@
 [package]
 name = 'wasmer/winterjs'
-version = '0.1.12'
+version = '0.2.0'
 description = 'The JavaScript runtime that brings JavaScript to Wasmer Edge.'
 license = 'MIT'
 readme = 'README.md'
