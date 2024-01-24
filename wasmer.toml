@@ -11,10 +11,10 @@ repository = 'https://github.com/wasmerio/winterjs/'
 [dependencies]
 
 [[module]]
-name = 'wasmer-winter'
+name = 'winterjs'
 source = 'target/wasm32-wasmer-wasi/release/winterjs.wasm'
 abi = 'wasi'
 
 [[command]]
-name = 'wasmer-winter'
-module = 'wasmer-winter'
+name = 'winterjs'
+module = 'winterjs'
