@@ -5,6 +5,7 @@ description = 'The JavaScript runtime that brings JavaScript to Wasmer Edge.'
 license = 'MIT'
 readme = 'README.md'
 repository = 'https://github.com/wasmerio/winterjs/'
+entrypoint = 'winterjs'
 
 # See more keys and definitions at https://docs.wasmer.io/registry/manifest
 
