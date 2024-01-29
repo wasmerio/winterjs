@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::Context as _;
 use clap::Parser;
+use ion_runner::UserCode;
 
 #[macro_use]
 extern crate ion_proc;
@@ -41,7 +42,9 @@ mod server;
 
 #[tokio::main]
 async fn main() {
-    run().await.unwrap();
+    if let Err(e) = run().await {
+        println!("{e:?}");
+    }
 }
 
 async fn run() -> Result<(), anyhow::Error> {
@@ -70,13 +73,6 @@ async fn run() -> Result<(), anyhow::Error> {
 
     match args.cmd {
         Cmd::Serve(cmd) => {
-            let code = std::fs::read_to_string(&cmd.js_path).with_context(|| {
-                format!(
-                    "Could not read Javascript file at '{}'",
-                    cmd.js_path.display()
-                )
-            })?;
-
             let interface = if let Some(iface) = cmd.ip {
                 iface
             } else if let Ok(value) = std::env::var("LISTEN_IP") {
@@ -105,10 +101,16 @@ async fn run() -> Result<(), anyhow::Error> {
                 .unwrap();
 
             if cmd.watch {
-                let runner = ion_runner::WatchRunner::new(cmd.js_path.clone(), cmd.max_js_threads);
+                let runner = ion_runner::WatchRunner::new(
+                    cmd.js_path.clone(),
+                    cmd.script,
+                    cmd.max_js_threads,
+                )?;
                 crate::server::run_server(config, runner).await
             } else {
-                let runner = ion_runner::IonRunner::new_request_handler(cmd.max_js_threads, code);
+                let user_code = UserCode::from_path(&cmd.js_path, cmd.script).await?;
+                let runner =
+                    ion_runner::IonRunner::new_request_handler(cmd.max_js_threads, user_code);
                 crate::server::run_server(config, runner).await
             }
         }
@@ -150,6 +152,11 @@ struct CmdServe {
     watch: bool,
 
     /// Path to a Javascript file to serve.
-    #[clap(env = "JS_PATH")]
+    #[clap(env = "WINTERJS_PATH")]
     js_path: PathBuf,
+
+    /// Run in script mode. If this flag is not specified, the JS file will
+    /// be loaded in module mode instead.
+    #[clap(short, long, env = "WINTERJS_SCRIPT")]
+    script: bool,
 }

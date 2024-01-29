@@ -1,7 +1,9 @@
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::Context as _;
+use anyhow::bail;
 use tokio::sync::Mutex;
+
+use crate::ion_runner::UserCode;
 
 use super::{IonRunner, SharedIonRunner};
 
@@ -24,15 +26,20 @@ struct MutableState {
     runner: SharedIonRunner,
 }
 
+// TODO: support watching modules. This is complicated by the fact that we must
+// watch all modules loaded in after the entry module was loaded as well.
 impl WatchRunner {
-    pub fn new(js_path: PathBuf, max_js_threads: usize) -> Self {
-        Self {
+    pub fn new(js_path: PathBuf, script_mode: bool, max_js_threads: usize) -> anyhow::Result<Self> {
+        if !script_mode {
+            bail!("Watch mode is not compatible with module mode yet. Use --script to run in script mode instead.");
+        }
+        Ok(Self {
             state: Arc::new(State {
                 js_path,
                 max_js_threads,
                 mutable: Mutex::new(None),
             }),
-        }
+        })
     }
 
     async fn acquire_runner(&self) -> Result<SharedIonRunner, anyhow::Error> {
@@ -46,14 +53,13 @@ impl WatchRunner {
 
         let mut mutable = self.state.mutable.lock().await;
 
-        let contents = tokio::fs::read_to_string(&self.state.js_path)
+        let (contents, file_name) = match UserCode::from_path(&self.state.js_path, true)
             .await
-            .with_context(|| {
-                format!(
-                    "Could not read Javascript file at '{}'",
-                    self.state.js_path.display()
-                )
-            })?;
+            .unwrap()
+        {
+            UserCode::Script { code, file_name } => (code, file_name),
+            UserCode::Module(_) => unreachable!(),
+        };
 
         if let Some(mutable) = mutable.as_mut() {
             if mutable.contents == contents {
@@ -63,7 +69,13 @@ impl WatchRunner {
 
         tracing::info!(path=%self.state.js_path.display(), "reloaded application code");
 
-        let runner = IonRunner::new_request_handler(self.state.max_js_threads, contents.clone());
+        let runner = IonRunner::new_request_handler(
+            self.state.max_js_threads,
+            UserCode::Script {
+                code: contents.clone(),
+                file_name,
+            },
+        );
         *mutable = Some(MutableState {
             contents,
             runner: runner.clone(),

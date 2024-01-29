@@ -46,7 +46,7 @@ pub trait RequestHandler: Send + Clone + 'static {
         addr: SocketAddr,
         req: http::request::Parts,
         body: hyper::Body,
-    ) -> Result<hyper::Response<hyper::Body>, anyhow::Error>;
+    ) -> anyhow::Result<hyper::Response<hyper::Body>>;
 }
 
 #[derive(Clone)]

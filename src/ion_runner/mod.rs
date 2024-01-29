@@ -3,20 +3,24 @@ mod watch;
 pub use watch::WatchRunner;
 
 use std::{
-    path::Path,
+    ffi::OsString,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{atomic::AtomicI32, Arc},
     time::Duration,
 };
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context as _};
 use async_trait::async_trait;
 use futures::{
     future::Either,
     stream::{FuturesUnordered, StreamExt},
     Future,
 };
-use ion::{conversions::ToValue, script::Script, ClassDefinition, Context, ErrorReport, Promise};
+use ion::{
+    conversions::ToValue, module::Module, script::Script, ClassDefinition, Context, ErrorReport,
+    Promise,
+};
 use mozjs::{
     jsapi::PromiseState,
     rust::{JSEngine, JSEngineHandle, RealmOptions},
@@ -61,7 +65,7 @@ macro_rules! ion_err {
 fn ignore_error<E>(_r: std::result::Result<(), E>) {}
 
 async fn handle_requests_inner(
-    user_code: String,
+    user_code: UserCode,
     recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) -> Result<(), anyhow::Error> {
     let mozjs_rt = mozjs::rust::Runtime::new(ENGINE.clone());
@@ -70,18 +74,47 @@ async fn handle_requests_inner(
     let mut realm_options = RealmOptions::default();
     realm_options.creationOptions_.streams_ = true;
     // TODO: module loader?
-    let rt = RuntimeBuilder::<(), _>::new()
+    let rt_builder = RuntimeBuilder::<_, _>::new()
         .microtask_queue()
         .macrotask_queue()
         .standard_modules(Modules)
-        .realm_options(realm_options)
-        .build(&mut cx);
+        .realm_options(realm_options);
+
+    let rt_builder = if matches!(user_code, UserCode::Module(_)) {
+        rt_builder.modules(runtime::modules::Loader::default())
+    } else {
+        rt_builder
+    };
+
+    let rt = rt_builder.build(&mut cx);
 
     let cx = Context::from_runtime(&mozjs_rt);
 
     // Evaluate the user script, hopefully resulting in the fetch handler being registered
-    Script::compile_and_evaluate(rt.cx(), Path::new("app.js"), user_code.as_str())
-        .map_err(|e| error_report_to_anyhow_error(&cx, e))?;
+    // Script::compile_and_evaluate(rt.cx(), Path::new("app.js"), user_code.as_str())
+    //     .map_err(|e| error_report_to_anyhow_error(&cx, e))?;
+
+    match user_code {
+        UserCode::Script { code, file_name } => {
+            Script::compile_and_evaluate(rt.cx(), Path::new(&file_name), code.as_str())
+                .map_err(|e| error_report_to_anyhow_error(&cx, e))?;
+        }
+        UserCode::Module(path) => {
+            let file_name = path
+                .file_name()
+                .ok_or(anyhow!("Failed to get file name from script path"))
+                .map(|f| f.to_string_lossy().into_owned())?;
+
+            let code = std::fs::read_to_string(&path).context("Failed to read script file")?;
+
+            Module::compile_and_evaluate(&cx, &file_name, Some(&path), &code).map_err(|e| {
+                error_report_option_to_anyhow_error(&cx, Some(e.report)).context(format!(
+                    "Error while loading module during {:?} step",
+                    e.kind
+                ))
+            })?;
+        }
+    }
 
     // Wait for any promises resulting from running the script to be resolved, giving
     // scripts a chance to initialize before accepting requests
@@ -179,7 +212,7 @@ async fn handle_requests_inner(
 }
 
 async fn handle_requests(
-    user_code: String,
+    user_code: UserCode,
     mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) {
     if let Err(e) = handle_requests_inner(user_code, &mut recv).await {
@@ -385,18 +418,49 @@ pub struct WorkerThreadInfo {
     in_flight_requests: Arc<AtomicI32>,
 }
 
+#[derive(Clone, Debug)]
+pub enum UserCode {
+    Script { code: String, file_name: OsString },
+    Module(PathBuf),
+}
+
+impl UserCode {
+    pub async fn from_path(path: &PathBuf, script: bool) -> anyhow::Result<Self> {
+        if script {
+            let code = tokio::fs::read_to_string(&path).await.with_context(|| {
+                format!("Could not read Javascript file at '{}'", path.display())
+            })?;
+            let file_name = path
+                .file_name()
+                .map(|p| p.to_os_string())
+                .unwrap_or(OsString::from("app.js"));
+            Ok(Self::Script { code, file_name })
+        } else {
+            let path =
+                dunce::canonicalize(path).context("Failed to canonicalize root module path")?;
+            let metadata = tokio::fs::metadata(&path)
+                .await
+                .context("Failed to read module file")?;
+            if !metadata.is_file() {
+                bail!("Path does not point to a file: {}", path.display());
+            }
+            Ok(Self::Module(path))
+        }
+    }
+}
+
 // TODO: clean shutdown
 // TODO: replace failing threads
 pub struct IonRunner {
     threads: Vec<WorkerThreadInfo>,
     max_threads: usize,
-    user_code: String,
+    user_code: UserCode,
 }
 
 pub type SharedIonRunner = Arc<Mutex<IonRunner>>;
 
 impl IonRunner {
-    pub fn new(max_threads: usize, user_code: String) -> Self {
+    pub fn new(max_threads: usize, user_code: UserCode) -> Self {
         if max_threads == 0 {
             panic!("max_threads must be at least 1");
         }
@@ -408,7 +472,7 @@ impl IonRunner {
         }
     }
 
-    pub fn new_request_handler(max_threads: usize, user_code: String) -> Arc<Mutex<Self>> {
+    pub fn new_request_handler(max_threads: usize, user_code: UserCode) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self::new(max_threads, user_code)))
     }
 
