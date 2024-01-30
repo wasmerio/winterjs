@@ -1,3 +1,4 @@
+mod internal_js_modules;
 mod watch;
 
 pub use watch::WatchRunner;
@@ -68,6 +69,8 @@ async fn handle_requests_inner(
     user_code: UserCode,
     recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) -> Result<(), anyhow::Error> {
+    let is_module_mode = matches!(user_code, UserCode::Module(_));
+
     let mozjs_rt = mozjs::rust::Runtime::new(ENGINE.clone());
 
     let mut cx = Context::from_runtime(&mozjs_rt);
@@ -77,10 +80,12 @@ async fn handle_requests_inner(
     let rt_builder = RuntimeBuilder::<_, _>::new()
         .microtask_queue()
         .macrotask_queue()
-        .standard_modules(Modules)
+        .standard_modules(Modules {
+            include_internal: is_module_mode,
+        })
         .realm_options(realm_options);
 
-    let rt_builder = if matches!(user_code, UserCode::Module(_)) {
+    let rt_builder = if is_module_mode {
         rt_builder.modules(runtime::modules::Loader::default())
     } else {
         rt_builder
@@ -436,8 +441,8 @@ impl UserCode {
                 .unwrap_or(OsString::from("app.js"));
             Ok(Self::Script { code, file_name })
         } else {
-            let path =
-                dunce::canonicalize(path).context("Failed to canonicalize root module path")?;
+            let path = runtime::wasi_polyfills::canonicalize(path)
+                .context("Failed to canonicalize root module path")?;
             let metadata = tokio::fs::metadata(&path)
                 .await
                 .context("Failed to read module file")?;
@@ -600,11 +605,13 @@ impl Drop for IncrementGuard {
     }
 }
 
-struct Modules;
+struct Modules {
+    include_internal: bool,
+}
 
 impl StandardModules for Modules {
     fn init(self, cx: &Context, global: &mut ion::Object) -> bool {
-        init_module::<PerformanceModule>(cx, global)
+        let result = init_module::<PerformanceModule>(cx, global)
             && init_module::<crypto::CryptoModule>(cx, global)
             && init_module::<modules::Assert>(cx, global)
             && init_module::<modules::FileSystem>(cx, global)
@@ -613,10 +620,23 @@ impl StandardModules for Modules {
             && event_listener::define(cx, global)
             && fetch_event::FetchEvent::init_class(cx, global).0
             && crypto::define(cx, global)
-            && cache::define(cx, global)
+            && cache::define(cx, global);
+
+        if self.include_internal {
+            result && internal_js_modules::define(cx)
+        } else {
+            result
+        }
     }
 
     fn init_globals(self, cx: &Context, global: &mut ion::Object) -> bool {
+        if self.include_internal {
+            tracing::error!(
+                "Internal error: trying to initialize internal modules in global object mode"
+            );
+            return false;
+        }
+
         init_global_module::<PerformanceModule>(cx, global)
             && init_global_module::<crypto::CryptoModule>(cx, global)
             && init_global_module::<modules::Assert>(cx, global)

@@ -924,6 +924,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb56e1aa765b4b4f3aadfab769793b7087bb03a4ea4920644a6d238e2df5b9ed"
 
 [[package]]
+name = "include_dir"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18762faeff7122e89e0857b02f7ce6fcc0d101d5e9ad2ad7846cc01d61b7f19e"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b139284b5cf57ecfa712bcc66950bb635b31aff41c188e8a4cfc758eca374a3f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "indent"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -952,7 +971,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#0a10715981bfd4637ace8a84d4147b0f4d7df2ce"
+source = "git+https://github.com/wasmerio/spiderfire.git#f72cff3717b176701ba3168b109ad6449e39dc3b"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -976,7 +995,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#0a10715981bfd4637ace8a84d4147b0f4d7df2ce"
+source = "git+https://github.com/wasmerio/spiderfire.git#f72cff3717b176701ba3168b109ad6449e39dc3b"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1156,7 +1175,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#0a10715981bfd4637ace8a84d4147b0f4d7df2ce"
+source = "git+https://github.com/wasmerio/spiderfire.git#f72cff3717b176701ba3168b109ad6449e39dc3b"
 dependencies = [
  "bytes",
  "futures",
@@ -1605,7 +1624,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#0a10715981bfd4637ace8a84d4147b0f4d7df2ce"
+source = "git+https://github.com/wasmerio/spiderfire.git#f72cff3717b176701ba3168b109ad6449e39dc3b"
 dependencies = [
  "as-any",
  "async-recursion",
@@ -2967,7 +2986,6 @@ dependencies = [
  "base64",
  "bytes",
  "clap",
- "dunce",
  "form_urlencoded",
  "futures",
  "h2",
@@ -2975,6 +2993,7 @@ dependencies = [
  "http 0.2.11",
  "hyper",
  "hyper-rustls",
+ "include_dir",
  "ion",
  "ion-proc",
  "lazy_static",

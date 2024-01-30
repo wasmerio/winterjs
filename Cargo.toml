@@ -34,14 +34,6 @@ h2 = { version = "=0.3.20", git = "https://github.com/wasix-org/h2.git" }
 futures = "0.3.28"
 http = "0.2.9"
 form_urlencoded = "1.2.0"
-dunce = "1.0.4"
-
-# ion = { package = "ion", features = [
-#     "macros",
-# ], path = "../spiderfire/ion" }
-# ion-proc = { package = "ion-proc", path = "../spiderfire/ion-proc" }
-# runtime = { package = "runtime", path = "../spiderfire/runtime", features = ["fetch"]}
-# modules = { package = "modules", path = "../spiderfire/modules" }
 ion = { package = "ion", features = [
     "macros",
 ], git = "https://github.com/wasmerio/spiderfire.git" }
@@ -74,6 +66,7 @@ md5 = "0.7.0"
 clap = { version = "4.4.7", features = ["derive", "env"] }
 strum = { version = "0.25.0", features = ["derive"] }
 hmac = { version = "0.12.1", features = ["std"] }
+include_dir = "0.7.3"
 
 [patch.crates-io]
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "epoll" }
