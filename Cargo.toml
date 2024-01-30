@@ -1,7 +1,7 @@
 [package]
 name = "winterjs"
 description = "The JavaScript runtime that brings JavaScript to Wasmer Edge."
-version = "0.2.3"
+version = "0.2.4"
 repository = "https://github.com/wasmerio/winterjs/"
 license = "MIT"
 edition = "2021"
@@ -34,6 +34,14 @@ h2 = { version = "=0.3.20", git = "https://github.com/wasix-org/h2.git" }
 futures = "0.3.28"
 http = "0.2.9"
 form_urlencoded = "1.2.0"
+dunce = "1.0.4"
+
+# ion = { package = "ion", features = [
+#     "macros",
+# ], path = "../spiderfire/ion" }
+# ion-proc = { package = "ion-proc", path = "../spiderfire/ion-proc" }
+# runtime = { package = "runtime", path = "../spiderfire/runtime", features = ["fetch"]}
+# modules = { package = "modules", path = "../spiderfire/modules" }
 ion = { package = "ion", features = [
     "macros",
 ], git = "https://github.com/wasmerio/spiderfire.git" }
