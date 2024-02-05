@@ -511,4 +511,4 @@ async function echoHandler(req) {
   return new Response(body);
 }
 
-addEventListener('fetch', handler);
+addEventListener('fetch', ev => ev.respondWith(handler(ev.request)));

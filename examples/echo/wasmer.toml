@@ -5,16 +5,16 @@ description = 'Javascript echo server using winter-js.'
 
 # See more keys and definitions at https://docs.wasmer.io/registry/manifest
 
-[[module]]
-name = "wasmer-winter"
-source = "./wasmer-winter.wasm"
-abi = "wasi"
-
-[[command]]
-name = "wasmer-winter"
-module = "wasmer-winter"
-runner = "https://webc.org/runner/wasi"
-annotations = {wasi = {main-args = ["/app/app.js"], env = ["JS_PATH=/app/app.js"]}}
+[dependencies]
+"wasmer/winterjs" = "*"
 
 [fs]
-app = "./app"
+"/app" = "./app"
+
+[[command]]
+name = "script"
+module = "wasmer/winterjs:winterjs"
+runner = "https://webc.org/runner/wasi"
+
+[command.annotations.wasi]
+main-args = ["serve", "/app/app.js", "--script"]
