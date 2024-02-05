@@ -971,7 +971,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#f72cff3717b176701ba3168b109ad6449e39dc3b"
+source = "git+https://github.com/wasmerio/spiderfire.git#4bc171f6c08452e13f873c1dcbfe3fb50d981cfa"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -995,7 +995,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#f72cff3717b176701ba3168b109ad6449e39dc3b"
+source = "git+https://github.com/wasmerio/spiderfire.git#4bc171f6c08452e13f873c1dcbfe3fb50d981cfa"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1175,7 +1175,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#f72cff3717b176701ba3168b109ad6449e39dc3b"
+source = "git+https://github.com/wasmerio/spiderfire.git#4bc171f6c08452e13f873c1dcbfe3fb50d981cfa"
 dependencies = [
  "bytes",
  "futures",
@@ -1192,7 +1192,7 @@ dependencies = [
 [[package]]
 name = "mozjs"
 version = "0.14.1"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#90fb55009b0b2caafe4fd9fede37eb3f4657827d"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#ed8fd2609b68c98c6e73d981b587bf0a3c94cd5e"
 dependencies = [
  "bindgen",
  "cc",
@@ -1206,7 +1206,7 @@ dependencies = [
 [[package]]
 name = "mozjs_sys"
 version = "0.68.2"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#90fb55009b0b2caafe4fd9fede37eb3f4657827d"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#ed8fd2609b68c98c6e73d981b587bf0a3c94cd5e"
 dependencies = [
  "bindgen",
  "cc",
@@ -1624,7 +1624,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#f72cff3717b176701ba3168b109ad6449e39dc3b"
+source = "git+https://github.com/wasmerio/spiderfire.git#4bc171f6c08452e13f873c1dcbfe3fb50d981cfa"
 dependencies = [
  "as-any",
  "async-recursion",

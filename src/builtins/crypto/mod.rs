@@ -9,7 +9,6 @@ use mozjs::{
 };
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject, JS_InstanceOf};
 use rand::RngCore;
-use runtime::modules::NativeModule;
 
 #[js_fn]
 fn get_random_values(cx: &Context, array: ArrayBufferView) -> Result<*mut JSObject> {
@@ -52,30 +51,15 @@ const METHODS: &[JSFunctionSpec] = &[
     JSFunctionSpec::ZERO,
 ];
 
-#[derive(Default)]
-pub struct CryptoModule;
-
-impl NativeModule for CryptoModule {
-    const NAME: &'static str = "crypto";
-
-    const SOURCE: &'static str = include_str!("crypto.js");
-
-    fn module(cx: &ion::Context) -> Option<ion::Object> {
-        let mut ret = Object::new(cx);
-
-        let subtle = Object::new(cx);
-        ret.set(cx, "subtle", &subtle.as_value(cx));
-
-        if (unsafe { ret.define_methods(cx, METHODS) } && subtle::define(cx, subtle)) {
-            Some(ret)
-        } else {
-            None
-        }
-    }
-}
-
 pub fn define(cx: &Context, global: &mut ion::Object) -> bool {
-    subtle::crypto_key::CryptoKey::init_class(cx, global).0
+    let mut crypto = Object::new(cx);
+    let subtle = Object::new(cx);
+
+    crypto.set(cx, "subtle", &subtle.as_value(cx))
+        && global.set(cx, "crypto", &ion::Value::object(cx, &crypto))
+        && subtle::define(cx, subtle)
+        && subtle::crypto_key::CryptoKey::init_class(cx, global).0
         && subtle::crypto_key::KeyAlgorithm::init_class(cx, global).0
         && subtle::algorithm::hmac::HmacKeyAlgorithm::init_class(cx, global).0
+        && unsafe { crypto.define_methods(cx, METHODS) }
 }

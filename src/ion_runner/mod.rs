@@ -23,7 +23,7 @@ use ion::{
     Promise,
 };
 use mozjs::{
-    jsapi::PromiseState,
+    jsapi::{PromiseState, WeakRefSpecifier},
     rust::{JSEngine, JSEngineHandle, RealmOptions},
 };
 use runtime::{
@@ -34,7 +34,7 @@ use tokio::{select, sync::Mutex, task::LocalSet};
 use tracing::debug;
 
 use crate::builtins::{
-    cache, crypto, event_listener,
+    cache, core, crypto, event_listener,
     fetch_event::{self, FetchEvent},
     performance::PerformanceModule,
 };
@@ -76,6 +76,7 @@ async fn handle_requests_inner(
     let mut cx = Context::from_runtime(&mozjs_rt);
     let mut realm_options = RealmOptions::default();
     realm_options.creationOptions_.streams_ = true;
+    realm_options.creationOptions_.weakRefs_ = WeakRefSpecifier::EnabledWithCleanupSome;
     // TODO: module loader?
     let rt_builder = RuntimeBuilder::<_, _>::new()
         .microtask_queue()
@@ -394,6 +395,7 @@ pub struct RequestData {
     body: hyper::Body,
 }
 
+#[derive(Debug)]
 pub enum ResponseData {
     Done(hyper::Response<hyper::Body>),
     RequestError(anyhow::Error),
@@ -612,7 +614,7 @@ struct Modules {
 impl StandardModules for Modules {
     fn init(self, cx: &Context, global: &mut ion::Object) -> bool {
         let result = init_module::<PerformanceModule>(cx, global)
-            && init_module::<crypto::CryptoModule>(cx, global)
+            && init_module::<core::CoreModule>(cx, global)
             && init_module::<modules::Assert>(cx, global)
             && init_module::<modules::FileSystem>(cx, global)
             && init_module::<modules::PathM>(cx, global)
@@ -638,7 +640,6 @@ impl StandardModules for Modules {
         }
 
         init_global_module::<PerformanceModule>(cx, global)
-            && init_global_module::<crypto::CryptoModule>(cx, global)
             && init_global_module::<modules::Assert>(cx, global)
             && init_global_module::<modules::FileSystem>(cx, global)
             && init_global_module::<modules::PathM>(cx, global)
