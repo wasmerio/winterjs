@@ -17,7 +17,7 @@ use ion::{
     Context,
 };
 
-const MODULES_DIR: Dir = include_dir!("src/ion_runner/internal_js_modules");
+const MODULES_DIR: Dir = include_dir!("src/builtins/internal_js_modules");
 
 pub(super) fn define(cx: &Context) -> bool {
     match scan_dir(cx, &MODULES_DIR) {

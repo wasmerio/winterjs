@@ -12,7 +12,7 @@ pub struct ServerConfig {
     pub addr: SocketAddr,
 }
 
-pub async fn run_server<H: RequestHandler + Send + Sync>(
+pub async fn run_server<H: Runner + Send + Sync>(
     config: ServerConfig,
     handler: H,
 ) -> Result<(), anyhow::Error> {
@@ -40,7 +40,7 @@ pub async fn run_server<H: RequestHandler + Send + Sync>(
 }
 
 #[async_trait]
-pub trait RequestHandler: Send + Clone + 'static {
+pub trait Runner: Send + Clone + 'static {
     async fn handle(
         &self,
         addr: SocketAddr,
@@ -50,12 +50,12 @@ pub trait RequestHandler: Send + Clone + 'static {
 }
 
 #[derive(Clone)]
-struct AppContext<H: RequestHandler> {
+struct AppContext<H: Runner> {
     handler: H,
 }
 
 async fn handle(
-    context: AppContext<impl RequestHandler>,
+    context: AppContext<impl Runner>,
     addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
@@ -75,7 +75,7 @@ async fn handle(
 }
 
 async fn handle_inner(
-    context: AppContext<impl RequestHandler>,
+    context: AppContext<impl Runner>,
     addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, anyhow::Error> {

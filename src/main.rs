@@ -8,8 +8,11 @@ use std::{
 };
 
 use anyhow::Context as _;
-use clap::Parser;
-use ion_runner::UserCode;
+use clap::{Parser, ValueEnum};
+use request_handlers::{
+    cloudflare::CloudflareRequestHandler, wintercg::WinterCGRequestHandler, RequestHandler,
+    UserCode,
+};
 
 #[macro_use]
 extern crate ion_proc;
@@ -37,8 +40,10 @@ macro_rules! js_try {
 }
 
 mod builtins;
-mod ion_runner;
+mod request_handlers;
+mod runners;
 mod server;
+mod sm_utils;
 
 #[tokio::main]
 async fn main() {
@@ -96,21 +101,31 @@ async fn run() -> Result<(), anyhow::Error> {
             let addr: SocketAddr = (interface, port).into();
             let config = crate::server::ServerConfig { addr };
 
+            let user_code = UserCode::from_path(&cmd.js_path, cmd.script).await?;
+
+            let handler: Box<dyn RequestHandler> = match cmd.mode {
+                Some(HandlerName::Cloudflare) => Box::new(CloudflareRequestHandler),
+                Some(HandlerName::WinterCG) | None => Box::new(WinterCGRequestHandler),
+            };
+
             runtime::config::CONFIG
                 .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
                 .unwrap();
 
             if cmd.watch {
-                let runner = ion_runner::WatchRunner::new(
+                let runner = runners::watch::WatchRunner::new(
+                    handler,
                     cmd.js_path.clone(),
                     cmd.script,
                     cmd.max_js_threads,
                 )?;
                 crate::server::run_server(config, runner).await
             } else {
-                let user_code = UserCode::from_path(&cmd.js_path, cmd.script).await?;
-                let runner =
-                    ion_runner::IonRunner::new_request_handler(cmd.max_js_threads, user_code);
+                let runner = runners::single::SingleRunner::new_request_handler(
+                    handler,
+                    cmd.max_js_threads,
+                    user_code,
+                );
                 crate::server::run_server(config, runner).await
             }
         }
@@ -159,4 +174,15 @@ struct CmdServe {
     /// be loaded in module mode instead.
     #[clap(short, long, env = "WINTERJS_SCRIPT")]
     script: bool,
+
+    /// The operating mode of the server. Defaults to WinterCG mode if left
+    /// out.
+    #[clap(short = 'H', long, env = "WINTERJS_MODE")]
+    mode: Option<HandlerName>,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum HandlerName {
+    WinterCG,
+    Cloudflare,
 }

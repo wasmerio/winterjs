@@ -3,11 +3,11 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::bail;
 use tokio::sync::Mutex;
 
-use crate::ion_runner::UserCode;
+use crate::request_handlers::{RequestHandler, UserCode};
 
-use super::{IonRunner, SharedIonRunner};
+use super::single::{SharedSingleRunner, SingleRunner};
 
-/// Wraps an [`IonRunner`] with auto-reload capabilities.
+/// Wraps an [`SingleRunner`] with auto-reload capabilities.
 ///
 /// Will auto-reload the JS code, and re-initialize the runner on changes.
 #[derive(Clone)]
@@ -17,24 +17,31 @@ pub struct WatchRunner {
 
 struct State {
     js_path: PathBuf,
+    handler: Box<dyn RequestHandler>,
     max_js_threads: usize,
     mutable: Mutex<Option<MutableState>>,
 }
 
 struct MutableState {
     contents: String,
-    runner: SharedIonRunner,
+    runner: SharedSingleRunner,
 }
 
 // TODO: support watching modules. This is complicated by the fact that we must
 // watch all modules loaded in after the entry module was loaded as well.
 impl WatchRunner {
-    pub fn new(js_path: PathBuf, script_mode: bool, max_js_threads: usize) -> anyhow::Result<Self> {
+    pub fn new(
+        handler: Box<dyn RequestHandler>,
+        js_path: PathBuf,
+        script_mode: bool,
+        max_js_threads: usize,
+    ) -> anyhow::Result<Self> {
         if !script_mode {
             bail!("Watch mode is not compatible with module mode yet. Use --script to run in script mode instead.");
         }
         Ok(Self {
             state: Arc::new(State {
+                handler,
                 js_path,
                 max_js_threads,
                 mutable: Mutex::new(None),
@@ -42,7 +49,7 @@ impl WatchRunner {
         })
     }
 
-    async fn acquire_runner(&self) -> Result<SharedIonRunner, anyhow::Error> {
+    async fn acquire_runner(&self) -> Result<SharedSingleRunner, anyhow::Error> {
         // WASIX does not support inotify file watching APIs, so we naively
         // load the full file contents on every request.
         //
@@ -58,7 +65,7 @@ impl WatchRunner {
             .unwrap()
         {
             UserCode::Script { code, file_name } => (code, file_name),
-            UserCode::Module(_) => unreachable!(),
+            _ => unreachable!(),
         };
 
         if let Some(mutable) = mutable.as_mut() {
@@ -69,7 +76,8 @@ impl WatchRunner {
 
         tracing::info!(path=%self.state.js_path.display(), "reloaded application code");
 
-        let runner = IonRunner::new_request_handler(
+        let runner = SingleRunner::new_request_handler(
+            self.state.handler.clone(),
             self.state.max_js_threads,
             UserCode::Script {
                 code: contents.clone(),
@@ -86,7 +94,7 @@ impl WatchRunner {
 }
 
 #[async_trait::async_trait]
-impl crate::server::RequestHandler for WatchRunner {
+impl crate::server::Runner for WatchRunner {
     async fn handle(
         &self,
         addr: std::net::SocketAddr,
