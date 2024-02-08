@@ -16,11 +16,11 @@ opt-level = 1
 [dependencies]
 lazy_static = "1.4.0"
 anyhow = "1.0.75"
-hyper = { version = "=0.14.27", features = [
+hyper = { version = "=0.14.28", features = [
     "server",
     "http1",
     "tcp",
-], git = "https://github.com/wasix-org/hyper", branch = "v0.14.27" }
+], git = "https://github.com/wasix-org/hyper", branch = "v0.14.28" }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "fmt"] }
 serde_derive = "1.0.164"
@@ -28,12 +28,15 @@ serde = "1.0.164"
 serde_json = "1.0.97"
 bytes = { version = "1.5.0", features = ["serde"] }
 once_cell = "1.18.0"
-rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.5", version = "=0.21.5" }
-hyper-rustls = { version = "=0.24.1", git = "https://github.com/wasix-org/hyper-rustls.git", rev = "e8d621f92e7041c5bb47d7adc9cdbd48cbe43a51" }
-h2 = { version = "=0.3.20", git = "https://github.com/wasix-org/h2.git" }
+rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.22.2", version = "=0.22.2" }
+hyper-rustls = { version = "=0.25.0", git = "https://github.com/wasix-org/hyper-rustls.git", branch = "v0.25.0" }
+h2 = { version = "=0.3.23", git = "https://github.com/wasix-org/h2.git", branch = "v0.3.23" }
 futures = "0.3.28"
 http = "0.2.9"
 form_urlencoded = "1.2.0"
+
+static-web-server = { git = "https://github.com/wasix-org/static-web-server", rev = "87bb6804a7e60db08399f8f7f22bb10bf028a489" }
+
 ion = { package = "ion", features = [
     "macros",
 ], git = "https://github.com/wasmerio/spiderfire.git" }
@@ -46,13 +49,12 @@ mozjs = { version = "0.14.1", git = "https://github.com/wasmerio/mozjs.git", bra
 mozjs_sys = { version = "0.68.2", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi-gecko" }
 
 # for mozjs
-libc = { version = "=0.2.139", git = "https://github.com/wasix-org/libc.git" }
+libc = { version = "=0.2.152", git = "https://github.com/wasix-org/libc.git", branch = "v0.2.152" }
 
 # libc = "=0.2.139"
 
 # NOTE: We need to pin and replace some dependencies to achieve wasix compatibility.
-# tokio = { version = "1.32.0", features = ["rt-multi-thread", "macros"] }
-tokio = { version = "=1.24.2", features = ["full"] }
+tokio = { version = "=1.35.1", features = ["rt-multi-thread", "macros", "fs", "io-util", "signal"] }
 parking_lot = { version = "=0.12.1", features = ["nightly"] }
 url = "2.4.1"
 base64 = "0.21.4"
@@ -72,10 +74,11 @@ dyn-clonable = "0.9.0"
 self_cell = "1.0.3"
 
 [patch.crates-io]
-tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "epoll" }
-socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.4.9" }
-libc = { git = "https://github.com/wasix-org/libc.git" }
-h2 = { git = "https://github.com/wasix-org/h2" }
-hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.27" }
-rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.5" }
-hyper-rustls = { git = "https://github.com/wasix-org/hyper-rustls.git", rev = "e8d621f92e7041c5bb47d7adc9cdbd48cbe43a51" }
+hyper-rustls = { git = "https://github.com/wasix-org/hyper-rustls.git", branch = "v0.25.0" }
+socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.5.5" }
+libc = { git = "https://github.com/wasix-org/libc.git", branch = "v0.2.152" }
+mio = { git = "https://github.com/wasix-org/mio.git", branch = "v0.8.9" }
+tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.35.1" }
+rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.22.2" }
+hyper = { git = "https://github.com/wasix-org/hyper.git", branch = "v0.14.28" }
+h2 = { git = "https://github.com/wasix-org/h2", branch = "v0.3.23" }

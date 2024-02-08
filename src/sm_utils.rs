@@ -28,7 +28,7 @@ macro_rules! ion_err {
     };
 }
 
-struct ContextWrapper {
+pub struct ContextWrapper {
     // Important: the context must come first, because it has to be dropped
     // before the runtime, otherwise we get a nasty error at runtime
     cx: Context,
@@ -111,7 +111,8 @@ pub fn error_report_option_to_anyhow_error(
     }
 }
 
-// We can't take a list of modules because StandardModules::init takes self by value
+// We can't take a list of modules because StandardModules::init takes self by value, which
+// means that Vec<dyn StandardModule> is out of the question.
 pub struct TwoStandardModules<M1: StandardModules, M2: StandardModules>(pub M1, pub M2);
 
 impl<M1: StandardModules, M2: StandardModules> StandardModules for TwoStandardModules<M1, M2> {
