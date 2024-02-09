@@ -104,7 +104,7 @@ async fn run() -> Result<(), anyhow::Error> {
             let user_code = UserCode::from_path(&cmd.js_path, cmd.script).await?;
 
             let handler: Box<dyn RequestHandler> = match cmd.mode {
-                Some(HandlerName::Cloudflare) => Box::new(CloudflareRequestHandler),
+                Some(HandlerName::Cloudflare) => Box::new(CloudflareRequestHandler::new()),
                 Some(HandlerName::WinterCG) | None => Box::new(WinterCGRequestHandler),
             };
 

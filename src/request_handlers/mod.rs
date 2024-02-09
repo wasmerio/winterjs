@@ -2,7 +2,8 @@ use std::{ffi::OsString, path::PathBuf, pin::Pin};
 
 use anyhow::{bail, Context as _, Result};
 use futures::Future;
-use ion::{Context, Object};
+use ion::{Context, Object, Value};
+use mozjs::jsapi::PromiseState;
 use runtime::modules::StandardModules;
 
 pub mod cloudflare;
@@ -65,28 +66,61 @@ pub struct PendingResponse {
 
 #[dyn_clonable::clonable]
 pub trait RequestHandler: Clone + Send + Sync + 'static {
-    /// Register any additional, handler-specific modules in module mode.
-    fn init_modules(&self, cx: &Context, global: &mut Object) -> bool;
-
-    /// Register any additional, handler-specific modules in global mode.
-    fn init_globals(&self, cx: &Context, global: &mut Object) -> bool;
+    // Registers additional modules required for the handler to work
+    fn get_standard_modules(&self) -> Box<dyn ByRefStandardModules>;
 
     /// Evaluate the user script(s) to prepare for request execution.
-    fn evaluate_scripts(&self, cx: &Context, code: &UserCode) -> Result<()>;
+    fn evaluate_scripts(&mut self, cx: &Context, code: &UserCode) -> Result<()>;
 
     /// Start handling the given request.
     fn start_handling_request(
-        &self,
+        &mut self,
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>>;
 
     /// Finish handling the request. The associated promise must be
     /// either fulfilled or rejected before calling this method.
-    fn finish_request(&self, cx: Context, response: PendingResponse) -> Result<ReadyResponse>;
+    fn finish_request(&mut self, cx: Context, response: PendingResponse) -> Result<ReadyResponse> {
+        match response.promise.state(&cx) {
+            PromiseState::Pending => {
+                bail!("Internal error: promise is not fulfilled yet");
+            }
+            PromiseState::Rejected => {
+                let result = response.promise.result(&cx);
+                let message = result
+                    .to_object(&cx)
+                    .get(&cx, "message")
+                    .and_then(|v| {
+                        if v.get().is_string() {
+                            Some(
+                                ion::String::from(cx.root_string(v.get().to_string()))
+                                    .to_owned(&cx),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("<No error message>".to_string());
+                bail!("Script execution failed: {message}")
+            }
+            PromiseState::Fulfilled => {
+                let promise_result = response.promise.result(&cx);
+                self.finish_fulfilled_request(cx.duplicate(), promise_result)
+            }
+        }
+    }
+
+    fn finish_fulfilled_request(&mut self, cx: Context, val: Value) -> Result<ReadyResponse>;
 }
 
-impl StandardModules for Box<dyn RequestHandler> {
+pub trait ByRefStandardModules {
+    fn init_modules(&self, cx: &Context, global: &mut Object) -> bool;
+
+    fn init_globals(&self, cx: &Context, global: &mut Object) -> bool;
+}
+
+impl StandardModules for Box<dyn ByRefStandardModules> {
     fn init(self, cx: &Context, global: &mut Object) -> bool {
         self.init_modules(cx, global)
     }

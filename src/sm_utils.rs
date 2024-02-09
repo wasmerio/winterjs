@@ -1,4 +1,6 @@
-use anyhow::anyhow;
+use std::{ffi::OsStr, path::Path};
+
+use anyhow::{anyhow, Context as _};
 use ion::{module::ModuleLoader, Context, ErrorReport};
 use mozjs::{
     jsapi::WeakRefSpecifier,
@@ -88,6 +90,40 @@ impl JsApp {
 
         rt_builder.build(&wrapper.cx)
     }
+}
+
+pub fn evaluate_script(
+    cx: &Context,
+    code: impl AsRef<str>,
+    file_name: impl AsRef<OsStr>,
+) -> anyhow::Result<ion::Value> {
+    ion::script::Script::compile_and_evaluate(cx, Path::new(&file_name), code.as_ref())
+        .map_err(|e| error_report_to_anyhow_error(cx, e))
+}
+
+pub fn evaluate_module(
+    cx: &Context,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<ion::module::Module> {
+    let path = path.as_ref();
+
+    let file_name = path
+        .file_name()
+        .ok_or(anyhow!("Failed to get file name from script path"))
+        .map(|f| f.to_string_lossy().into_owned())?;
+
+    let code = std::fs::read_to_string(path).context("Failed to read script file")?;
+
+    Ok(
+        ion::module::Module::compile_and_evaluate(cx, &file_name, Some(path), &code)
+            .map_err(|e| {
+                error_report_option_to_anyhow_error(cx, Some(e.report)).context(format!(
+                    "Error while loading module during {:?} step",
+                    e.kind
+                ))
+            })?
+            .0,
+    )
 }
 
 pub fn error_report_to_anyhow_error(cx: &Context, error_report: ErrorReport) -> anyhow::Error {

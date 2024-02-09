@@ -1,17 +1,16 @@
-use std::{path::Path, pin::Pin};
+use std::pin::Pin;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, bail, Result};
 use futures::Future;
-use ion::{
-    conversions::ToValue, module::Module, script::Script, ClassDefinition, Context, Object, Promise,
-};
-use mozjs::jsapi::PromiseState;
+use ion::{conversions::ToValue, ClassDefinition, Context, Object, Promise, Value};
 
-use crate::sm_utils::{error_report_option_to_anyhow_error, error_report_to_anyhow_error};
+use crate::sm_utils::{self, error_report_to_anyhow_error};
 
 use self::fetch_event::FetchEvent;
 
-use super::{Either, PendingResponse, ReadyResponse, Request, RequestHandler, UserCode};
+use super::{
+    ByRefStandardModules, Either, PendingResponse, ReadyResponse, Request, RequestHandler, UserCode,
+};
 
 pub mod event_listener;
 pub mod fetch_event;
@@ -20,51 +19,49 @@ pub mod fetch_event;
 pub struct WinterCGRequestHandler;
 
 impl RequestHandler for WinterCGRequestHandler {
-    fn init_modules(&self, cx: &Context, global: &mut Object) -> bool {
-        self.init_globals(cx, global)
+    fn get_standard_modules(&self) -> Box<dyn ByRefStandardModules> {
+        Box::new(WinterCGStandardModules)
     }
 
-    fn init_globals(&self, cx: &Context, global: &mut Object) -> bool {
-        event_listener::define(cx, global) && fetch_event::FetchEvent::init_class(cx, global).0
-    }
-
-    fn evaluate_scripts(&self, cx: &Context, code: &UserCode) -> Result<()> {
+    fn evaluate_scripts(&mut self, cx: &Context, code: &UserCode) -> Result<()> {
         match code {
             UserCode::Script { code, file_name } => {
-                Script::compile_and_evaluate(cx, Path::new(&file_name), code.as_str())
-                    .map_err(|e| error_report_to_anyhow_error(cx, e))?;
+                sm_utils::evaluate_script(cx, code, file_name)?;
             }
             UserCode::Module(path) => {
-                let file_name = path
-                    .file_name()
-                    .ok_or(anyhow!("Failed to get file name from script path"))
-                    .map(|f| f.to_string_lossy().into_owned())?;
-
-                let code = std::fs::read_to_string(path).context("Failed to read script file")?;
-
-                Module::compile_and_evaluate(cx, &file_name, Some(path), &code).map_err(|e| {
-                    error_report_option_to_anyhow_error(cx, Some(e.report)).context(format!(
-                        "Error while loading module during {:?} step",
-                        e.kind
-                    ))
-                })?;
+                sm_utils::evaluate_module(cx, path)?;
             }
             UserCode::Directory(_) => bail!("WinterCG mode does not support directories"),
-        }
+        };
 
         Ok(())
     }
 
     fn start_handling_request(
-        &self,
+        &mut self,
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
         start_request(cx, request)
     }
 
-    fn finish_request(&self, cx: Context, response: PendingResponse) -> Result<ReadyResponse> {
-        finish_pending_request(cx, response)
+    fn finish_fulfilled_request(&mut self, cx: Context, val: Value) -> Result<ReadyResponse> {
+        if !val.handle().is_object() {
+            bail!("Script error: value provided to respondWith was not an object");
+        }
+        build_response(&cx, val.to_object(&cx))
+    }
+}
+
+struct WinterCGStandardModules;
+
+impl ByRefStandardModules for WinterCGStandardModules {
+    fn init_modules(&self, cx: &Context, global: &mut Object) -> bool {
+        self.init_globals(cx, global)
+    }
+
+    fn init_globals(&self, cx: &Context, global: &mut Object) -> bool {
+        event_listener::define(cx, global) && fetch_event::FetchEvent::init_class(cx, global).0
     }
 }
 
@@ -102,36 +99,6 @@ fn start_request(cx: Context, request: Request) -> Result<Either<PendingResponse
             } else {
                 Ok(Either::Right(build_response(&cx, response)?))
             }
-        }
-    }
-}
-
-fn finish_pending_request(cx: Context, response: PendingResponse) -> Result<ReadyResponse> {
-    match response.promise.state(&cx) {
-        PromiseState::Pending => {
-            bail!("Internal error: promise is not fulfilled yet");
-        }
-        PromiseState::Rejected => {
-            let result = response.promise.result(&cx);
-            let message = result
-                .to_object(&cx)
-                .get(&cx, "message")
-                .and_then(|v| {
-                    if v.get().is_string() {
-                        Some(ion::String::from(cx.root_string(v.get().to_string())).to_owned(&cx))
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or("<No error message>".to_string());
-            bail!("Script execution failed: {message}")
-        }
-        PromiseState::Fulfilled => {
-            let promise_result = response.promise.result(&cx);
-            if !promise_result.handle().is_object() {
-                bail!("Script error: value provided to respondWith was not an object");
-            }
-            build_response(&cx, promise_result.to_object(&cx))
         }
     }
 }

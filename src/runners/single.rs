@@ -28,7 +28,7 @@ use crate::{
 fn ignore_error<E>(_r: std::result::Result<(), E>) {}
 
 async fn handle_requests_inner(
-    handler: Box<dyn RequestHandler>,
+    mut handler: Box<dyn RequestHandler>,
     user_code: UserCode,
     recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) -> Result<(), anyhow::Error> {
@@ -39,7 +39,7 @@ async fn handle_requests_inner(
         builtins::Modules {
             include_internal: is_module_mode,
         },
-        handler.clone(),
+        handler.get_standard_modules(),
     );
 
     let js_app = JsApp::build(module_loader, Some(standard_modules));

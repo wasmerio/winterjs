@@ -2385,6 +2385,7 @@ dependencies = [
 [[package]]
 name = "static-web-server"
 version = "2.14.2"
+source = "git+https://github.com/wasix-org/static-web-server?rev=87bb6804a7e60db08399f8f7f22bb10bf028a489#87bb6804a7e60db08399f8f7f22bb10bf028a489"
 dependencies = [
  "anyhow",
  "async-compression",
