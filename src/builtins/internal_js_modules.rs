@@ -65,7 +65,7 @@ fn compile_and_register(cx: &Context, script_file: &File) -> anyhow::Result<()> 
     match unsafe { &mut (*cx.get_inner_data().as_ptr()).module_loader } {
         Some(loader) => {
             let request = ModuleRequest::new(cx, module_name);
-            loader.register(cx, &module.0, &request);
+            loader.register(cx, module.module_object(), &request);
             Ok(())
         }
         None => anyhow::bail!("No module loader present, cannot register internal module"),

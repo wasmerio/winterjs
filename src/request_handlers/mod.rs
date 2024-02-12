@@ -1,12 +1,20 @@
 use std::{ffi::OsString, path::PathBuf, pin::Pin};
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use futures::Future;
-use ion::{Context, Object, Value};
+use ion::{string::byte::ByteString, ClassDefinition, Context, Object, Value};
 use mozjs::jsapi::PromiseState;
-use runtime::modules::StandardModules;
+use mozjs_sys::jsapi::JSObject;
+use runtime::{
+    globals::fetch::{
+        hyper_body_to_stream, FetchBody, FetchBodyInner, HeaderEntry, HeadersInit,
+        Request as FetchRequest, RequestInfo, RequestInit,
+    },
+    modules::StandardModules,
+};
 
 pub mod cloudflare;
+pub mod service_workers;
 pub mod wintercg;
 
 #[derive(Clone, Debug)]
@@ -81,7 +89,11 @@ pub trait RequestHandler: Clone + Send + Sync + 'static {
 
     /// Finish handling the request. The associated promise must be
     /// either fulfilled or rejected before calling this method.
-    fn finish_request(&mut self, cx: Context, response: PendingResponse) -> Result<ReadyResponse> {
+    fn finish_request(
+        &mut self,
+        cx: Context,
+        response: PendingResponse,
+    ) -> Result<Either<PendingResponse, ReadyResponse>> {
         match response.promise.state(&cx) {
             PromiseState::Pending => {
                 bail!("Internal error: promise is not fulfilled yet");
@@ -111,7 +123,11 @@ pub trait RequestHandler: Clone + Send + Sync + 'static {
         }
     }
 
-    fn finish_fulfilled_request(&mut self, cx: Context, val: Value) -> Result<ReadyResponse>;
+    fn finish_fulfilled_request(
+        &mut self,
+        cx: Context,
+        val: Value,
+    ) -> Result<Either<PendingResponse, ReadyResponse>>;
 }
 
 pub trait ByRefStandardModules {
@@ -128,4 +144,73 @@ impl StandardModules for Box<dyn ByRefStandardModules> {
     fn init_globals(self, cx: &Context, global: &mut Object) -> bool {
         self.as_ref().init_globals(cx, global)
     }
+}
+
+fn build_fetch_request(cx: &Context, request: Request) -> Result<*mut JSObject> {
+    let body = match &request.parts.method {
+        &http::Method::GET | &http::Method::HEAD => hyper::Body::empty(),
+        _ => request.body,
+    };
+
+    let uri = format!("https://app.wasmer.internal{}", request.parts.uri);
+    let request_info = RequestInfo::String(uri);
+
+    let header_entries = request
+        .parts
+        .headers
+        .iter()
+        .map(|h| {
+            anyhow::Ok(HeaderEntry {
+                name: ByteString::from(h.0.to_string().into())
+                    .ok_or(anyhow!("Invalid characters in header name"))?,
+                value: ByteString::from(h.1.to_str().map(|x| x.to_string().into())?)
+                    .ok_or(anyhow!("Invalid characters in header value"))?,
+            })
+        })
+        .collect::<Result<_, _>>()?;
+
+    let request_init = RequestInit {
+        method: Some(request.parts.method.to_string()),
+        headers: Some(HeadersInit::Array(header_entries)),
+        body: Some(FetchBody {
+            body: FetchBodyInner::Stream(
+                hyper_body_to_stream(cx, body)
+                    .ok_or_else(|| anyhow!("Failed to create ReadableStream for request body"))?,
+            ),
+            kind: None,
+            source: None,
+        }),
+        ..Default::default()
+    };
+
+    let request = FetchRequest::constructor(cx, request_info, Some(request_init))
+        .map_err(|e| anyhow!("Failed to construct request: {e:?}"))?;
+
+    Ok(FetchRequest::new_object(cx, Box::new(request)))
+}
+
+fn build_response_from_fetch_response(
+    cx: &Context,
+    response: &mut runtime::globals::fetch::Response,
+) -> Result<ReadyResponse> {
+    let mut hyper_response = hyper::Response::builder().status(response.get_status());
+
+    let headers =
+        anyhow::Context::context(hyper_response.headers_mut(), "Response has no headers")?;
+    let response_headers = response.get_headers_object(cx);
+    for header in response_headers.iter() {
+        headers.append(header.0.clone(), header.1.clone());
+    }
+
+    let body = response
+        .take_body()
+        .map_err(|e| anyhow!("Failed to read response body: {e:?}"))?;
+
+    let (body, future) = body
+        .into_http_body(cx.duplicate())
+        .map_err(|e| anyhow!("Failed to create HTTP body: {e:?}"))?;
+    Ok(ReadyResponse {
+        response: hyper_response.body(body)?,
+        body_future: future.map(|f| -> Pin<Box<dyn Future<Output = ()>>> { Box::pin(f) }),
+    })
 }

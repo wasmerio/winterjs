@@ -107,7 +107,8 @@ async fn handle_requests_inner(
                 let (pending, resp_tx) = requests.swap_remove(i);
                 let response = handler.finish_request(cx.duplicate(), pending);
                 match response {
-                    Ok(response) => {
+                    Ok(Either::Left(pending)) => requests.push((pending, resp_tx)),
+                    Ok(Either::Right(response)) => {
                         if let Some(fut) = response.body_future {
                             stream_body_futures.push(fut);
                         }
@@ -121,21 +122,33 @@ async fn handle_requests_inner(
         }
     }
 
-    handle_event_loop_result(&cx.duplicate(), rt.run_event_loop().await);
+    // Wait for all pending requests to be resolved, which may
+    // happen in multiple stages.
+    while !requests.is_empty() {
+        handle_event_loop_result(&cx.duplicate(), rt.run_event_loop().await);
 
-    for (pending, resp_tx) in requests {
-        let response = handler.finish_request(cx.duplicate(), pending);
-        match response {
-            Ok(response) => {
-                if let Some(fut) = response.body_future {
-                    stream_body_futures.push(fut);
+        let mut new_pending_responses = vec![];
+        for (pending, resp_tx) in requests {
+            let response = handler.finish_request(cx.duplicate(), pending);
+            match response {
+                Ok(Either::Left(pending)) => new_pending_responses.push((pending, resp_tx)),
+                Ok(Either::Right(response)) => {
+                    if let Some(fut) = response.body_future {
+                        stream_body_futures.push(fut);
+                    }
+                    ignore_error(resp_tx.send(ResponseData::Done(response.response)));
                 }
-                ignore_error(resp_tx.send(ResponseData::Done(response.response)));
+                Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
             }
-            Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
         }
+
+        requests = new_pending_responses;
     }
 
+    // Wait for any pending promises to be resolved
+    handle_event_loop_result(&cx.duplicate(), rt.run_event_loop().await);
+
+    // Wait for all stream bodies to be written
     while !stream_body_futures.is_empty() {
         stream_body_futures.next().await;
     }

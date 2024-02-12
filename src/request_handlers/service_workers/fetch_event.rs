@@ -1,12 +1,6 @@
-use anyhow::anyhow;
-use ion::string::byte::ByteString;
 use ion::Heap;
 use ion::{class::Reflector, ClassDefinition, Context, Promise};
 use mozjs::jsapi::JSObject;
-use runtime::globals::fetch::{
-    hyper_body_to_stream, FetchBody, FetchBodyInner, HeaderEntry, HeadersInit, Request,
-    RequestInfo, RequestInit,
-};
 
 #[js_class]
 pub struct FetchEvent {
@@ -16,49 +10,8 @@ pub struct FetchEvent {
 }
 
 impl FetchEvent {
-    pub fn try_new(
-        cx: &Context,
-        req: http::request::Parts,
-        body: hyper::Body,
-    ) -> anyhow::Result<Self> {
-        let body = match &req.method {
-            &http::Method::GET | &http::Method::HEAD => hyper::Body::empty(),
-            _ => body,
-        };
-
-        let uri = format!("https://app.wasmer.internal{}", req.uri);
-        let request_info = RequestInfo::String(uri);
-
-        let header_entries = req
-            .headers
-            .iter()
-            .map(|h| {
-                anyhow::Ok(HeaderEntry {
-                    name: ByteString::from(h.0.to_string().into())
-                        .ok_or(anyhow!("Invalid characters in header name"))?,
-                    value: ByteString::from(h.1.to_str().map(|x| x.to_string().into())?)
-                        .ok_or(anyhow!("Invalid characters in header value"))?,
-                })
-            })
-            .collect::<Result<_, _>>()?;
-
-        let request_init =
-            RequestInit {
-                method: Some(req.method.to_string()),
-                headers: Some(HeadersInit::Array(header_entries)),
-                body: Some(FetchBody {
-                    body: FetchBodyInner::Stream(hyper_body_to_stream(cx, body).ok_or_else(
-                        || anyhow!("Failed to create ReadableStream for request body"),
-                    )?),
-                    kind: None,
-                    source: None,
-                }),
-                ..Default::default()
-            };
-
-        let request = Request::constructor(cx, request_info, Some(request_init))
-            .map_err(|e| anyhow!("Failed to construct request: {e:?}"))?;
-        let request = Heap::new(Request::new_object(cx, Box::new(request)));
+    pub fn try_new(cx: &Context, request: super::super::Request) -> anyhow::Result<Self> {
+        let request = Heap::new(super::super::build_fetch_request(cx, request)?);
 
         Ok(Self {
             reflector: Default::default(),
