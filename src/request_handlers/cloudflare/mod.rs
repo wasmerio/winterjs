@@ -10,21 +10,20 @@ use crate::{
     sm_utils::{self, error_report_option_to_anyhow_error},
 };
 
-use self::response::FetchAssetResponse;
-
 use super::{
     ByRefStandardModules, Either, PendingResponse, ReadyResponse, Request, RequestHandler, UserCode,
 };
 use anyhow::{bail, Context as _, Result};
 use ion::{ClassDefinition, Context, Function, Object, Promise, TracedHeap, Value};
 use mozjs_sys::jsapi::JSFunction;
-use runtime::{promise::future_to_promise, ContextExt};
-use static_web_server::handler::{
-    RequestHandler as SwsRequestHandler, RequestHandlerOpts as SwsRequestHandlerOpts,
+use runtime::{globals::fetch::Response as FetchResponse, promise::future_to_promise, ContextExt};
+use static_web_server::{
+    exts::path::PathExt,
+    handler::{RequestHandler as SwsRequestHandler, RequestHandlerOpts as SwsRequestHandlerOpts},
 };
 
+mod context;
 mod env;
-mod response;
 
 // Still operating under the one-handler-per-thread model. The correct way
 // would to attach this to the context in some way.
@@ -78,8 +77,11 @@ impl CloudflareRequestHandler {
                     basic_auth: String::new(),
                     // TODO: have WinterJS-themed defaults
                     page404: std::fs::read(path.join("404.html")).unwrap_or_default(),
-                    page50x: std::fs::read(path.join("50x.html")).unwrap_or_default(),
+                    page50x: std::fs::read(path.join("500.html")).unwrap_or_default(),
                     page_fallback: std::fs::read(path.join("_fallback.html")).unwrap_or_default(),
+                    // We need to allow hidden paths if the root path itself is
+                    // hidden, otherwise every response is a 404
+                    ignore_hidden_files: !path.is_hidden(),
                     root_dir: path,
                     compression: true,
                     compression_static: false,
@@ -88,7 +90,6 @@ impl CloudflareRequestHandler {
                     dir_listing_order: 0,
                     cache_control_headers: true,
                     cors: None,
-                    ignore_hidden_files: true,
                     log_remote_address: false,
                     redirect_trailing_slash: false,
                     security_headers: true,
@@ -118,10 +119,18 @@ impl CloudflareRequestHandler {
         unsafe {
             future_to_promise::<_, _, _, ion::Error>(cx, move |cx| async move {
                 let mut hyper_req = hyper::Request::from_parts(req.parts, req.body);
+                let url = url::Url::parse(hyper_req.uri().to_string().as_str())?;
                 let (cx, response) = cx
                     .await_native(Self::get_sws_request_handler()?.handle(&mut hyper_req, None))
                     .await;
-                Ok(FetchAssetResponse::new_object(&cx, response))
+                let response = response.map_err(|e| {
+                    ion_mk_err!(
+                        format!("Failed to fetch static asset due to: {e}").as_str(),
+                        Normal
+                    )
+                })?;
+                let response = FetchResponse::from_hyper_response(&cx, response, url)?;
+                Ok(FetchResponse::new_object(&cx, Box::new(response)))
             })
         }
         .expect("Internal error: future queue should be initialized")
@@ -213,13 +222,14 @@ impl ByRefStandardModules for CloudflareStandardModules {
     }
 
     fn init_globals(&self, cx: &Context, global: &mut Object) -> bool {
-        super::service_workers::define(cx, global)
+        global.set_as(cx, "self", &(**global).get())
+            && super::service_workers::define(cx, global)
             && self::env::define(cx, global)
-            && self::response::FetchAssetResponse::init_class(cx, global).0
+            && self::context::define(cx, global)
     }
 }
 
-const WORKER_JS_SEARCH_PATHS: &[&str] = &["_worker.js", "_worker/index.js"];
+const WORKER_JS_SEARCH_PATHS: &[&str] = &["_worker.js", "_worker/index.js", "_worker.js/index.js"];
 
 fn discover_worker_js(root: impl AsRef<Path>) -> Result<Option<PathBuf>> {
     for path in WORKER_JS_SEARCH_PATHS {
@@ -276,8 +286,10 @@ fn start_request(
                 &cx.root_object(super::build_fetch_request(cx, request)?)
                     .into(),
             );
+            let env = Value::object(cx, &cx.root_object(env::Env::new_obj(cx)).into());
+            let ctx = Value::object(cx, &cx.root_object(context::Context::new_obj(cx)).into());
             let result = Function::from(func.root(cx))
-                .call(cx, &Object::null(cx), &[request])
+                .call(cx, &Object::null(cx), &[request, env, ctx])
                 .map_err(|e| error_report_option_to_anyhow_error(cx, e))?;
             if !result.handle().is_object() {
                 bail!("Script error: value returned from the fetch function should be an object");
@@ -311,21 +323,10 @@ fn build_response(
         Ok(Either::Left(PendingResponse {
             promise: unsafe { Promise::from_unchecked(result.into_local()) },
         }))
-    } else if self::response::FetchAssetResponse::instance_of(cx, &result, None) {
-        let resp = self::response::FetchAssetResponse::get_mut_private(&mut result);
-        Ok(Either::Right(ReadyResponse {
-            response: resp
-                .take_response()
-                .context("Internal error: FetchAssetResponse was already used")??,
-            body_future: None,
-        }))
-    } else if runtime::globals::fetch::Response::instance_of(cx, &result, None) {
-        let response = runtime::globals::fetch::Response::get_mut_private(&mut result);
+    } else if FetchResponse::instance_of(cx, &result, None) {
+        let response = FetchResponse::get_mut_private(&mut result);
         super::build_response_from_fetch_response(cx, response).map(Either::Right)
     } else {
-        bail!(
-            "Script error: Unknown object type received, must be a \
-            Response or the result from calling env.ASSETS.fetch()"
-        );
+        bail!("Script error: Unsupported object received, must be an instance of Response")
     }
 }

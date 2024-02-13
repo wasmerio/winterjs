@@ -32,7 +32,10 @@ async fn handle_requests_inner(
     user_code: UserCode,
     recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) -> Result<(), anyhow::Error> {
-    let is_module_mode = matches!(user_code, UserCode::Module(_));
+    let is_module_mode = match user_code {
+        UserCode::Script { .. } => false,
+        UserCode::Directory(_) | UserCode::Module(_) => true,
+    };
 
     let module_loader = is_module_mode.then(runtime::modules::Loader::default);
     let standard_modules = TwoStandardModules(
