@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use ion::{
     class::Reflector,
     conversions::ToValue,
+    function::Opt,
     string::byte::{ByteString, VerbatimBytes},
     ClassDefinition, Context, Heap, Object, Promise, Result, Value,
 };
@@ -52,7 +53,7 @@ impl CacheStorage {
         &self,
         cx: &Context,
         key: RequestInfo,
-        options: Option<MultiCacheQueryOptions>,
+        Opt(options): Opt<MultiCacheQueryOptions>,
     ) -> Promise {
         let cache_name = options.as_ref().and_then(|o| o.cache_name.as_ref());
         let query_options = options
@@ -78,19 +79,19 @@ impl CacheStorage {
                 &query_options,
             ) {
                 Ok(r) => r,
-                Err(e) => return Promise::new_rejected(cx, e),
+                Err(e) => return Promise::rejected(cx, e),
             };
 
             if !responses.is_empty() {
-                return Promise::new_resolved(cx, responses[0]);
+                return Promise::resolved(cx, responses[0]);
             }
         }
 
-        Promise::new_resolved(cx, Value::undefined(cx))
+        Promise::resolved(cx, Value::undefined(cx))
     }
 
     pub fn has(&self, cx: &Context, key: ByteString<VerbatimBytes>) -> Promise {
-        Promise::new_resolved(cx, self.caches.iter().any(|c| c.0 == key))
+        Promise::resolved(cx, self.caches.iter().any(|c| c.0 == key))
     }
 
     pub fn open(&mut self, cx: &Context, key: ByteString<VerbatimBytes>) -> Promise {
@@ -109,12 +110,12 @@ impl CacheStorage {
             };
 
         let cache = Cache::new_object(cx, Box::new(Cache::new(self.caches[index].1.clone())));
-        Promise::new_resolved(cx, cache)
+        Promise::resolved(cx, cache)
     }
 
     pub fn delete(&mut self, cx: &Context, key: ByteString<VerbatimBytes>) -> Promise {
         if key == *DEFAULT_CACHE_KEY {
-            return Promise::new_rejected(cx, ion_mk_err!("Cannot delete the default cache", Type));
+            return Promise::rejected(cx, ion_mk_err!("Cannot delete the default cache", Type));
         }
 
         let index = self
@@ -125,15 +126,15 @@ impl CacheStorage {
             .map(|c| c.0);
         if let Some(index) = index {
             self.caches.remove(index);
-            Promise::new_resolved(cx, true)
+            Promise::resolved(cx, true)
         } else {
-            Promise::new_resolved(cx, false)
+            Promise::resolved(cx, false)
         }
     }
 
     pub fn keys(&self, cx: &Context) -> Promise {
         let result = self.caches.iter().map(|c| c.0.clone()).collect::<Vec<_>>();
-        Promise::new_resolved(cx, result)
+        Promise::resolved(cx, result)
     }
 
     #[ion(get)]
@@ -143,7 +144,7 @@ impl CacheStorage {
     }
 }
 
-pub fn define(cx: &Context, global: &mut Object) -> bool {
+pub fn define(cx: &Context, global: &Object) -> bool {
     if !CacheStorage::init_class(cx, global).0 {
         return false;
     }
@@ -161,6 +162,6 @@ pub fn define(cx: &Context, global: &mut Object) -> bool {
     global.set(
         cx,
         "caches",
-        &Object::from(cx.root_object(caches_obj)).as_value(cx),
+        &Object::from(cx.root(caches_obj)).as_value(cx),
     )
 }

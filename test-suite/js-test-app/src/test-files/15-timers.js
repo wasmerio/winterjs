@@ -6,26 +6,25 @@ import {
 async function handleRequest(request) {
   try {
     await Promise.all([
-      // TODO: This test is failing due to https://github.com/Redfire75369/spiderfire/issues/45
-      // async_test((t) => {
-      //   let wasPreviouslyCalled = false;
+      async_test((t) => {
+        let wasPreviouslyCalled = false;
 
-      //   const handle = setInterval(
-      //     t.step_func(() => {
-      //       if (!wasPreviouslyCalled) {
-      //         wasPreviouslyCalled = true;
+        const handle = setInterval(
+          t.step_func(() => {
+            if (!wasPreviouslyCalled) {
+              wasPreviouslyCalled = true;
 
-      //         clearInterval(handle);
+              clearInterval(handle);
 
-      //         // Make the test succeed after the callback would've run next.
-      //         setInterval(t.done, 750);
-      //       } else {
-      //         assert_unreached();
-      //       }
-      //     }),
-      //     500
-      //   );
-      // }, "Clearing an interval from the callback should still clear it."),
+              // Make the test succeed after the callback would've run next.
+              setInterval(t.done, 750);
+            } else {
+              assert_unreached();
+            }
+          }),
+          500
+        );
+      }, "Clearing an interval from the callback should still clear it."),
 
       async_test((t) => {
         const handle = setTimeout(

@@ -14,7 +14,7 @@ async function handleRequest(request) {
       );
     }
 
-    if (myURL.port !== 443) {
+    if (myURL.port !== '443') {
       throw new Error(
         `Failed: URL 'port' attribute is not '443', it is '${myURL.port}'.`
       );

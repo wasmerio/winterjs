@@ -42,9 +42,9 @@ impl FetchEvent {
             None => {
                 if response.handle().is_object() {
                     let obj = response.handle().to_object();
-                    let rooted = cx.root_object(obj);
+                    let rooted = cx.root(obj);
                     if Promise::is_promise(&rooted)
-                        || runtime::globals::fetch::Response::instance_of(cx, &rooted.into(), None)
+                        || runtime::globals::fetch::Response::instance_of(cx, &rooted.into())
                     {
                         self.response = Some(Heap::new(obj));
                         Ok(())

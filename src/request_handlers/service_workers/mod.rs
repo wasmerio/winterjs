@@ -8,7 +8,7 @@ use super::{Either, PendingResponse, ReadyResponse, Request};
 pub mod event_listener;
 pub mod fetch_event;
 
-pub fn define(cx: &Context, global: &mut Object) -> bool {
+pub fn define(cx: &Context, global: &Object) -> bool {
     event_listener::define(cx, global) && fetch_event::FetchEvent::init_class(cx, global).0
 }
 
@@ -16,7 +16,7 @@ pub fn start_request(
     cx: &Context,
     request: Request,
 ) -> anyhow::Result<Either<PendingResponse, ReadyResponse>> {
-    let fetch_event = Object::from(cx.root_object(fetch_event::FetchEvent::new_object(
+    let fetch_event = Object::from(cx.root(fetch_event::FetchEvent::new_object(
         cx,
         Box::new(fetch_event::FetchEvent::try_new(cx, request)?),
     )));
@@ -33,7 +33,7 @@ pub fn start_request(
         bail!("Script error: the fetch event handler should not return a value");
     }
 
-    let fetch_event = fetch_event::FetchEvent::get_private(&fetch_event);
+    let fetch_event = fetch_event::FetchEvent::get_private(cx, &fetch_event).unwrap();
 
     match fetch_event.response.as_ref() {
         None => {
@@ -53,12 +53,12 @@ pub fn start_request(
     }
 }
 
-pub fn build_response(cx: &Context, mut value: Object) -> anyhow::Result<ReadyResponse> {
-    if !runtime::globals::fetch::Response::instance_of(cx, &value, None) {
+pub fn build_response(cx: &Context, value: Object) -> anyhow::Result<ReadyResponse> {
+    if !runtime::globals::fetch::Response::instance_of(cx, &value) {
         bail!("Script error: value provided to respondWith must be an instance of Response");
     }
 
-    let response = runtime::globals::fetch::Response::get_mut_private(&mut value);
+    let response = runtime::globals::fetch::Response::get_mut_private(cx, &value).unwrap();
 
     super::build_response_from_fetch_response(cx, response)
 }

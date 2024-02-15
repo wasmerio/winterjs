@@ -37,7 +37,7 @@ async fn handle_requests_inner(
         UserCode::Directory(_) | UserCode::Module(_) => true,
     };
 
-    let module_loader = is_module_mode.then(runtime::modules::Loader::default);
+    let module_loader = is_module_mode.then(runtime::module::Loader::default);
     let standard_modules = TwoStandardModules(
         builtins::Modules {
             include_internal: is_module_mode,

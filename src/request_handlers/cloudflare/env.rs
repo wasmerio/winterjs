@@ -62,7 +62,8 @@ impl EnvAssets {
 
         unsafe {
             future_to_promise::<_, _, _, Exception>(cx, move |cx| async move {
-                let request = FetchRequest::get_mut_private(&mut request_heap.root(&cx).into());
+                let request =
+                    FetchRequest::get_mut_private(&cx, &request_heap.root(&cx).into()).unwrap();
 
                 let mut http_req = http::Request::builder()
                     .uri(request.get_url())
@@ -97,6 +98,6 @@ impl EnvAssets {
     }
 }
 
-pub fn define(cx: &Context, global: &mut Object) -> bool {
+pub fn define(cx: &Context, global: &Object) -> bool {
     Env::init_class(cx, global).0 && EnvAssets::init_class(cx, global).0
 }

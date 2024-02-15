@@ -2,7 +2,7 @@ use std::{ffi::OsString, path::PathBuf, pin::Pin};
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use futures::Future;
-use ion::{string::byte::ByteString, ClassDefinition, Context, Object, Value};
+use ion::{function::Opt, string::byte::ByteString, ClassDefinition, Context, Object, Value};
 use mozjs::jsapi::PromiseState;
 use mozjs_sys::jsapi::JSObject;
 use runtime::{
@@ -10,7 +10,7 @@ use runtime::{
         hyper_body_to_stream, FetchBody, FetchBodyInner, HeaderEntry, HeadersInit,
         Request as FetchRequest, RequestInfo, RequestInit,
     },
-    modules::StandardModules,
+    module::StandardModules,
 };
 
 pub mod cloudflare;
@@ -103,11 +103,16 @@ pub trait RequestHandler: Clone + Send + Sync + 'static {
                 let message = result
                     .to_object(&cx)
                     .get(&cx, "message")
+                    .ok()
+                    .flatten()
                     .and_then(|v| {
                         if v.get().is_string() {
                             Some(
-                                ion::String::from(cx.root_string(v.get().to_string()))
-                                    .to_owned(&cx),
+                                ion::String::from(cx.root(v.get().to_string()))
+                                    .to_owned(&cx)
+                                    .unwrap_or_else(|e| {
+                                        format!("Failed to read error message due to {e}")
+                                    }),
                             )
                         } else {
                             None
@@ -131,17 +136,17 @@ pub trait RequestHandler: Clone + Send + Sync + 'static {
 }
 
 pub trait ByRefStandardModules {
-    fn init_modules(&self, cx: &Context, global: &mut Object) -> bool;
+    fn init_modules(&self, cx: &Context, global: &Object) -> bool;
 
-    fn init_globals(&self, cx: &Context, global: &mut Object) -> bool;
+    fn init_globals(&self, cx: &Context, global: &Object) -> bool;
 }
 
 impl StandardModules for Box<dyn ByRefStandardModules> {
-    fn init(self, cx: &Context, global: &mut Object) -> bool {
+    fn init(self, cx: &Context, global: &Object) -> bool {
         self.init_modules(cx, global)
     }
 
-    fn init_globals(self, cx: &Context, global: &mut Object) -> bool {
+    fn init_globals(self, cx: &Context, global: &Object) -> bool {
         self.as_ref().init_globals(cx, global)
     }
 }
@@ -183,7 +188,7 @@ fn build_fetch_request(cx: &Context, request: Request) -> Result<*mut JSObject> 
         ..Default::default()
     };
 
-    let request = FetchRequest::constructor(cx, request_info, Some(request_init))
+    let request = FetchRequest::constructor(cx, request_info, Opt(Some(request_init)))
         .map_err(|e| anyhow!("Failed to construct request: {e:?}"))?;
 
     Ok(FetchRequest::new_object(cx, Box::new(request)))

@@ -62,23 +62,19 @@ async function handleRequest(request) {
       }), 'the constructor should throw');
     }, 'constructing with a non-stringifiable encoding should throw');
 
-    // TODO: this is failing as a result of:
-    // https://github.com/Redfire75369/spiderfire/issues/47
-    // test(() => {
-    //   assert_throws_js(
-    //     () => new TextDecoderStream('utf-8', {
-    //       get fatal() { throw new Error(); }
-    //     }), 'the constructor should throw');
-    // }, 'a throwing fatal member should cause the constructor to throw');
+    test(() => {
+      assert_throws_js(
+        () => new TextDecoderStream('utf-8', {
+          get fatal() { throw new Error(); }
+        }), 'the constructor should throw');
+    }, 'a throwing fatal member should cause the constructor to throw');
 
-    // TODO: this is failing as a result of:
-    // https://github.com/Redfire75369/spiderfire/issues/47
-    // test(() => {
-    //   assert_throws_js(
-    //     () => new TextDecoderStream('utf-8', {
-    //       get ignoreBOM() { throw new Error(); }
-    //     }), 'the constructor should throw');
-    // }, 'a throwing ignoreBOM member should cause the constructor to throw');
+    test(() => {
+      assert_throws_js(
+        () => new TextDecoderStream('utf-8', {
+          get ignoreBOM() { throw new Error(); }
+        }), 'the constructor should throw');
+    }, 'a throwing ignoreBOM member should cause the constructor to throw');
 
     const badChunks = [
       {

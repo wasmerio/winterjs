@@ -40,6 +40,6 @@ impl Context {
     }
 }
 
-pub fn define(cx: &ion::Context, global: &mut Object) -> bool {
+pub fn define(cx: &ion::Context, global: &Object) -> bool {
     Context::init_class(cx, global).0
 }

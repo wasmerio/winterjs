@@ -6,7 +6,7 @@ use mozjs::{
     jsapi::{Handle, SetPromiseLifecycleCallbacks},
 };
 use mozjs_sys::jsapi::{JSContext, JSFunction, JSFunctionSpec, JSObject};
-use runtime::modules::NativeModule;
+use runtime::module::NativeModule;
 
 use crate::ion_mk_err;
 
@@ -119,7 +119,7 @@ impl NativeModule for CoreModule {
     const SOURCE: &'static str = include_str!("core.js");
 
     fn module(cx: &Context) -> Option<Object> {
-        let mut ret = Object::new(cx);
+        let ret = Object::new(cx);
         unsafe { ret.define_methods(cx, METHODS) }.then_some(ret)
     }
 }

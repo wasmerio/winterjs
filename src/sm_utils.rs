@@ -6,7 +6,7 @@ use mozjs::{
     jsapi::WeakRefSpecifier,
     rust::{JSEngine, JSEngineHandle, RealmOptions},
 };
-use runtime::{modules::StandardModules, Runtime, RuntimeBuilder};
+use runtime::{module::StandardModules, Runtime, RuntimeBuilder};
 use self_cell::self_cell;
 
 pub static ENGINE: once_cell::sync::Lazy<JSEngineHandle> = once_cell::sync::Lazy::new(|| {
@@ -152,11 +152,11 @@ pub fn error_report_option_to_anyhow_error(
 pub struct TwoStandardModules<M1: StandardModules, M2: StandardModules>(pub M1, pub M2);
 
 impl<M1: StandardModules, M2: StandardModules> StandardModules for TwoStandardModules<M1, M2> {
-    fn init(self, cx: &ion::Context, global: &mut ion::Object) -> bool {
+    fn init(self, cx: &ion::Context, global: &ion::Object) -> bool {
         self.0.init(cx, global) && self.1.init(cx, global)
     }
 
-    fn init_globals(self, cx: &ion::Context, global: &mut ion::Object) -> bool {
+    fn init_globals(self, cx: &ion::Context, global: &ion::Object) -> bool {
         self.0.init_globals(cx, global) && self.1.init_globals(cx, global)
     }
 }

@@ -1,6 +1,6 @@
 use ion::{function_spec, Object};
 use mozjs_sys::jsapi::JSFunctionSpec;
-use runtime::modules::NativeModule;
+use runtime::module::NativeModule;
 
 lazy_static::lazy_static! {
     static ref PERFORMANCE_ORIGIN: std::time::Instant = std::time::Instant::now();
@@ -22,7 +22,7 @@ impl NativeModule for PerformanceModule {
     const SOURCE: &'static str = include_str!("performance.js");
 
     fn module(cx: &ion::Context) -> Option<ion::Object> {
-        let mut ret = Object::new(cx);
+        let ret = Object::new(cx);
         if unsafe { ret.define_methods(cx, METHODS) } && ret.set_as(cx, "timeOrigin", &0.0f64) {
             Some(ret)
         } else {

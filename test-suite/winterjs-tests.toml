@@ -71,7 +71,7 @@ expected_response_status = 200
 [[test_case]]
 test_name = "4-request"
 test_route = "4-request"
-expected_output = "{\"method\":\"POST\",\"headers\":{\"x-test-header\":\"TestValue\"},\"referrer\":\"about:client\",\"referrerPolicy\":\"about:client\",\"mode\":\"cors\",\"credentials\":\"omit\",\"cache\":\"default\",\"redirect\":\"follow\",\"integrity\":\"\",\"keepalive\":false,\"isReloadNavigation\":false,\"isHistoryNavigation\":false,\"signal\":{},\"duplex\":\"half\"}"
+expected_output = "{\"method\":\"POST\",\"headers\":{\"x-test-header\":\"TestValue\"},\"referrer\":\"no-referrer\",\"referrerPolicy\":\"no-referrer\",\"mode\":\"cors\",\"credentials\":\"omit\",\"cache\":\"default\",\"redirect\":\"follow\",\"integrity\":\"\",\"keepalive\":false,\"isReloadNavigation\":false,\"isHistoryNavigation\":false,\"signal\":{},\"duplex\":\"half\"}"
 expected_response_status = 200
 
 [[test_case]]

@@ -79,10 +79,10 @@ impl<'cx> AlgorithmIdentifier<'cx> {
         match self {
             Self::String(str) => Ok(Cow::Borrowed(str.as_str())),
             Self::Object(obj) => {
-                if let Some(name) = obj.get(cx, "name") {
+                if let Some(name) = obj.get(cx, "name")? {
                     if name.get().is_string() {
                         Ok(Cow::Owned(
-                            ion::String::from(cx.root_string(name.get().to_string())).to_owned(cx),
+                            ion::String::from(cx.root(name.get().to_string())).to_owned(cx)?,
                         ))
                     } else {
                         ion_err!("name key of AlgorithmIdentifier must be a string", Type)
@@ -115,7 +115,7 @@ impl<'cx> AlgorithmIdentifier<'cx> {
     fn to_params(&self, cx: &'cx Context) -> Object<'cx> {
         match self {
             Self::String(_) => Object::new(cx),
-            Self::Object(o) => cx.root_object((**o).get()).into(),
+            Self::Object(o) => cx.root((**o).get()).into(),
         }
     }
 }
@@ -143,10 +143,10 @@ fn sign<'cx>(
         let data = data.to_owned();
 
         future_to_promise(cx, move |cx| async move {
-            let key = CryptoKey::get_private(&key.root(&cx).into());
+            let key = CryptoKey::get_private(&cx, &key.root(&cx).into()).unwrap();
             let alg = alg?;
 
-            let key_alg = KeyAlgorithm::get_private(&key.algorithm.root(&cx).into());
+            let key_alg = KeyAlgorithm::get_private(&cx, &key.algorithm.root(&cx).into()).unwrap();
             if alg.name().to_ascii_lowercase() != key_alg.name.to_ascii_lowercase() {
                 ion_err!(
                     "Provided key does not correspond to specified algorithm",
@@ -179,10 +179,10 @@ fn verify<'cx>(
         let signature = signature.to_owned();
 
         future_to_promise(cx, move |cx| async move {
-            let key = CryptoKey::get_private(&key.root(&cx).into());
+            let key = CryptoKey::get_private(&cx, &key.root(&cx).into()).unwrap();
             let alg = alg?;
 
-            let key_alg = KeyAlgorithm::get_private(&key.algorithm.root(&cx).into());
+            let key_alg = KeyAlgorithm::get_private(&cx, &key.algorithm.root(&cx).into()).unwrap();
             if alg.name().to_ascii_lowercase() != key_alg.name.to_ascii_lowercase() {
                 ion_err!(
                     "Provided key does not correspond to specified algorithm",
@@ -309,9 +309,9 @@ fn export_key(cx: &Context, key_format: KeyFormat, key: &CryptoKey) -> Option<Pr
     unsafe {
         let key_heap = TracedHeap::new(key.reflector().get());
         future_to_promise(cx, move |cx| async move {
-            let key = CryptoKey::get_private(&key_heap.root(&cx).into());
+            let key = CryptoKey::get_private(&cx, &key_heap.root(&cx).into()).unwrap();
             let alg_obj = key.algorithm.root(&cx).into();
-            let alg = KeyAlgorithm::get_private(&alg_obj);
+            let alg = KeyAlgorithm::get_private(&cx, &alg_obj).unwrap();
             let alg = AlgorithmIdentifier::String(alg.name.to_string()).get_algorithm(&cx)?;
             if !key.extractable {
                 ion_err!("Key cannot be exported", Normal);
@@ -331,7 +331,7 @@ const METHODS: &[JSFunctionSpec] = &[
     JSFunctionSpec::ZERO,
 ];
 
-pub fn define(cx: &Context, mut obj: Object) -> bool {
+pub fn define(cx: &Context, obj: Object) -> bool {
     unsafe { obj.define_methods(cx, METHODS) }
 }
 
@@ -353,8 +353,8 @@ macro_rules! enum_value {
                         ion::ErrorKind::Type,
                     ))
                 } else {
-                    ion::String::from(cx.root_string(value.handle().to_string()))
-                        .to_owned(cx)
+                    ion::String::from(cx.root(value.handle().to_string()))
+                        .to_owned(cx)?
                         .parse()
                         .map_err($crate::builtins::crypto::subtle::parse_error_to_type_error)
                 }

@@ -50,6 +50,6 @@ static METHODS: &[JSFunctionSpec] = &[
     JSFunctionSpec::ZERO,
 ];
 
-pub fn define(cx: &Context, global: &mut Object) -> bool {
+pub fn define(cx: &Context, global: &Object) -> bool {
     unsafe { global.define_methods(cx, METHODS) }
 }

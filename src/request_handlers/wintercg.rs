@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use ion::{Context, Object, Value};
+use mozjs_sys::jsapi::JSObject;
 
 use crate::sm_utils;
 
@@ -52,11 +53,11 @@ impl RequestHandler for WinterCGRequestHandler {
 struct WinterCGStandardModules;
 
 impl ByRefStandardModules for WinterCGStandardModules {
-    fn init_modules(&self, cx: &Context, global: &mut Object) -> bool {
+    fn init_modules(&self, cx: &Context, global: &Object) -> bool {
         self.init_globals(cx, global)
     }
 
-    fn init_globals(&self, cx: &Context, global: &mut Object) -> bool {
+    fn init_globals(&self, cx: &Context, global: &Object) -> bool {
         super::service_workers::define(cx, global)
     }
 }

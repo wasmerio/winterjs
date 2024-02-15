@@ -16,7 +16,7 @@ fn get_random_values(cx: &Context, array: ArrayBufferView) -> Result<*mut JSObje
         return Err(Error::new("Quota exceeded", ErrorKind::Normal));
     }
     unsafe {
-        let rooted = cx.root_object(*array.underlying_object());
+        let rooted = cx.root(*array.underlying_object());
         if !UnwrapFloat32Array(*array.underlying_object()).is_null()
             || !UnwrapFloat64Array(*array.underlying_object()).is_null()
             || JS_InstanceOf(
@@ -51,8 +51,8 @@ const METHODS: &[JSFunctionSpec] = &[
     JSFunctionSpec::ZERO,
 ];
 
-pub fn define(cx: &Context, global: &mut ion::Object) -> bool {
-    let mut crypto = Object::new(cx);
+pub fn define(cx: &Context, global: &ion::Object) -> bool {
+    let crypto = Object::new(cx);
     let subtle = Object::new(cx);
 
     crypto.set(cx, "subtle", &subtle.as_value(cx))

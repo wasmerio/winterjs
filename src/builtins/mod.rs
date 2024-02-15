@@ -1,5 +1,5 @@
 use ion::Context;
-use runtime::modules::{init_global_module, init_module, StandardModules};
+use runtime::module::{init_global_module, init_module, StandardModules};
 
 pub mod cache;
 pub mod core;
@@ -12,7 +12,7 @@ pub struct Modules {
 }
 
 impl StandardModules for Modules {
-    fn init(self, cx: &Context, global: &mut ion::Object) -> bool {
+    fn init(self, cx: &Context, global: &ion::Object) -> bool {
         let result = init_module::<performance::PerformanceModule>(cx, global)
             && init_module::<core::CoreModule>(cx, global)
             && init_module::<modules::Assert>(cx, global)
@@ -29,7 +29,7 @@ impl StandardModules for Modules {
         }
     }
 
-    fn init_globals(self, cx: &Context, global: &mut ion::Object) -> bool {
+    fn init_globals(self, cx: &Context, global: &ion::Object) -> bool {
         if self.include_internal {
             tracing::error!(
                 "Internal error: trying to initialize internal modules in global object mode"

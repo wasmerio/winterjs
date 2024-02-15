@@ -24,10 +24,7 @@ macro_rules! validate_jwk_alg {
     ($hash_alg:ident, $jwk:ident, $name:expr, $jwk_name:expr) => {
         if let Some(jwk_alg) = &$jwk.alg {
             if $hash_alg.name() == $name && jwk_alg != $jwk_name {
-                ion_err!(
-                    format!("alg field of JWK must be {}", $jwk_name).as_str(),
-                    Normal
-                );
+                ion_err!(format!("alg field of JWK must be {}", $jwk_name), Normal);
             }
         }
     };
@@ -105,11 +102,11 @@ impl CryptoAlgorithm for Hmac {
         data: Vec<u8>,
     ) -> ion::Result<ArrayBuffer<'cx>> {
         let key_alg = key.algorithm.root(cx).into();
-        if !HmacKeyAlgorithm::instance_of(cx, &key_alg, None) {
+        if !HmacKeyAlgorithm::instance_of(cx, &key_alg) {
             ion_err!("The provided key is not an HMAC key", Type);
         }
 
-        let key_alg = HmacKeyAlgorithm::get_private(&key_alg);
+        let key_alg = HmacKeyAlgorithm::get_private(cx, &key_alg).unwrap();
         let hash_alg =
             AlgorithmIdentifier::from_value(cx, &key_alg.hash.root(cx).into(), false, ())?;
 
@@ -291,14 +288,14 @@ impl CryptoAlgorithm for Hmac {
         key: &CryptoKey,
     ) -> ion::Result<ion::Value<'cx>> {
         let alg = key.algorithm.root(cx).into();
-        if !HmacKeyAlgorithm::instance_of(cx, &alg, None) {
+        if !HmacKeyAlgorithm::instance_of(cx, &alg) {
             ion_err!(
                 "The algorithm of the key should be an instance of HmacKeyAlgorithm",
                 Type
             );
         }
 
-        let alg = HmacKeyAlgorithm::get_private(&alg);
+        let alg = HmacKeyAlgorithm::get_private(cx, &alg).unwrap();
 
         match format {
             KeyFormat::Raw => {

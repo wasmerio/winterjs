@@ -124,10 +124,7 @@ impl CloudflareRequestHandler {
                     .await_native(Self::get_sws_request_handler()?.handle(&mut hyper_req, None))
                     .await;
                 let response = response.map_err(|e| {
-                    ion_mk_err!(
-                        format!("Failed to fetch static asset due to: {e}").as_str(),
-                        Normal
-                    )
+                    ion_mk_err!(format!("Failed to fetch static asset due to: {e}"), Normal)
                 })?;
                 let response = FetchResponse::from_hyper_response(&cx, response, url)?;
                 Ok(FetchResponse::new_object(&cx, Box::new(response)))
@@ -217,11 +214,11 @@ impl RequestHandler for CloudflareRequestHandler {
 struct CloudflareStandardModules;
 
 impl ByRefStandardModules for CloudflareStandardModules {
-    fn init_modules(&self, cx: &Context, global: &mut Object) -> bool {
+    fn init_modules(&self, cx: &Context, global: &Object) -> bool {
         self.init_globals(cx, global)
     }
 
-    fn init_globals(&self, cx: &Context, global: &mut Object) -> bool {
+    fn init_globals(&self, cx: &Context, global: &Object) -> bool {
         global.set_as(cx, "self", &(**global).get())
             && super::service_workers::define(cx, global)
             && self::env::define(cx, global)
@@ -254,9 +251,11 @@ fn eval_module(cx: &Context, path: impl AsRef<Path>) -> anyhow::Result<Cloudflar
     let ns = module.module_namespace(cx);
     let fetch_func = ns
         .get(cx, "default")
+        .ok()
+        .flatten()
         .and_then(|def| {
             if def.handle().is_object() {
-                def.to_object(cx).get(cx, "fetch")
+                def.to_object(cx).get(cx, "fetch").ok().flatten()
             } else {
                 None
             }
@@ -283,11 +282,10 @@ fn start_request(
         Some(func) => {
             let request = Value::object(
                 cx,
-                &cx.root_object(super::build_fetch_request(cx, request)?)
-                    .into(),
+                &cx.root(super::build_fetch_request(cx, request)?).into(),
             );
-            let env = Value::object(cx, &cx.root_object(env::Env::new_obj(cx)).into());
-            let ctx = Value::object(cx, &cx.root_object(context::Context::new_obj(cx)).into());
+            let env = Value::object(cx, &cx.root(env::Env::new_obj(cx)).into());
+            let ctx = Value::object(cx, &cx.root(context::Context::new_obj(cx)).into());
             let result = Function::from(func.root(cx))
                 .call(cx, &Object::null(cx), &[request, env, ctx])
                 .map_err(|e| error_report_option_to_anyhow_error(cx, e))?;
@@ -308,10 +306,7 @@ fn start_request(
     }
 }
 
-fn build_response(
-    cx: &Context,
-    mut result: Object,
-) -> Result<Either<PendingResponse, ReadyResponse>> {
+fn build_response(cx: &Context, result: Object) -> Result<Either<PendingResponse, ReadyResponse>> {
     if Promise::is_promise(&result) {
         // in the case of env.ASSETS.fetch, we must return a promise,
         // which will be returned immediately, as in:
@@ -323,8 +318,8 @@ fn build_response(
         Ok(Either::Left(PendingResponse {
             promise: unsafe { Promise::from_unchecked(result.into_local()) },
         }))
-    } else if FetchResponse::instance_of(cx, &result, None) {
-        let response = FetchResponse::get_mut_private(&mut result);
+    } else if FetchResponse::instance_of(cx, &result) {
+        let response = FetchResponse::get_mut_private(cx, &result).unwrap();
         super::build_response_from_fetch_response(cx, response).map(Either::Right)
     } else {
         bail!("Script error: Unsupported object received, must be an instance of Response")

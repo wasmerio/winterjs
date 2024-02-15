@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 use clap::builder::OsStr;
 /// Here, we initialize those modules that are defined in JS, as
 /// opposed to native modules defined in Rust. The sources for
@@ -65,7 +65,9 @@ fn compile_and_register(cx: &Context, script_file: &File) -> anyhow::Result<()> 
     match unsafe { &mut (*cx.get_inner_data().as_ptr()).module_loader } {
         Some(loader) => {
             let request = ModuleRequest::new(cx, module_name);
-            loader.register(cx, module.module_object(), &request);
+            loader
+                .register(cx, module.module_object(), &request)
+                .map_err(|e| anyhow!("Failed to register internal module due to: {e}"))?;
             Ok(())
         }
         None => anyhow::bail!("No module loader present, cannot register internal module"),

@@ -8,6 +8,7 @@ use futures::future::Either;
 use http::{header, Method};
 use ion::{
     class::{NativeObject, Reflector},
+    function::Opt,
     ClassDefinition, Context, Heap, Object, Promise, Result, TracedHeap,
 };
 use mozjs_sys::{
@@ -78,11 +79,11 @@ impl Cache {
         let mut responses = vec![];
 
         for (req, resp) in &*entries {
-            let response = Response::get_mut_private(&mut resp.root(cx).into());
+            let response = Response::get_mut_private(cx, &resp.root(cx).into()).unwrap();
             if Self::is_match(
                 cx,
                 request,
-                Request::get_private(&req.root(cx).into()),
+                Request::get_private(cx, &req.root(cx).into()).unwrap(),
                 response,
                 options,
             ) {
@@ -165,13 +166,13 @@ impl Cache {
                 Box::new(Request::constructor(
                     cx,
                     RequestInfo::String(s.clone()),
-                    None,
+                    Opt(None),
                 )?),
             ),
             RequestInfo::Request(r) => r.reflector().get(),
         };
-        let request_obj = Object::from(cx.root_object(request_obj));
-        Ok(Request::get_private(&request_obj))
+        let request_obj = Object::from(cx.root(request_obj));
+        Ok(Request::get_private(cx, &request_obj).unwrap())
     }
 
     pub async fn put_impl(
@@ -180,8 +181,8 @@ impl Cache {
         request: TracedHeap<*mut JSObject>,
         response: TracedHeap<*mut JSObject>,
     ) -> Result<()> {
-        let request_ref = Request::get_private(&request.root(&cx).into());
-        let response_ref = Response::get_mut_private(&mut response.root(&cx).into());
+        let request_ref = Request::get_private(&cx, &request.root(&cx).into()).unwrap();
+        let response_ref = Response::get_mut_private(&cx, &response.root(&cx).into()).unwrap();
 
         let url = request_ref.url();
         if url.scheme() != "http" && url.scheme() != "https" {
@@ -231,11 +232,11 @@ impl Cache {
         (cx, body_bytes) = cx.await_native_cx(|cx| response_body.into_bytes(cx)).await;
         let body_bytes = body_bytes?.unwrap_or_default();
 
-        let response_ref = Response::get_private(&response.root(&cx).into());
+        let response_ref = Response::get_private(&cx, &response.root(&cx).into()).unwrap();
 
-        let this_ref = Self::get_mut_private(&mut this.root(&cx).into());
-        let request_ref = Request::get_private(&request.root(&cx).into());
-        Self::delete_impl(this_ref.entries_mut(), &cx, request_ref, None);
+        let this_ref = Self::get_mut_private(&cx, &this.root(&cx).into()).unwrap();
+        let request_ref = Request::get_private(&cx, &request.root(&cx).into()).unwrap();
+        Self::delete_impl(this_ref.entries_mut(), &cx, request_ref, Opt(None));
 
         let cached_response = Heap::new(Response::new_object(
             &cx,
@@ -256,7 +257,7 @@ impl Cache {
         mut entries: impl DerefMut<Target = CacheEntryList>,
         cx: &Context,
         key: &Request,
-        options: Option<CacheQueryOptions>,
+        Opt(options): Opt<CacheQueryOptions>,
     ) -> bool {
         let mut result = false;
         let options = options.unwrap_or_default();
@@ -264,8 +265,8 @@ impl Cache {
             if Self::is_match(
                 cx,
                 Some(key),
-                Request::get_private(&entries[i].0.root(cx).into()),
-                Response::get_private(&entries[i].1.root(cx).into()),
+                Request::get_private(cx, &entries[i].0.root(cx).into()).unwrap(),
+                Response::get_private(cx, &entries[i].1.root(cx).into()).unwrap(),
                 &options,
             ) {
                 entries.remove(i);
@@ -288,9 +289,9 @@ impl Cache {
         &self,
         cx: &Context,
         key: RequestInfo,
-        options: Option<CacheQueryOptions>,
+        Opt(options): Opt<CacheQueryOptions>,
     ) -> Promise {
-        Promise::new_from_result(
+        Promise::from_result(
             cx,
             Self::match_all_impl(
                 self.entries(),
@@ -312,10 +313,10 @@ impl Cache {
     pub fn match_all(
         &self,
         cx: &Context,
-        key: Option<RequestInfo>,
-        options: Option<CacheQueryOptions>,
+        Opt(key): Opt<RequestInfo>,
+        Opt(options): Opt<CacheQueryOptions>,
     ) -> Promise {
-        Promise::new_from_result(
+        Promise::from_result(
             cx,
             Self::match_all_impl(
                 self.entries(),
@@ -346,7 +347,7 @@ impl Cache {
             future_to_promise(cx, move |mut cx| async move {
                 for req in &requests {
                     if let Either::Right(req) = req {
-                        let req = Request::get_private(&req.root(&cx).into());
+                        let req = Request::get_private(&cx, &req.root(&cx).into()).unwrap();
 
                         let url = req.url();
                         if url.scheme() != "http" && url.scheme() != "https" {
@@ -366,16 +367,22 @@ impl Cache {
                     let req_heap = match req {
                         Either::Left(s) => TracedHeap::new(Request::new_object(
                             &cx,
-                            Box::new(Request::constructor(&cx, RequestInfo::String(s), None)?),
+                            Box::new(Request::constructor(
+                                &cx,
+                                RequestInfo::String(s),
+                                Opt(None),
+                            )?),
                         )),
                         Either::Right(r) => r.clone(),
                     };
                     let req_obj = &mut req_heap.to_local().into();
 
-                    let req = Request::get_private(req_obj);
+                    let req = Request::get_private(&cx, req_obj).unwrap();
                     for (prev_req, prev_resp) in &to_commit {
-                        let prev_req = Request::get_private(&prev_req.to_local().into());
-                        let prev_resp = Response::get_private(&prev_resp.to_local().into());
+                        let prev_req =
+                            Request::get_private(&cx, &prev_req.to_local().into()).unwrap();
+                        let prev_resp =
+                            Response::get_private(&cx, &prev_resp.to_local().into()).unwrap();
                         if Cache::is_match(
                             &cx,
                             Some(req),
@@ -402,8 +409,10 @@ impl Cache {
                         .await;
 
                     let response = Response::get_private(
-                        &cx.root_object(response.map_err(|e| e.to_error())?).into(),
-                    );
+                        &cx,
+                        &cx.root(response.map_err(|e| e.to_error())?).into(),
+                    )
+                    .unwrap();
 
                     if !response.get_ok() {
                         ion_err!("A request returned a failure status code", Type);
@@ -455,7 +464,7 @@ impl Cache {
         let this = TracedHeap::new(self.reflector().get());
         let request = match Self::request_info_to_request(cx, request) {
             Ok(x) => x,
-            Err(e) => return Some(Promise::new_rejected(cx, e)),
+            Err(e) => return Some(Promise::rejected(cx, e)),
         };
         let request = TracedHeap::new(request.reflector().get());
         let response = TracedHeap::new(response.reflector().get());
@@ -466,13 +475,13 @@ impl Cache {
         &mut self,
         cx: &Context,
         key: RequestInfo,
-        options: Option<CacheQueryOptions>,
+        options: Opt<CacheQueryOptions>,
     ) -> Promise {
         let request = match Self::request_info_to_request(cx, key) {
             Ok(x) => x,
-            Err(e) => return Promise::new_rejected(cx, e),
+            Err(e) => return Promise::rejected(cx, e),
         };
-        Promise::new_resolved(
+        Promise::resolved(
             cx,
             Self::delete_impl(self.entries_mut(), cx, request, options),
         )
@@ -481,16 +490,16 @@ impl Cache {
     pub fn keys(
         &self,
         cx: &Context,
-        request: Option<RequestInfo>,
-        options: Option<CacheQueryOptions>,
+        Opt(request): Opt<RequestInfo>,
+        Opt(options): Opt<CacheQueryOptions>,
     ) -> Promise {
         match request {
-            None => Promise::new_from_result(
+            None => Promise::from_result(
                 cx,
                 self.entries()
                     .iter()
                     .map(|r| {
-                        let req = Request::get_mut_private(&mut r.0.root(cx).into());
+                        let req = Request::get_mut_private(cx, &r.0.root(cx).into()).unwrap();
                         Result::Ok(Request::new_object(cx, Box::new(req.try_clone(cx)?)))
                     })
                     .collect::<Result<Vec<_>>>(),
@@ -498,18 +507,19 @@ impl Cache {
             Some(request) => {
                 let request = match Self::request_info_to_request(cx, request) {
                     Ok(x) => x,
-                    Err(e) => return Promise::new_rejected(cx, e),
+                    Err(e) => return Promise::rejected(cx, e),
                 };
 
                 let mut result = vec![];
                 let options = options.unwrap_or_default();
 
                 for entry in &*self.entries() {
-                    let cached_req = Request::get_mut_private(&mut entry.0.root(cx).into());
-                    let cached_resp = Response::get_private(&entry.1.root(cx).into());
+                    let cached_req =
+                        Request::get_mut_private(cx, &entry.0.root(cx).into()).unwrap();
+                    let cached_resp = Response::get_private(cx, &entry.1.root(cx).into()).unwrap();
                     if Self::is_match(cx, Some(request), cached_req, cached_resp, &options) {
                         match cached_req.try_clone(cx) {
-                            Err(e) => return Promise::new_rejected(cx, e),
+                            Err(e) => return Promise::rejected(cx, e),
                             Ok(r) => {
                                 let req_obj = Request::new_object(cx, Box::new(r));
                                 result.push(req_obj);
@@ -518,12 +528,12 @@ impl Cache {
                     }
                 }
 
-                Promise::new_resolved(cx, result)
+                Promise::resolved(cx, result)
             }
         }
     }
 }
 
-pub fn define(cx: &Context, global: &mut Object) -> bool {
+pub fn define(cx: &Context, global: &Object) -> bool {
     Cache::init_class(cx, global).0 && cache_storage::define(cx, global)
 }
