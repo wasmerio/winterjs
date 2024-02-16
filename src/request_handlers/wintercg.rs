@@ -1,6 +1,5 @@
 use anyhow::{bail, Result};
 use ion::{Context, Object, Value};
-use mozjs_sys::jsapi::JSObject;
 
 use crate::sm_utils;
 

@@ -100,7 +100,7 @@ async fn handle_requests_inner(
             _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {}
 
             // Nothing to do
-            _ = tokio::time::sleep(poll_interval) => {}
+            _ = tokio::time::sleep(poll_interval), if !rt.event_loop_is_empty() => {}
         }
 
         // We have to do this convoluted bit of code because drain_filter is not stable
