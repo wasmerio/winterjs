@@ -77,6 +77,14 @@ async fn run() -> Result<(), anyhow::Error> {
     };
 
     match args.cmd {
+        Cmd::Exec(cmd) => {
+            runtime::config::CONFIG
+                .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
+                .unwrap();
+
+            runners::exec::exec_script(cmd.js_path, cmd.script)
+        }
+
         Cmd::Serve(cmd) => {
             let interface = if let Some(iface) = cmd.ip {
                 iface
@@ -144,6 +152,7 @@ struct Args {
 #[derive(clap::Subcommand, Debug)]
 enum Cmd {
     Serve(CmdServe),
+    Exec(CmdExec),
 }
 
 /// Start a WinterJS webserver serving the given JS app.
@@ -179,6 +188,19 @@ struct CmdServe {
     /// out.
     #[clap(short = 'H', long, env = "WINTERJS_MODE")]
     mode: Option<HandlerName>,
+}
+
+/// Execute a JS file directly and exit. This is useful for cron jobs, etc.
+#[derive(clap::Parser, Debug)]
+struct CmdExec {
+    /// Path to a Javascript file to serve.
+    #[clap(env = "WINTERJS_PATH")]
+    js_path: PathBuf,
+
+    /// Run in script mode. If this flag is not specified, the JS file will
+    /// be loaded in module mode instead.
+    #[clap(short, long, env = "WINTERJS_SCRIPT")]
+    script: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
