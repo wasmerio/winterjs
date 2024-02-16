@@ -89,7 +89,7 @@ async fn handle_requests_inner(
             }
 
             // Nothing to do here except check the error, the promises are checked further down
-            e = rt.run_event_loop() => {
+            e = rt.run_event_loop(), if !rt.event_loop_is_empty() => {
                 // Note: an error in this stage is an unhandled error happening in the request
                 // logic, and such an error should not terminate the whole request processing
                 // thread.
