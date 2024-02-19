@@ -2,6 +2,7 @@ use std::{ffi::OsString, path::PathBuf, pin::Pin};
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use futures::Future;
+use http::Uri;
 use ion::{function::Opt, string::byte::ByteString, ClassDefinition, Context, Object, Value};
 use mozjs::jsapi::PromiseState;
 use mozjs_sys::jsapi::JSObject;
@@ -157,8 +158,24 @@ fn build_fetch_request(cx: &Context, request: Request) -> Result<*mut JSObject> 
         _ => request.body,
     };
 
-    let uri = format!("https://app.wasmer.internal{}", request.parts.uri);
-    let request_info = RequestInfo::String(uri);
+    let host = get_host(&request.parts.uri, &request.parts.headers)?;
+    let uri = Uri::builder()
+        .scheme("http")
+        .authority(host)
+        .path_and_query(
+            request
+                .parts
+                .uri
+                .path_and_query()
+                .cloned()
+                .unwrap_or("/".parse().unwrap()),
+        )
+        .build()
+        .context("Failed to build request URI")?;
+
+    tracing::debug!(%uri, "Computed request URI");
+
+    let request_info = RequestInfo::String(uri.to_string());
 
     let header_entries = request
         .parts
@@ -192,6 +209,24 @@ fn build_fetch_request(cx: &Context, request: Request) -> Result<*mut JSObject> 
         .map_err(|e| anyhow!("Failed to construct request: {e:?}"))?;
 
     Ok(FetchRequest::new_object(cx, Box::new(request)))
+}
+
+pub fn get_host<'a>(uri: &'a http::Uri, headers: &'a http::HeaderMap) -> Result<&'a str> {
+    if let Some(value) = headers.get(http::header::HOST) {
+        let mut host = value.to_str().context("Failed to read host header")?;
+        if let Some((a, _)) = host.split_once(':') {
+            host = a;
+        }
+        if !host.is_empty() {
+            return Ok(host);
+        }
+    }
+
+    if let Some(host) = uri.host() {
+        Ok(host)
+    } else {
+        Ok("app.wasmer.internal")
+    }
 }
 
 fn build_response_from_fetch_response(
