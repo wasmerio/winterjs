@@ -112,8 +112,14 @@ async fn run() -> Result<(), anyhow::Error> {
             let user_code = UserCode::from_path(&cmd.js_path, cmd.script).await?;
 
             let handler: Box<dyn RequestHandler> = match cmd.mode {
-                Some(HandlerName::Cloudflare) => Box::new(CloudflareRequestHandler),
-                Some(HandlerName::WinterCG) | None => Box::new(WinterCGRequestHandler),
+                Some(HandlerName::Cloudflare) => {
+                    tracing::info!("Starting in Cloudflare mode");
+                    Box::new(CloudflareRequestHandler)
+                }
+                Some(HandlerName::WinterCG) | None => {
+                    tracing::info!("Starting in WinterCG mode");
+                    Box::new(WinterCGRequestHandler)
+                }
             };
 
             runtime::config::CONFIG

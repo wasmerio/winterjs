@@ -74,7 +74,14 @@ async fn handle_requests_inner(
                 match msg {
                     None | Some(ControlMessage::Shutdown) => break,
                     Some(ControlMessage::HandleRequest(req, resp_tx)) => {
-                        match handler.start_handling_request(cx.duplicate(), Request{parts:  req.req, body: req.body}) {
+                        tracing::trace!(%req.req.method, %req.req.uri, ?req.req.headers, "Incoming request");
+                        match handler.start_handling_request(
+                            cx.duplicate(),
+                            Request {
+                                parts: req.req,
+                                body: req.body
+                            }
+                        ) {
                             Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
                             Ok(Either::Left(pending)) => requests.push((pending, resp_tx)),
                             Ok(Either::Right(resp)) => {
@@ -312,6 +319,7 @@ impl SingleRunner {
 
         // Step 2: can we spawn a new thread?
         if self.threads.len() < self.max_threads {
+            debug!("Spawning new request handler thread");
             return self.spawn_thread();
         }
 
