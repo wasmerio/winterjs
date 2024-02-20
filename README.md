@@ -53,7 +53,6 @@ WinterJS is using the [WASIX](https://wasix.org) standard to compile to WebAssem
 ## Limitations
 
 WinterJS is fully compliant with the WinterCG spec, although the runtime itself is still a work in progress.
-It is not recommended to use WinterJS in production yet.
 For more information, see the API Compatibility section below.
 
 # WinterCG API Compatibility
