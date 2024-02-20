@@ -1,6 +1,6 @@
 # Benchmarking
 
-This benchmarks are done in a MacBook Pro M1 Max laptop with 64 GB of RAM, on Oct 31st, 2023.
+This benchmarks are done in a MacBook Pro M3 Max laptop with 64 GB of RAM, on Feb 20th, 2024.
 
 This benchmark compares:
 * [`workerd`](#workerd): Cloudflare's Service Worker server powered by V8 (repo: https://github.com/cloudflare/workerd)
