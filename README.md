@@ -35,10 +35,16 @@ addEventListener('fetch', (req) => {
 
 ## Running WinterJS Natively
 
-You can run WinterJS natively by simply doing
+You can install WinterJS natively with:
+
+```
+cargo install --git https://github.com/wasmerio/winterjs
+```
+
+Once you have WinterJS installed, you can simply do:
 
 ```shell
-cargo run -- tests/simple.js
+winterjs tests/simple.js
 ```
 
 And then access the server in https://localhost:8080/
