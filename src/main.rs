@@ -14,6 +14,9 @@ use request_handlers::{
     UserCode,
 };
 
+#[cfg(not(target_os = "wasi"))]
+use server::Runner;
+
 #[macro_use]
 extern crate ion_proc;
 
@@ -126,22 +129,54 @@ async fn run() -> Result<(), anyhow::Error> {
                 .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
                 .unwrap();
 
-            if cmd.watch {
-                let runner = runners::watch::WatchRunner::new(
-                    handler,
-                    cmd.js_path.clone(),
-                    cmd.script,
-                    cmd.max_js_threads,
-                )?;
-                crate::server::run_server(config, runner).await
-            } else {
-                let runner = runners::single::SingleRunner::new_request_handler(
-                    handler,
-                    cmd.max_js_threads,
-                    user_code,
-                );
-                crate::server::run_server(config, runner).await
+            // if cmd.watch {
+            //     let runner = runners::watch::WatchRunner::new(
+            //         handler,
+            //         cmd.js_path.clone(),
+            //         cmd.script,
+            //         cmd.max_js_threads,
+            //     )?;
+            //     crate::server::run_server(config, runner).await
+            // } else {
+            let runner = runners::single::SingleRunner::new_request_handler(
+                handler,
+                cmd.max_js_threads,
+                user_code,
+            );
+
+            #[cfg_attr(target_os = "wasi", allow(unused))]
+            let (tx, rx) = tokio::sync::oneshot::channel();
+
+            // There are two main points to consider here:
+            // * ctrlc is not available on WASIX and signal handling in
+            //   general is not stable and fully wired up yet.
+            // * When running under WASIX, we expect 99% of usage to be
+            //   either local development or running on Wasmer Edge.
+            //   Wasmer Edge already keeps instances alive while they're
+            //   processing a request, and dropping requests during local
+            //   development isn't likely to cause problems.
+            // Given the two points above, clean shutdown is implemented
+            // for native builds only.
+            #[cfg(not(target_os = "wasi"))]
+            {
+                let runner_clone = runner.clone();
+                let mut shutdown_future = Some(async move {
+                    runner_clone.shutdown().await;
+                    _ = tx.send(());
+                });
+                ctrlc::set_handler(move || {
+                    if let Some(f) = shutdown_future.take() {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap()
+                            .block_on(f);
+                    }
+                })
+                .expect("Failed to set Ctrl-C handler");
             }
+
+            crate::server::run_server(config, runner, rx).await
         }
     }
 }
@@ -177,10 +212,9 @@ struct CmdServe {
     #[clap(long, default_value = "16", env = "WINTERJS_MAX_JS_THREADS")]
     max_js_threads: usize,
 
-    /// Watch the Javascript file for changes and automatically reload.
-    #[clap(short, long, env = "WINTERJS_WATCH")]
-    watch: bool,
-
+    // /// Watch the Javascript file for changes and automatically reload.
+    // #[clap(short, long, env = "WINTERJS_WATCH")]
+    // watch: bool,
     /// Path to a Javascript file to serve.
     #[clap(env = "WINTERJS_PATH")]
     js_path: PathBuf,

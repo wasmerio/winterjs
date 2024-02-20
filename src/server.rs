@@ -15,6 +15,7 @@ pub struct ServerConfig {
 pub async fn run_server<H: Runner + Send + Sync>(
     config: ServerConfig,
     handler: H,
+    shutdown_signal: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
     let context = AppContext { handler };
 
@@ -35,6 +36,7 @@ pub async fn run_server<H: Runner + Send + Sync>(
 
     Server::bind(&addr)
         .serve(make_service)
+        .with_graceful_shutdown(async move { _ = shutdown_signal.await })
         .await
         .context("hyper server failed")
 }
@@ -47,6 +49,8 @@ pub trait Runner: Send + Clone + 'static {
         req: http::request::Parts,
         body: hyper::Body,
     ) -> anyhow::Result<hyper::Response<hyper::Body>>;
+
+    async fn shutdown(&self);
 }
 
 #[derive(Clone)]

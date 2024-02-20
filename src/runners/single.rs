@@ -4,7 +4,10 @@
 //! right now. Maybe I'll rename it later.
 
 use std::{
-    sync::{atomic::AtomicI32, Arc},
+    sync::{
+        atomic::{AtomicBool, AtomicI32},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -170,6 +173,7 @@ async fn handle_requests(
     handler: Box<dyn RequestHandler>,
     user_code: UserCode,
     mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
+    finished: Arc<AtomicBool>,
 ) {
     if let Err(e) = handle_requests_inner(handler, user_code, &mut recv).await {
         // The request handling logic itself failed, so we send back the error
@@ -187,6 +191,27 @@ async fn handle_requests(
                 }
             }
         }
+    }
+
+    finished.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    // TODO: currently, we can't shut request handler threads down.
+    // This is because we have `TracedHeap`s in thread locals, which
+    // try to remove themselves from `RootedTraceableSet` upon being
+    // dropped, which itself uses a thread local. If the thread local
+    // backing `RootedTraceableSet` is dropped first, dropping a
+    // `TracedHeap` panics, which causes the entire process to
+    // terminate under WASM.
+    // To work around this, we keep the request handler threads alive
+    // forever, instead signalling that we're done via the AtomicBool
+    // above. When all request handler threads signal being done, the
+    // main thread will exit which will stop all other threads without
+    // actually stopping them and causing the panic.
+    loop {
+        // We're running under a single-threaded runtime that's blocked
+        // on this future, so awaiting actually does keep the thread
+        // alive.
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -233,15 +258,24 @@ pub struct WorkerThreadInfo {
     thread: std::thread::JoinHandle<()>,
     channel: tokio::sync::mpsc::UnboundedSender<ControlMessage>,
     in_flight_requests: Arc<AtomicI32>,
+    finished: Arc<AtomicBool>,
 }
 
-// TODO: clean shutdown
+impl WorkerThreadInfo {
+    pub fn is_finished(&self) -> bool {
+        // The thread may abort for any number of reasons without first storing a value
+        // in the atomic bool, so check both.
+        self.thread.is_finished() || self.finished.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 // TODO: replace failing threads
 pub struct SingleRunner {
     threads: Vec<WorkerThreadInfo>,
     max_threads: usize,
     handler: Box<dyn RequestHandler>,
     user_code: UserCode,
+    shut_down: bool,
 }
 
 pub type SharedSingleRunner = Arc<Mutex<SingleRunner>>;
@@ -257,6 +291,7 @@ impl SingleRunner {
             max_threads,
             handler,
             user_code,
+            shut_down: false,
         }
     }
 
@@ -264,7 +299,7 @@ impl SingleRunner {
         handler: Box<dyn RequestHandler>,
         max_threads: usize,
         user_code: UserCode,
-    ) -> Arc<Mutex<Self>> {
+    ) -> SharedSingleRunner {
         Arc::new(Mutex::new(Self::new(max_threads, handler, user_code)))
     }
 
@@ -272,6 +307,8 @@ impl SingleRunner {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let handler = self.handler.clone();
         let user_code = self.user_code.clone();
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_clone = finished.clone();
         let join_handle = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -280,7 +317,7 @@ impl SingleRunner {
                 .block_on(async move {
                     let local_set = LocalSet::new();
                     local_set
-                        .run_until(handle_requests(handler, user_code, rx))
+                        .run_until(handle_requests(handler, user_code, rx, finished_clone))
                         .await
                 })
         });
@@ -288,6 +325,7 @@ impl SingleRunner {
             thread: join_handle,
             channel: tx,
             in_flight_requests: Arc::new(AtomicI32::new(0)),
+            finished,
         };
         self.threads.push(worker);
         let spawned_index = self.threads.len() - 1;
@@ -295,7 +333,11 @@ impl SingleRunner {
         &self.threads[spawned_index]
     }
 
-    fn find_or_spawn_thread(&mut self) -> &WorkerThreadInfo {
+    fn find_or_spawn_thread(&mut self) -> Option<&WorkerThreadInfo> {
+        if self.shut_down {
+            return None;
+        }
+
         let request_counts = self
             .threads
             .iter()
@@ -313,14 +355,14 @@ impl SingleRunner {
         for t in &request_counts {
             if t.1 <= 0 {
                 debug!("Using idle handler thread #{}", t.0);
-                return &self.threads[t.0];
+                return Some(&self.threads[t.0]);
             }
         }
 
         // Step 2: can we spawn a new thread?
         if self.threads.len() < self.max_threads {
             debug!("Spawning new request handler thread");
-            return self.spawn_thread();
+            return Some(self.spawn_thread());
         }
 
         // Step 3: find the thread with the least active requests
@@ -333,12 +375,12 @@ impl SingleRunner {
                 .in_flight_requests
                 .load(std::sync::atomic::Ordering::SeqCst)
         );
-        &self.threads[min.0]
+        Some(&self.threads[min.0])
     }
 }
 
 #[async_trait]
-impl crate::server::Runner for Arc<Mutex<SingleRunner>> {
+impl crate::server::Runner for SharedSingleRunner {
     async fn handle(
         &self,
         _addr: std::net::SocketAddr,
@@ -346,7 +388,13 @@ impl crate::server::Runner for Arc<Mutex<SingleRunner>> {
         body: hyper::Body,
     ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
         let mut this = self.lock().await;
-        let thread = this.find_or_spawn_thread();
+        let Some(thread) = this.find_or_spawn_thread() else {
+            let response = hyper::Response::builder()
+                .status(503)
+                .body(hyper::Body::from("Server is shutting down"))
+                .expect("Failed to construct 503 response");
+            return Ok(response);
+        };
 
         let request_count = thread.in_flight_requests.clone();
         let increment_guard = IncrementGuard::new(request_count);
@@ -376,6 +424,33 @@ impl crate::server::Runner for Arc<Mutex<SingleRunner>> {
                 Err(anyhow!("Error encountered while evaluating user script"))
             }
         }
+    }
+
+    async fn shutdown(&self) {
+        tracing::info!("Shutting down...");
+
+        let mut this = self.lock().await;
+        this.shut_down = true;
+        for thread in &this.threads {
+            if !thread.is_finished() {
+                _ = thread.channel.send(ControlMessage::Shutdown);
+            }
+        }
+        // Drop the lock handle so incoming requests can receive an
+        // error response
+        drop(this);
+
+        loop {
+            let this = self.lock().await;
+            if this.threads.iter().any(|t| !t.is_finished()) {
+                tracing::debug!("Still waiting for threads to quit...");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            } else {
+                break;
+            }
+        }
+
+        tracing::info!("Shutdown complete");
     }
 }
 

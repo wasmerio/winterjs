@@ -73,6 +73,9 @@ dyn-clone = "1.0.16"
 dyn-clonable = "0.9.0"
 self_cell = "1.0.3"
 
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+ctrlc = "3.4.2"
+
 [patch.crates-io]
 hyper-rustls = { git = "https://github.com/wasix-org/hyper-rustls.git", branch = "v0.25.0" }
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "v0.5.5" }
