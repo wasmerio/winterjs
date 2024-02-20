@@ -5,6 +5,8 @@ This benchmarks are done in a MacBook Pro M1 Max laptop with 64 GB of RAM, on Oc
 This benchmark compares:
 * [`workerd`](#workerd): Cloudflare's Service Worker server powered by V8 (repo: https://github.com/cloudflare/workerd)
 * [WinterJS Native](#winterjs-native): WinterJS running natively
+* [Bun](#bun): Bun (basic http server replicating similar behavior)
+* [Node](#node): Node (basic http server replicating similar behavior)
 * [WinterJS WASIX](#winterjs-wasix): WinterJS running in Wasmer via WASIX
 * [`wrangler`](#wrangler): Cloudflare's Service Worker powered by Node (repo: https://github.com/cloudflare/workers-sdk)
 
@@ -29,12 +31,12 @@ $ wrk -t12 -c400 -d10s http://127.0.0.1:8080
 Running 10s test @ http://127.0.0.1:8080
   12 threads and 400 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency     5.63ms    5.82ms  64.49ms   84.22%
-    Req/Sec     3.11k     1.51k   33.08k    77.43%
-  363095 requests in 10.10s, 29.09MB read
-  Socket errors: connect 155, read 108, write 0, timeout 147
-Requests/sec:  35934.03
-Transfer/sec:      2.88MB
+    Latency    14.55ms   22.15ms 116.50ms   81.86%
+    Req/Sec     3.32k     1.52k    9.65k    69.58%
+  396904 requests in 10.04s, 31.42MB read
+  Socket errors: connect 155, read 110, write 0, timeout 0
+Requests/sec:  39522.93
+Transfer/sec:      3.13MB
 ```
 
 ## WinterJS (Native)
@@ -51,12 +53,64 @@ $ wrk -t12 -c400 -d10s http://127.0.0.1:8080
 Running 10s test @ http://127.0.0.1:8080
   12 threads and 400 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency     6.51ms   15.73ms 203.56ms   90.09%
-    Req/Sec     8.55k     3.29k   19.72k    66.25%
-  1020674 requests in 10.01s, 78.84MB read
-  Socket errors: connect 155, read 121, write 0, timeout 0
-Requests/sec: 101936.53
-Transfer/sec:      7.87MB
+    Latency     1.64ms    2.93ms 125.50ms   97.94%
+    Req/Sec    11.61k     3.33k   24.75k    68.44%
+  1325896 requests in 10.10s, 151.74MB read
+  Socket errors: connect 155, read 110, write 0, timeout 0
+Requests/sec: 131300.35
+Transfer/sec:     15.03MB
+```
+
+
+## Bun
+
+> Note: Bun does run another equivalent script to `simple.js` (`bun-simple.js`), since Bun does not support WinterCG natively.
+
+Running the server:
+
+```
+$ bun ./bun-simple.js
+```
+
+Benchmarking:
+
+```
+$ wrk -t12 -c400 -d10s http://127.0.0.1:8080
+Running 10s test @ http://127.0.0.1:8080
+  12 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     2.05ms  401.85us   8.29ms   78.81%
+    Req/Sec     9.83k     5.40k   17.65k    45.96%
+  1186158 requests in 10.10s, 135.75MB read
+  Socket errors: connect 155, read 57, write 0, timeout 0
+Requests/sec: 117418.44
+Transfer/sec:     13.44MB
+```
+
+
+## Node
+
+> Note: Node does run another equivalent script to `simple.js` (`node-simple.js`), since Node does not support WinterCG natively.
+
+Running the server:
+
+```
+$ node ./node-simple.js
+```
+
+Benchmarking:
+
+```
+$ wrk -t12 -c400 -d10s http://127.0.0.1:8080
+Running 10s test @ http://127.0.0.1:8080
+  12 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     3.91ms   10.03ms 294.68ms   99.16%
+    Req/Sec     6.25k     2.00k   11.33k    73.92%
+  747990 requests in 10.02s, 122.69MB read
+  Socket errors: connect 155, read 306, write 0, timeout 0
+Requests/sec:  74615.22
+Transfer/sec:     12.24MB
 ```
 
 ## WinterJS (WASIX)
@@ -74,12 +128,12 @@ $ wrk -t12 -c400 -d10s http://127.0.0.1:8080
 Running 10s test @ http://127.0.0.1:8080
   12 threads and 400 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    13.62ms    2.09ms  28.38ms   70.34%
-    Req/Sec     1.48k   452.38     2.46k    65.50%
-  176766 requests in 10.02s, 13.66MB read
-  Socket errors: connect 155, read 106, write 0, timeout 0
-Requests/sec:  17642.88
-Transfer/sec:      1.36MB
+    Latency    11.22ms    8.97ms 168.70ms   87.08%
+    Req/Sec     1.05k   526.90     2.99k    73.00%
+  125542 requests in 10.03s, 14.37MB read
+  Socket errors: connect 155, read 271, write 0, timeout 0
+Requests/sec:  12519.78
+Transfer/sec:      1.43MB
 ```
 
 ## Wrangler
