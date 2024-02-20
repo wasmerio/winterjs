@@ -1,17 +1,17 @@
 <div align="center">
-  <a href="https://winterjs.org" target="_blank">
+  <a href="https://github.com/wasmerio/winterjs" target="_blank">
     <picture>
-      <source srcset="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/logo.png"  media="(prefers-color-scheme: dark)">
-      <img width="128" src="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/logo.png" alt="Wasmer logo">
+      <source srcset="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/winterjs-logo-white.png" height="128" media="(prefers-color-scheme: dark)">
+      <img height="128" src="https://raw.githubusercontent.com/wasmerio/winterjs/main/assets/winterjs-logo-black.png" alt="Wasmer logo">
     </picture>
   </a>
 </div>
 
-# WinterJS
-
-A *blazing-fast* JavaScript server that runs Service Workers scripts according to the [Winter Community Group specification](https://wintercg.org/).
+WinterJS is *blazing-fast* JavaScript server that runs Service Workers scripts according to the [Winter Community Group specification](https://wintercg.org/).
 
 **WinterJS is able to handle up to 100,000 reqs/s in a single laptop** (see [Benchmark](./benchmark)).
+
+----
 
 > Note: WinterJS is not officially endorsed by WinterCG, despite sharing "Winter" in their name. There are many [runtimes supporting WinterCG](https://runtime-keys.proposal.wintercg.org/), WinterJS being one among those.
 
