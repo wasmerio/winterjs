@@ -331,6 +331,58 @@ export function createHook() {
   return new AsyncHook();
 }
 
+const originalSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (handler, timeout?, ...args) => {
+  let currentFrame = AsyncContextFrame.current();
+  return originalSetTimeout((...args) => {
+    try {
+      pushAsyncFrame(currentFrame);
+
+      if (typeof handler === "string") {
+        eval(handler);
+      } else {
+        handler(...args);
+      }
+    }
+    finally {
+      popAsyncFrame();
+    }
+  }, timeout, ...args);
+}
+
+const originalSetInterval = globalThis.setInterval;
+globalThis.setInterval = (handler, timeout?, ...args) => {
+  let currentFrame = AsyncContextFrame.current();
+  return originalSetInterval((...args) => {
+    try {
+      pushAsyncFrame(currentFrame);
+
+      if (typeof handler === "string") {
+        eval(handler);
+      } else {
+        handler(...args);
+      }
+    }
+    finally {
+      popAsyncFrame();
+    }
+  }, timeout, ...args);
+}
+
+const originalQueueMicrotask = globalThis.queueMicrotask;
+globalThis.queueMicrotask = (callback) => {
+  let currentFrame = AsyncContextFrame.current();
+  originalQueueMicrotask(() => {
+    try {
+      pushAsyncFrame(currentFrame);
+      callback();
+    }
+    finally {
+      popAsyncFrame();
+    }
+  });
+}
+
 // Placing all exports down here because the exported classes won't export
 // otherwise.
 export default {
