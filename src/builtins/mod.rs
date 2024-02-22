@@ -13,12 +13,12 @@ pub struct Modules {
 
 impl StandardModules for Modules {
     fn init(self, cx: &Context, global: &ion::Object) -> bool {
-        let result = init_module::<performance::PerformanceModule>(cx, global)
-            && init_module::<core::CoreModule>(cx, global)
+        let result = init_module::<core::CoreModule>(cx, global)
             && init_module::<modules::Assert>(cx, global)
             && init_module::<modules::FileSystem>(cx, global)
             && init_module::<modules::PathM>(cx, global)
             && init_module::<modules::UrlM>(cx, global)
+            && performance::define(cx, global)
             && crypto::define(cx, global)
             && cache::define(cx, global);
 
@@ -37,11 +37,11 @@ impl StandardModules for Modules {
             return false;
         }
 
-        init_global_module::<performance::PerformanceModule>(cx, global)
-            && init_global_module::<modules::Assert>(cx, global)
+        init_global_module::<modules::Assert>(cx, global)
             && init_global_module::<modules::FileSystem>(cx, global)
             && init_global_module::<modules::PathM>(cx, global)
             && init_global_module::<modules::UrlM>(cx, global)
+            && performance::define(cx, global)
             && crypto::define(cx, global)
             && cache::define(cx, global)
     }
