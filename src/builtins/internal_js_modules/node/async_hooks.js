@@ -25,7 +25,6 @@ function popAsyncFrame() {
 }
 let rootAsyncFrame = undefined;
 let promiseHooksSet = false;
-let promiseIndex = 0;
 const asyncContext = Symbol("asyncContext");
 function setPromiseHooks() {
     if (promiseHooksSet) {
@@ -39,7 +38,6 @@ function setPromiseHooks() {
                 throw new Error("Promise already has async context");
             }
             AsyncContextFrame.attachContext(promise);
-            promise['idx'] = promiseIndex++;
         }
     };
     const before = (promise) => {
