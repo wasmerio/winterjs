@@ -5,6 +5,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
+    time::Duration,
 };
 
 use anyhow::Context as _;
@@ -159,9 +160,19 @@ async fn run() -> Result<(), anyhow::Error> {
             // for native builds only.
             #[cfg(not(target_os = "wasi"))]
             {
+                let timeout = cmd
+                    .shutdown_timeout
+                    .map(Duration::from_secs)
+                    .unwrap_or_else(|| Duration::from_secs(60));
+                let timeout = if timeout.is_zero() {
+                    None
+                } else {
+                    Some(timeout)
+                };
+
                 let runner_clone = runner.clone();
                 let mut shutdown_future = Some(async move {
-                    runner_clone.shutdown().await;
+                    runner_clone.shutdown(timeout).await;
                     _ = tx.send(());
                 });
                 ctrlc::set_handler(move || {
@@ -228,6 +239,14 @@ struct CmdServe {
     /// out.
     #[clap(short = 'H', long, env = "WINTERJS_MODE")]
     mode: Option<HandlerName>,
+
+    #[cfg(not(target_os = "wasi"))]
+    /// Clean shutdown timeout, i.e. how long to wait before forcefully
+    /// terminating request handler threads after Ctrl+C is pressed, in
+    /// seconds. Pass in zero to disable the timeout. Defaults to 60
+    /// seconds.
+    #[clap(short = 't', long, env = "WINTERJS_SHUTDOWN_TIMEOUT")]
+    shutdown_timeout: Option<u64>,
 }
 
 /// Execute a JS file directly and exit. This is useful for cron jobs, etc.

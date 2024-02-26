@@ -4,24 +4,27 @@
 //! right now. Maybe I'll rename it later.
 
 use std::{
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicI32},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::anyhow;
 use async_trait::async_trait;
-use futures::stream::{FuturesUnordered, StreamExt};
+use futures::{
+    stream::{FuturesUnordered, StreamExt},
+    Future,
+};
 use ion::{Context, ErrorReport};
 use mozjs::jsapi::PromiseState;
 use tokio::{select, sync::Mutex, task::LocalSet};
-use tracing::debug;
 
 use crate::{
-    builtins::{self},
-    request_handlers::{Either, Request, RequestHandler, UserCode},
+    builtins,
+    request_handlers::{Either, PendingResponse, Request, RequestHandler, UserCode},
     sm_utils::{error_report_option_to_anyhow_error, JsApp, TwoStandardModules},
 };
 
@@ -76,6 +79,10 @@ async fn handle_requests_inner(
             msg = recv.recv() => {
                 match msg {
                     None | Some(ControlMessage::Shutdown) => break,
+                    Some(ControlMessage::Terminate) => {
+                        terminate_requests(requests, stream_body_futures);
+                        return Ok(());
+                    }
                     Some(ControlMessage::HandleRequest(req, resp_tx)) => {
                         tracing::trace!(%req.req.method, %req.req.uri, ?req.req.headers, "Incoming request");
                         match handler.start_handling_request(
@@ -138,7 +145,22 @@ async fn handle_requests_inner(
     // Wait for all pending requests to be resolved, which may
     // happen in multiple stages.
     while !requests.is_empty() {
-        handle_event_loop_result(&cx.duplicate(), rt.run_event_loop().await);
+        select! {
+            msg = recv.recv() => {
+                if let Some(ControlMessage::Terminate) = msg {
+                    terminate_requests(requests, stream_body_futures);
+                    return Ok(());
+                }
+            }
+
+            _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {
+                continue;
+            }
+
+            e = rt.run_event_loop() => {
+                handle_event_loop_result(&cx.duplicate(), e);
+            }
+        }
 
         let mut new_pending_responses = vec![];
         for (pending, resp_tx) in requests {
@@ -159,11 +181,40 @@ async fn handle_requests_inner(
     }
 
     // Wait for any pending promises to be resolved
-    handle_event_loop_result(&cx.duplicate(), rt.run_event_loop().await);
+    loop {
+        select! {
+            msg = recv.recv() => {
+                if let Some(ControlMessage::Terminate) = msg {
+                    terminate_requests(requests, stream_body_futures);
+                    return Ok(());
+                }
+            }
+
+            _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {
+                continue;
+            }
+
+            e = rt.run_event_loop() => {
+                handle_event_loop_result(&cx.duplicate(), e);
+                break;
+            }
+        }
+    }
 
     // Wait for all stream bodies to be written
     while !stream_body_futures.is_empty() {
-        stream_body_futures.next().await;
+        select! {
+            msg = recv.recv() => {
+                if let Some(ControlMessage::Terminate) = msg {
+                    terminate_requests(requests, stream_body_futures);
+                    return Ok(());
+                }
+            }
+
+            _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {
+                continue;
+            }
+        }
     }
 
     Ok(())
@@ -185,7 +236,7 @@ async fn handle_requests(
 
         loop {
             match recv.recv().await {
-                None | Some(ControlMessage::Shutdown) => break,
+                None | Some(ControlMessage::Shutdown) | Some(ControlMessage::Terminate) => break,
                 Some(ControlMessage::HandleRequest(_, resp_tx)) => {
                     ignore_error(resp_tx.send(ResponseData::ScriptError(error.take())))
                 }
@@ -213,6 +264,22 @@ async fn handle_requests(
         // alive.
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+}
+
+fn terminate_requests(
+    requests: Vec<(PendingResponse, tokio::sync::oneshot::Sender<ResponseData>)>,
+    stream_body_futures: FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>>,
+) {
+    for (_, resp_tx) in requests {
+        let response = hyper::Response::builder()
+            .status(503)
+            .body(hyper::Body::from("Server is shutting down"))
+            .expect("Failed to construct 503 response");
+
+        ignore_error(resp_tx.send(ResponseData::Done(response)));
+    }
+
+    drop(stream_body_futures);
 }
 
 fn handle_event_loop_result(cx: &Context, r: Result<(), Option<ErrorReport>>) {
@@ -243,6 +310,7 @@ pub enum ResponseData {
 pub enum ControlMessage {
     HandleRequest(RequestData, tokio::sync::oneshot::Sender<ResponseData>),
     Shutdown,
+    Terminate,
 }
 
 impl std::fmt::Debug for ControlMessage {
@@ -250,6 +318,7 @@ impl std::fmt::Debug for ControlMessage {
         match self {
             Self::HandleRequest(_, _) => write!(f, "HandleRequest"),
             Self::Shutdown => write!(f, "Shutdown"),
+            Self::Terminate => write!(f, "Terminate"),
         }
     }
 }
@@ -329,7 +398,7 @@ impl SingleRunner {
         };
         self.threads.push(worker);
         let spawned_index = self.threads.len() - 1;
-        debug!("Starting new handler thread #{spawned_index}");
+        tracing::debug!("Starting new handler thread #{spawned_index}");
         &self.threads[spawned_index]
     }
 
@@ -354,21 +423,21 @@ impl SingleRunner {
         // Step 1: are there any idle threads?
         for t in &request_counts {
             if t.1 <= 0 {
-                debug!("Using idle handler thread #{}", t.0);
+                tracing::debug!("Using idle handler thread #{}", t.0);
                 return Some(&self.threads[t.0]);
             }
         }
 
         // Step 2: can we spawn a new thread?
         if self.threads.len() < self.max_threads {
-            debug!("Spawning new request handler thread");
+            tracing::debug!("Spawning new request handler thread");
             return Some(self.spawn_thread());
         }
 
         // Step 3: find the thread with the least active requests
         // unwrap safety: request_counts can never be empty
         let min = request_counts.iter().min_by_key(|t| t.1).unwrap();
-        debug!(
+        tracing::debug!(
             "Reusing busy handler thread #{} with in-flight request count {}",
             min.0,
             self.threads[min.0]
@@ -426,7 +495,7 @@ impl crate::server::Runner for SharedSingleRunner {
         }
     }
 
-    async fn shutdown(&self) {
+    async fn shutdown(&self, timeout: Option<Duration>) {
         tracing::info!("Shutting down...");
 
         let mut this = self.lock().await;
@@ -440,9 +509,26 @@ impl crate::server::Runner for SharedSingleRunner {
         // error response
         drop(this);
 
+        let shutdown_started = Instant::now();
+
         loop {
             let this = self.lock().await;
             if this.threads.iter().any(|t| !t.is_finished()) {
+                if let Some(timeout) = timeout {
+                    if shutdown_started.elapsed() >= timeout {
+                        tracing::warn!(
+                            "Clean shutdown timeout was reached before all \
+                            requests could finish processing"
+                        );
+                        for t in &this.threads {
+                            if !t.is_finished() {
+                                _ = t.channel.send(ControlMessage::Terminate);
+                            }
+                        }
+                        break;
+                    }
+                }
+
                 tracing::debug!("Still waiting for threads to quit...");
                 tokio::time::sleep(Duration::from_secs(1)).await;
             } else {
@@ -450,7 +536,10 @@ impl crate::server::Runner for SharedSingleRunner {
             }
         }
 
-        tracing::info!("Shutdown complete");
+        tracing::info!(
+            "Shutdown completed in {} seconds",
+            shutdown_started.elapsed().as_secs()
+        );
     }
 }
 

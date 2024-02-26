@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use async_trait::async_trait;
@@ -50,7 +51,7 @@ pub trait Runner: Send + Clone + 'static {
         body: hyper::Body,
     ) -> anyhow::Result<hyper::Response<hyper::Body>>;
 
-    async fn shutdown(&self);
+    async fn shutdown(&self, timeout: Option<Duration>);
 }
 
 #[derive(Clone)]
