@@ -20,6 +20,7 @@ use futures::{
 };
 use ion::{Context, ErrorReport};
 use mozjs::jsapi::PromiseState;
+use runtime::Runtime;
 use tokio::{select, sync::Mutex, task::LocalSet};
 
 use crate::{
@@ -120,26 +121,13 @@ async fn handle_requests_inner(
             _ = tokio::time::sleep(poll_interval), if !rt.event_loop_is_empty() || !stream_body_futures.is_empty() => {}
         }
 
-        // We have to do this convoluted bit of code because drain_filter is not stable
-        let mut i = 0;
-        while i < requests.len() {
-            if requests[i].0.promise.state(&cx.duplicate()) != PromiseState::Pending {
-                let (pending, resp_tx) = requests.swap_remove(i);
-                let response = handler.finish_request(cx.duplicate(), pending);
-                match response {
-                    Ok(Either::Left(pending)) => requests.push((pending, resp_tx)),
-                    Ok(Either::Right(response)) => {
-                        if let Some(fut) = response.body_future {
-                            stream_body_futures.push(fut);
-                        }
-                        ignore_error(resp_tx.send(ResponseData::Done(response.response)));
-                    }
-                    Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
-                }
-            } else {
-                i += 1;
-            }
-        }
+        handle_finished_requests(
+            &mut requests,
+            &mut stream_body_futures,
+            cx,
+            rt,
+            handler.as_mut(),
+        );
     }
 
     // Wait for all pending requests to be resolved, which may
@@ -162,22 +150,13 @@ async fn handle_requests_inner(
             }
         }
 
-        let mut new_pending_responses = vec![];
-        for (pending, resp_tx) in requests {
-            let response = handler.finish_request(cx.duplicate(), pending);
-            match response {
-                Ok(Either::Left(pending)) => new_pending_responses.push((pending, resp_tx)),
-                Ok(Either::Right(response)) => {
-                    if let Some(fut) = response.body_future {
-                        stream_body_futures.push(fut);
-                    }
-                    ignore_error(resp_tx.send(ResponseData::Done(response.response)));
-                }
-                Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
-            }
-        }
-
-        requests = new_pending_responses;
+        handle_finished_requests(
+            &mut requests,
+            &mut stream_body_futures,
+            cx,
+            rt,
+            handler.as_mut(),
+        );
     }
 
     // Wait for any pending promises to be resolved
@@ -264,6 +243,59 @@ async fn handle_requests(
         // alive.
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+}
+
+fn handle_finished_requests(
+    requests: &mut Vec<(PendingResponse, tokio::sync::oneshot::Sender<ResponseData>)>,
+    stream_body_futures: &mut FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>>,
+    cx: &Context,
+    rt: &Runtime<'_>,
+    handler: &mut dyn RequestHandler,
+) {
+    let mut new_pending_responses = vec![];
+
+    // We have to do this convoluted bit of code because drain_filter is not stable
+    let mut i = 0;
+    while i < requests.len() {
+        if requests[i].0.promise.state(&cx.duplicate()) != PromiseState::Pending {
+            let (pending, resp_tx) = requests.swap_remove(i);
+            let response = handler.finish_request(cx.duplicate(), pending);
+            match response {
+                Ok(Either::Left(pending)) => new_pending_responses.push((pending, resp_tx)),
+                Ok(Either::Right(response)) => {
+                    if let Some(fut) = response.body_future {
+                        stream_body_futures.push(fut);
+                    }
+                    ignore_error(resp_tx.send(ResponseData::Done(response.response)));
+                }
+                Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
+            }
+        } else if rt.event_loop_is_empty() {
+            // Note: this does not handle all edge cases. Specifically,
+            // for a request to fail in this way, the event loop has to
+            // be *completely* empty; this means that other active requests
+            // will block a stuck request from ever being resolved. This
+            // also means that if there is an active timer, stuck request
+            // detection will stop working. To implement a complete solution,
+            // we'd need to track the correlation between event loop members
+            // (promises, futures, timers, etc.) and the request that
+            // instigated them, which is no simple task.
+            let (_, resp_tx) = requests.swap_remove(i);
+            let response = hyper::Response::builder()
+                .status(500)
+                .body(hyper::Body::from("The request could not be completed"))
+                .expect("Failed to construct 500 response");
+            ignore_error(resp_tx.send(ResponseData::Done(response)));
+            tracing::warn!(
+                "Request deemed impossible to complete since all IO-related promises \
+                have been resolved but the request's promise is still in pending state"
+            );
+        } else {
+            i += 1;
+        }
+    }
+
+    requests.append(&mut new_pending_responses);
 }
 
 fn terminate_requests(
