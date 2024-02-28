@@ -178,34 +178,54 @@ const readableStreamToArray = async stream => {
   return result;
 }
 
-const async_test = (f) => {
+const async_test = (f, n) => {
+  // console.log(`Starting test ${n}`);
   let resolve, reject;
+  let done = false;
+
   let p = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
+    resolve = () => {
+      // console.log(`Test ${n} succeeded`);
+      done = true;
+      res();
+    }
+    reject = e => {
+      // console.log(`Test ${n} failed with ${e}`);
+      done = true;
+      rej(e);
+    };
   });
 
   let t = {
     step_func: (f) => {
-      return () => {
-        try {
-          f();
-        } catch (e) {
-          reject(e);
-        }
-      };
+      if (!done) {
+        return () => {
+          try {
+            f();
+          } catch (e) {
+            reject(e);
+          }
+        };
+      }
+      else {
+        return () => { };
+      }
     },
     step_timeout: (f, t) => {
-      setTimeout(() => {
-        try {
-          f();
-        } catch (e) {
-          reject(e);
-        }
-      }, t);
+      if (!done) {
+        setTimeout(() => {
+          try {
+            f();
+          } catch (e) {
+            reject(e);
+          }
+        }, t);
+      }
     },
     done: () => {
-      resolve();
+      if (!done) {
+        resolve();
+      }
     }
   };
 

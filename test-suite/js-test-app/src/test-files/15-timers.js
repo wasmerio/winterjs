@@ -17,7 +17,7 @@ async function handleRequest(request) {
               clearInterval(handle);
 
               // Make the test succeed after the callback would've run next.
-              setInterval(t.done, 750);
+              setTimeout(t.done, 750);
             } else {
               assert_unreached();
             }
@@ -66,7 +66,7 @@ async function handleRequest(request) {
       }, timeout);
     }
 
-    async_test(function (t) {
+    await async_test(function (t) {
       let ctr = 0;
       let h = setInterval(t.step_func(function () {
         if (++ctr == 2) {
@@ -76,14 +76,10 @@ async function handleRequest(request) {
         }
       }) /* no interval */);
 
-      // Needed because clearing in the callback doesn't currently work
-      // TODO: remove after that's fixed
-      setTimeout(() => clearInterval(h), 10);
-
       timeout_trampoline(t, 100, "Expected setInterval callback to be called two times");
     }, "Calling setInterval with no interval should be the same as if called with 0 interval");
 
-    async_test(function (t) {
+    await async_test(function (t) {
       let ctr = 0;
       let h = setInterval(t.step_func(function () {
         if (++ctr == 2) {
@@ -92,10 +88,6 @@ async function handleRequest(request) {
           return;
         }
       }), undefined);
-
-      // Needed because clearing in the callback doesn't currently work
-      // TODO: remove after that's fixed
-      setTimeout(() => clearInterval(h), 10);
 
       timeout_trampoline(t, 100, "Expected setInterval callback to be called two times");
     }, "Calling setInterval with undefined interval should be the same as if called with 0 interval");
