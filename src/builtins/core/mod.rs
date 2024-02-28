@@ -1,6 +1,6 @@
 use std::{cell::RefCell, os::raw::c_void};
 
-use ion::{function_spec, Context, Function, Local, Object, Promise, Result, TracedHeap, Value};
+use ion::{function_spec, Context, Function, Local, Object, PermanentHeap, Promise, Result, Value};
 use mozjs::{
     glue::{CreatePromiseLifecycleCallbacks, PromiseLifecycleTraps},
     jsapi::{Handle, SetPromiseLifecycleCallbacks},
@@ -12,10 +12,10 @@ use crate::ion_mk_err;
 
 thread_local! {
     static CALLBACKS_REGISTERED: RefCell<bool> = RefCell::new(false);
-    static INIT: RefCell<Option<TracedHeap<*mut JSFunction>>> = RefCell::new(None);
-    static BEFORE: RefCell<Option<TracedHeap<*mut JSFunction>>> = RefCell::new(None);
-    static AFTER: RefCell<Option<TracedHeap<*mut JSFunction>>> = RefCell::new(None);
-    static RESOLVE: RefCell<Option<TracedHeap<*mut JSFunction>>> = RefCell::new(None);
+    static INIT: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
+    static BEFORE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
+    static AFTER: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
+    static RESOLVE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
 }
 
 static TRAPS: PromiseLifecycleTraps = PromiseLifecycleTraps {
@@ -52,14 +52,14 @@ fn set_promise_hooks(
         }
     });
 
-    INIT.set(Some(TracedHeap::from_local(&init)));
-    BEFORE.set(Some(TracedHeap::from_local(&before)));
-    AFTER.set(Some(TracedHeap::from_local(&after)));
-    RESOLVE.set(Some(TracedHeap::from_local(&resolve)));
+    INIT.set(Some(PermanentHeap::from_local(&init)));
+    BEFORE.set(Some(PermanentHeap::from_local(&before)));
+    AFTER.set(Some(PermanentHeap::from_local(&after)));
+    RESOLVE.set(Some(PermanentHeap::from_local(&resolve)));
 }
 
 fn call_handler(
-    handler: &'static std::thread::LocalKey<RefCell<Option<TracedHeap<*mut JSFunction>>>>,
+    handler: &'static std::thread::LocalKey<RefCell<Option<PermanentHeap<*mut JSFunction>>>>,
     cx: *mut JSContext,
     promise: Handle<*mut JSObject>,
 ) {

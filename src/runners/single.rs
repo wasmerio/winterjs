@@ -5,10 +5,7 @@
 
 use std::{
     pin::Pin,
-    sync::{
-        atomic::{AtomicBool, AtomicI32},
-        Arc,
-    },
+    sync::{atomic::AtomicI32, Arc},
     time::{Duration, Instant},
 };
 
@@ -203,7 +200,6 @@ async fn handle_requests(
     handler: Box<dyn RequestHandler>,
     user_code: UserCode,
     mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
-    finished: Arc<AtomicBool>,
 ) {
     if let Err(e) = handle_requests_inner(handler, user_code, &mut recv).await {
         // The request handling logic itself failed, so we send back the error
@@ -221,27 +217,6 @@ async fn handle_requests(
                 }
             }
         }
-    }
-
-    finished.store(true, std::sync::atomic::Ordering::SeqCst);
-
-    // TODO: currently, we can't shut request handler threads down.
-    // This is because we have `TracedHeap`s in thread locals, which
-    // try to remove themselves from `RootedTraceableSet` upon being
-    // dropped, which itself uses a thread local. If the thread local
-    // backing `RootedTraceableSet` is dropped first, dropping a
-    // `TracedHeap` panics, which causes the entire process to
-    // terminate under WASM.
-    // To work around this, we keep the request handler threads alive
-    // forever, instead signalling that we're done via the AtomicBool
-    // above. When all request handler threads signal being done, the
-    // main thread will exit which will stop all other threads without
-    // actually stopping them and causing the panic.
-    loop {
-        // We're running under a single-threaded runtime that's blocked
-        // on this future, so awaiting actually does keep the thread
-        // alive.
-        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -359,14 +334,11 @@ pub struct WorkerThreadInfo {
     thread: std::thread::JoinHandle<()>,
     channel: tokio::sync::mpsc::UnboundedSender<ControlMessage>,
     in_flight_requests: Arc<AtomicI32>,
-    finished: Arc<AtomicBool>,
 }
 
 impl WorkerThreadInfo {
     pub fn is_finished(&self) -> bool {
-        // The thread may abort for any number of reasons without first storing a value
-        // in the atomic bool, so check both.
-        self.thread.is_finished() || self.finished.load(std::sync::atomic::Ordering::SeqCst)
+        self.thread.is_finished()
     }
 }
 
@@ -408,8 +380,6 @@ impl SingleRunner {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let handler = self.handler.clone();
         let user_code = self.user_code.clone();
-        let finished = Arc::new(AtomicBool::new(false));
-        let finished_clone = finished.clone();
         let join_handle = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -418,7 +388,7 @@ impl SingleRunner {
                 .block_on(async move {
                     let local_set = LocalSet::new();
                     local_set
-                        .run_until(handle_requests(handler, user_code, rx, finished_clone))
+                        .run_until(handle_requests(handler, user_code, rx))
                         .await
                 })
         });
@@ -426,7 +396,6 @@ impl SingleRunner {
             thread: join_handle,
             channel: tx,
             in_flight_requests: Arc::new(AtomicI32::new(0)),
-            finished,
         };
         self.threads.push(worker);
         let spawned_index = self.threads.len() - 1;

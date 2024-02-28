@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 
-use ion::{function_spec, Context, ErrorReport, Function, Object, TracedHeap, Value};
+use ion::{function_spec, Context, ErrorReport, Function, Object, PermanentHeap, Value};
 use mozjs_sys::jsapi::{JSFunction, JSFunctionSpec};
 
 thread_local! {
-    static EVENT_CALLBACK: RefCell<Option<TracedHeap<*mut JSFunction>>> = RefCell::new(None);
+    static EVENT_CALLBACK: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
 }
 
 #[js_fn]
@@ -19,7 +19,7 @@ fn add_event_listener<'cx: 'f, 'f>(event: String, callback: Function<'f>) -> ion
     EVENT_CALLBACK.with(|cb| {
         let mut cb = cb.borrow_mut();
         if cb.is_none() {
-            *cb = Some(TracedHeap::from_local(&callback));
+            *cb = Some(PermanentHeap::from_local(&callback));
             Ok(())
         } else {
             Err(ion::Error::new(
