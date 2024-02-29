@@ -11,7 +11,7 @@ edition = "2021"
 # this doesn't have much of an effect since most of the code
 # is from Spidermonkey which is being compiled separately.
 [profile.release]
-opt-level = 1
+opt-level = 3
 
 [dependencies]
 lazy_static = "1.4.0"
