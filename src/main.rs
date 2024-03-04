@@ -5,8 +5,10 @@
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
-    time::Duration,
 };
+
+#[cfg(not(target_os = "wasi"))]
+use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::{Parser, ValueEnum};
@@ -14,7 +16,6 @@ use request_handlers::{
     cloudflare::CloudflareRequestHandler, wintercg::WinterCGRequestHandler, UserCode,
 };
 
-#[cfg(not(target_os = "wasi"))]
 use server::Runner;
 
 #[macro_use]

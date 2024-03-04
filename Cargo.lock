@@ -1277,7 +1277,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#dc7409ade3e61f321d0ba7947bd9917a9e54058a"
+source = "git+https://github.com/wasmerio/spiderfire.git#e9e2ec55a005317051334311ee67b052288f9824"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -1303,7 +1303,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#dc7409ade3e61f321d0ba7947bd9917a9e54058a"
+source = "git+https://github.com/wasmerio/spiderfire.git#e9e2ec55a005317051334311ee67b052288f9824"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1510,7 +1510,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#dc7409ade3e61f321d0ba7947bd9917a9e54058a"
+source = "git+https://github.com/wasmerio/spiderfire.git#e9e2ec55a005317051334311ee67b052288f9824"
 dependencies = [
  "bytes",
  "futures",
@@ -2008,7 +2008,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#dc7409ade3e61f321d0ba7947bd9917a9e54058a"
+source = "git+https://github.com/wasmerio/spiderfire.git#e9e2ec55a005317051334311ee67b052288f9824"
 dependencies = [
  "as-any",
  "async-recursion",
