@@ -6,13 +6,6 @@ repository = "https://github.com/wasmerio/winterjs/"
 license = "MIT"
 edition = "2021"
 
-# See https://github.com/Redfire75369/spiderfire/issues/41.
-# Interestingly, this is a work-around for that issue. Also,
-# this doesn't have much of an effect since most of the code
-# is from Spidermonkey which is being compiled separately.
-[profile.release]
-opt-level = 3
-
 [dependencies]
 lazy_static = "1.4.0"
 anyhow = "1.0.75"
