@@ -7,7 +7,7 @@ use super::{
     ByRefStandardModules, Either, PendingResponse, ReadyResponse, Request, RequestHandler, UserCode,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct WinterCGRequestHandler;
 
 impl RequestHandler for WinterCGRequestHandler {

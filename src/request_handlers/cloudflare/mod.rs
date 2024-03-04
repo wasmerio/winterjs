@@ -31,7 +31,7 @@ thread_local! {
     static SWS_OPTS: OnceCell<Arc<SwsRequestHandlerOpts>> = OnceCell::new();
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct CloudflareRequestHandler;
 
 enum CloudflareRequestHandlerMode {

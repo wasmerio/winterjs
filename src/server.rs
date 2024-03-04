@@ -13,12 +13,12 @@ pub struct ServerConfig {
     pub addr: SocketAddr,
 }
 
-pub async fn run_server<H: Runner + Send + Sync>(
+pub async fn run_server(
     config: ServerConfig,
-    handler: H,
+    handler: Box<dyn Runner + Send + Sync>,
     shutdown_signal: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
-    let context = AppContext { handler };
+    let context = AppContext { runner: handler };
 
     let make_service = make_service_fn(move |conn: &AddrStream| {
         let context = context.clone();
@@ -43,6 +43,7 @@ pub async fn run_server<H: Runner + Send + Sync>(
 }
 
 #[async_trait]
+#[dyn_clonable::clonable]
 pub trait Runner: Send + Clone + 'static {
     async fn handle(
         &self,
@@ -55,12 +56,12 @@ pub trait Runner: Send + Clone + 'static {
 }
 
 #[derive(Clone)]
-struct AppContext<H: Runner> {
-    handler: H,
+struct AppContext {
+    runner: Box<dyn Runner + Send + Sync>,
 }
 
 async fn handle(
-    context: AppContext<impl Runner>,
+    context: AppContext,
     addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
@@ -80,13 +81,13 @@ async fn handle(
 }
 
 async fn handle_inner(
-    context: AppContext<impl Runner>,
+    context: AppContext,
     addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, anyhow::Error> {
     let (parts, body) = req.into_parts();
     context
-        .handler
+        .runner
         .handle(addr, parts, body)
         .await
         .context("JavaScript failed")

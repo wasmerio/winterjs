@@ -4,26 +4,31 @@
 //! right now. Maybe I'll rename it later.
 
 use std::{
-    pin::Pin,
     sync::{atomic::AtomicI32, Arc},
     time::{Duration, Instant},
 };
 
 use anyhow::anyhow;
 use async_trait::async_trait;
-use futures::{
-    stream::{FuturesUnordered, StreamExt},
-    Future,
+use futures::StreamExt;
+use ion::{Context, TracedHeap};
+use mozjs::{jsapi::JSContext, jsval::JSVal};
+use tokio::{
+    select,
+    sync::{oneshot, Mutex},
+    task::LocalSet,
 };
-use ion::{Context, ErrorReport};
-use mozjs::jsapi::PromiseState;
-use runtime::Runtime;
-use tokio::{select, sync::Mutex, task::LocalSet};
 
 use crate::{
     builtins,
-    request_handlers::{Either, PendingResponse, Request, RequestHandler, UserCode},
+    request_handlers::{Either, Request, RequestHandler, UserCode},
+    runners::ResponseData,
     sm_utils::{error_report_option_to_anyhow_error, JsApp, TwoStandardModules},
+};
+
+use super::{
+    event_loop_stream::EventLoopStream,
+    request_queue::{RequestFinishedHandler, RequestFinishedResult, RequestQueue},
 };
 
 // Used to ignore errors when sending responses back, since
@@ -31,8 +36,8 @@ use crate::{
 // there really isn't anything we can do
 fn ignore_error<E>(_r: std::result::Result<(), E>) {}
 
-async fn handle_requests_inner(
-    mut handler: Box<dyn RequestHandler>,
+async fn handle_requests_inner<H: RequestHandler + Copy + Unpin>(
+    mut handler: H,
     user_code: UserCode,
     recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) -> Result<(), anyhow::Error> {
@@ -52,6 +57,7 @@ async fn handle_requests_inner(
     let js_app = JsApp::build(module_loader, Some(standard_modules));
     let cx = js_app.cx();
     let rt = js_app.rt();
+    let mut event_loop_stream = EventLoopStream { app: &js_app };
 
     handler.evaluate_scripts(cx, &user_code)?;
 
@@ -63,132 +69,63 @@ async fn handle_requests_inner(
         .await
         .map_err(|e| error_report_option_to_anyhow_error(cx, e))?;
 
-    let mut requests = vec![];
+    let mut request_queue = RequestQueue::new(cx);
 
-    // Every 1ms, we stop waiting for the event loop and check existing requests.
-    // This lets us send back ready responses before the entire event loop is done,
-    // at which point *all* requests will have been handled.
-    let poll_interval = Duration::from_millis(1);
-
-    let mut stream_body_futures = FuturesUnordered::new();
+    let mut shutdown_requested = false;
 
     loop {
+        if shutdown_requested && rt.event_loop_is_empty() && request_queue.is_empty() {
+            break;
+        }
+
         select! {
             msg = recv.recv() => {
                 match msg {
-                    None | Some(ControlMessage::Shutdown) => break,
+                    None | Some(ControlMessage::Shutdown) => {
+                        shutdown_requested = true;
+                    },
                     Some(ControlMessage::Terminate) => {
-                        terminate_requests(requests, stream_body_futures);
+                        request_queue.cancel_all(RequestCancelledReason::ServerShuttingDown);
                         return Ok(());
                     }
                     Some(ControlMessage::HandleRequest(req, resp_tx)) => {
-                        tracing::trace!(%req.req.method, %req.req.uri, ?req.req.headers, "Incoming request");
-                        match handler.start_handling_request(
-                            cx.duplicate(),
-                            Request {
-                                parts: req.req,
-                                body: req.body
-                            }
-                        ) {
-                            Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
-                            Ok(Either::Left(pending)) => requests.push((pending, resp_tx)),
-                            Ok(Either::Right(resp)) => {
-                                if let Some(fut) = resp.body_future {
-                                    stream_body_futures.push(fut);
-                                }
-                                ignore_error(resp_tx.send(ResponseData::Done(resp.response)))
-                            },
+                        if shutdown_requested {
+                            ignore_error(resp_tx.send(ResponseData::ScriptError(Some(
+                                anyhow!("New request received after shutdown requested")
+                            ))));
+                        } else {
+                            handle_new_request(
+                                cx,
+                                handler,
+                                &mut request_queue,
+                                req,
+                                resp_tx
+                            );
                         }
                     }
                 }
             }
 
-            // Nothing to do here except check the error, the promises are checked further down
-            e = rt.run_event_loop(), if !rt.event_loop_is_empty() => {
-                // Note: an error in this stage is an unhandled error happening in the request
-                // logic, and such an error should not terminate the whole request processing
-                // thread.
-                handle_event_loop_result(&cx.duplicate(), e)
-            }
-
             // Nothing to do
-            _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {}
+            _ = request_queue.next() => (),
 
-            // Nothing to do
-            _ = tokio::time::sleep(poll_interval), if !rt.event_loop_is_empty() || !stream_body_futures.is_empty() => {}
-        }
-
-        handle_finished_requests(
-            &mut requests,
-            &mut stream_body_futures,
-            cx,
-            rt,
-            handler.as_mut(),
-        );
-    }
-
-    // Wait for all pending requests to be resolved, which may
-    // happen in multiple stages.
-    while !requests.is_empty() {
-        select! {
-            msg = recv.recv() => {
-                if let Some(ControlMessage::Terminate) = msg {
-                    terminate_requests(requests, stream_body_futures);
-                    return Ok(());
+            // Nothing to do here except check the error
+            e = event_loop_stream.next() => {
+                match e {
+                    Some(Ok(())) => {
+                        request_queue.cancel_unfinished(RequestCancelledReason::Unresolvable).await;
+                    }
+                    Some(Err(e)) => {
+                        // Note: an error in this stage is an unhandled error happening in the request
+                        // logic, and such an error should not terminate the whole request processing
+                        // thread.
+                        println!(
+                            "Unhandled error from event loop: {}",
+                            error_report_option_to_anyhow_error(cx, e)
+                        );
+                    },
+                    None => unreachable!("EventLoopStream should never terminate")
                 }
-            }
-
-            _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {
-                continue;
-            }
-
-            e = rt.run_event_loop() => {
-                handle_event_loop_result(&cx.duplicate(), e);
-            }
-        }
-
-        handle_finished_requests(
-            &mut requests,
-            &mut stream_body_futures,
-            cx,
-            rt,
-            handler.as_mut(),
-        );
-    }
-
-    // Wait for any pending promises to be resolved
-    loop {
-        select! {
-            msg = recv.recv() => {
-                if let Some(ControlMessage::Terminate) = msg {
-                    terminate_requests(requests, stream_body_futures);
-                    return Ok(());
-                }
-            }
-
-            _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {
-                continue;
-            }
-
-            e = rt.run_event_loop() => {
-                handle_event_loop_result(&cx.duplicate(), e);
-                break;
-            }
-        }
-    }
-
-    // Wait for all stream bodies to be written
-    while !stream_body_futures.is_empty() {
-        select! {
-            msg = recv.recv() => {
-                if let Some(ControlMessage::Terminate) = msg {
-                    terminate_requests(requests, stream_body_futures);
-                    return Ok(());
-                }
-            }
-
-            _ = stream_body_futures.next(), if !stream_body_futures.is_empty() => {
-                continue;
             }
         }
     }
@@ -196,8 +133,8 @@ async fn handle_requests_inner(
     Ok(())
 }
 
-async fn handle_requests(
-    handler: Box<dyn RequestHandler>,
+async fn handle_requests<H: RequestHandler + Copy + Unpin>(
+    handler: H,
     user_code: UserCode,
     mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) {
@@ -220,81 +157,113 @@ async fn handle_requests(
     }
 }
 
-fn handle_finished_requests(
-    requests: &mut Vec<(PendingResponse, tokio::sync::oneshot::Sender<ResponseData>)>,
-    stream_body_futures: &mut FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>>,
+fn handle_new_request<H: RequestHandler + Copy + Unpin>(
     cx: &Context,
-    rt: &Runtime<'_>,
-    handler: &mut dyn RequestHandler,
+    mut handler: H,
+    request_queue: &mut RequestQueue<RequestFinishedCallback<H>>,
+    req: RequestData,
+    resp_tx: oneshot::Sender<ResponseData>,
 ) {
-    let mut new_pending_responses = vec![];
-
-    // We have to do this convoluted bit of code because drain_filter is not stable
-    let mut i = 0;
-    while i < requests.len() {
-        if requests[i].0.promise.state(&cx.duplicate()) != PromiseState::Pending {
-            let (pending, resp_tx) = requests.swap_remove(i);
-            let response = handler.finish_request(cx.duplicate(), pending);
-            match response {
-                Ok(Either::Left(pending)) => new_pending_responses.push((pending, resp_tx)),
-                Ok(Either::Right(response)) => {
-                    if let Some(fut) = response.body_future {
-                        stream_body_futures.push(fut);
-                    }
-                    ignore_error(resp_tx.send(ResponseData::Done(response.response)));
-                }
-                Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
+    tracing::trace!(%req.req.method, %req.req.uri, ?req.req.headers, "Incoming request");
+    match handler.start_handling_request(
+        cx.duplicate(),
+        Request {
+            parts: req.req,
+            body: req.body,
+        },
+    ) {
+        Err(f) => ignore_error(resp_tx.send(ResponseData::RequestError(f))),
+        Ok(Either::Left(pending)) => request_queue.push(
+            pending,
+            RequestFinishedCallback {
+                cx: cx.as_ptr(),
+                handler,
+                resp_tx: Some(resp_tx),
+            },
+        ),
+        Ok(Either::Right(resp)) => {
+            if let Some(fut) = resp.body_future {
+                request_queue.push_continuation(fut);
             }
-        } else if rt.event_loop_is_empty() {
-            // Note: this does not handle all edge cases. Specifically,
-            // for a request to fail in this way, the event loop has to
-            // be *completely* empty; this means that other active requests
-            // will block a stuck request from ever being resolved. This
-            // also means that if there is an active timer, stuck request
-            // detection will stop working. To implement a complete solution,
-            // we'd need to track the correlation between event loop members
-            // (promises, futures, timers, etc.) and the request that
-            // instigated them, which is no simple task.
-            let (_, resp_tx) = requests.swap_remove(i);
-            let response = hyper::Response::builder()
-                .status(500)
-                .body(hyper::Body::from("The request could not be completed"))
-                .expect("Failed to construct 500 response");
-            ignore_error(resp_tx.send(ResponseData::Done(response)));
-            tracing::warn!(
-                "Request deemed impossible to complete since all IO-related promises \
-                have been resolved but the request's promise is still in pending state"
-            );
-        } else {
-            i += 1;
+            ignore_error(resp_tx.send(ResponseData::Done(resp.response)))
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RequestCancelledReason {
+    Unresolvable,
+    ServerShuttingDown,
+}
+
+struct RequestFinishedCallback<H: RequestHandler + Copy + Unpin> {
+    cx: *mut JSContext,
+    handler: H,
+    resp_tx: Option<oneshot::Sender<ResponseData>>,
+}
+
+impl<H: RequestHandler + Copy + Unpin> RequestFinishedCallback<H> {
+    fn get_resp_tx(&mut self) -> oneshot::Sender<ResponseData> {
+        self.resp_tx
+            .take()
+            .expect("resp_tx should be used once only")
+    }
+}
+
+impl<H: RequestHandler + Copy + Unpin> RequestFinishedHandler for RequestFinishedCallback<H> {
+    type CancelReason = RequestCancelledReason;
+
+    fn request_finished(
+        &mut self,
+        result: Result<TracedHeap<JSVal>, TracedHeap<JSVal>>,
+    ) -> RequestFinishedResult {
+        let response = self
+            .handler
+            .finish_request(unsafe { Context::new_unchecked(self.cx) }, result);
+        match response {
+            Ok(Either::Left(pending)) => RequestFinishedResult::Pending(pending.promise),
+            Ok(Either::Right(response)) => {
+                ignore_error(
+                    self.get_resp_tx()
+                        .send(ResponseData::Done(response.response)),
+                );
+
+                if let Some(fut) = response.body_future {
+                    RequestFinishedResult::HasContinuation(fut)
+                } else {
+                    RequestFinishedResult::Done
+                }
+            }
+            Err(f) => {
+                ignore_error(self.get_resp_tx().send(ResponseData::RequestError(f)));
+                RequestFinishedResult::Done
+            }
         }
     }
 
-    requests.append(&mut new_pending_responses);
-}
+    fn request_cancelled(&mut self, reason: RequestCancelledReason) {
+        match reason {
+            RequestCancelledReason::Unresolvable => {
+                let response = hyper::Response::builder()
+                    .status(500)
+                    .body(hyper::Body::from("The request could not be completed"))
+                    .expect("Failed to construct 500 response");
+                ignore_error(self.get_resp_tx().send(ResponseData::Done(response)));
+                tracing::warn!(
+                    "Request deemed impossible to complete since all IO-related promises \
+                have been resolved but the request's promise is still in pending state"
+                );
+            }
 
-fn terminate_requests(
-    requests: Vec<(PendingResponse, tokio::sync::oneshot::Sender<ResponseData>)>,
-    stream_body_futures: FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>>,
-) {
-    for (_, resp_tx) in requests {
-        let response = hyper::Response::builder()
-            .status(503)
-            .body(hyper::Body::from("Server is shutting down"))
-            .expect("Failed to construct 503 response");
+            RequestCancelledReason::ServerShuttingDown => {
+                let response = hyper::Response::builder()
+                    .status(503)
+                    .body(hyper::Body::from("Server is shutting down"))
+                    .expect("Failed to construct 503 response");
 
-        ignore_error(resp_tx.send(ResponseData::Done(response)));
-    }
-
-    drop(stream_body_futures);
-}
-
-fn handle_event_loop_result(cx: &Context, r: Result<(), Option<ErrorReport>>) {
-    if let Err(e) = r {
-        println!(
-            "Unhandled error from event loop: {}",
-            error_report_option_to_anyhow_error(cx, e)
-        )
+                ignore_error(self.get_resp_tx().send(ResponseData::Done(response)));
+            }
+        }
     }
 }
 
@@ -302,16 +271,6 @@ pub struct RequestData {
     _addr: std::net::SocketAddr,
     req: http::request::Parts,
     body: hyper::Body,
-}
-
-#[derive(Debug)]
-pub enum ResponseData {
-    Done(hyper::Response<hyper::Body>),
-    RequestError(anyhow::Error),
-
-    // The error can only be returned once, so future calls to the
-    // thread will return None instead
-    ScriptError(Option<anyhow::Error>),
 }
 
 pub enum ControlMessage {
@@ -343,18 +302,18 @@ impl WorkerThreadInfo {
 }
 
 // TODO: replace failing threads
-pub struct SingleRunner {
+pub struct SingleRunner<H: RequestHandler + Copy + Unpin> {
     threads: Vec<WorkerThreadInfo>,
     max_threads: usize,
-    handler: Box<dyn RequestHandler>,
+    handler: H,
     user_code: UserCode,
     shut_down: bool,
 }
 
-pub type SharedSingleRunner = Arc<Mutex<SingleRunner>>;
+pub type SharedSingleRunner<H> = Arc<Mutex<SingleRunner<H>>>;
 
-impl SingleRunner {
-    pub fn new(max_threads: usize, handler: Box<dyn RequestHandler>, user_code: UserCode) -> Self {
+impl<H: RequestHandler + Copy + Unpin> SingleRunner<H> {
+    pub fn new(max_threads: usize, handler: H, user_code: UserCode) -> Self {
         if max_threads == 0 {
             panic!("max_threads must be at least 1");
         }
@@ -369,16 +328,16 @@ impl SingleRunner {
     }
 
     pub fn new_request_handler(
-        handler: Box<dyn RequestHandler>,
+        handler: H,
         max_threads: usize,
         user_code: UserCode,
-    ) -> SharedSingleRunner {
+    ) -> SharedSingleRunner<H> {
         Arc::new(Mutex::new(Self::new(max_threads, handler, user_code)))
     }
 
     fn spawn_thread(&mut self) -> &WorkerThreadInfo {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let handler = self.handler.clone();
+        let handler = self.handler;
         let user_code = self.user_code.clone();
         let join_handle = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
@@ -450,7 +409,7 @@ impl SingleRunner {
 }
 
 #[async_trait]
-impl crate::server::Runner for SharedSingleRunner {
+impl<H: RequestHandler + Copy + Unpin> crate::server::Runner for SharedSingleRunner<H> {
     async fn handle(
         &self,
         _addr: std::net::SocketAddr,

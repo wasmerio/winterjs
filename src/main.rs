@@ -11,8 +11,7 @@ use std::{
 use anyhow::Context as _;
 use clap::{Parser, ValueEnum};
 use request_handlers::{
-    cloudflare::CloudflareRequestHandler, wintercg::WinterCGRequestHandler, RequestHandler,
-    UserCode,
+    cloudflare::CloudflareRequestHandler, wintercg::WinterCGRequestHandler, UserCode,
 };
 
 #[cfg(not(target_os = "wasi"))]
@@ -115,35 +114,28 @@ async fn run() -> Result<(), anyhow::Error> {
 
             let user_code = UserCode::from_path(&cmd.js_path, cmd.script).await?;
 
-            let handler: Box<dyn RequestHandler> = match cmd.mode {
+            let runner: Box<dyn Runner + Send + Sync> = match cmd.mode {
                 Some(HandlerName::Cloudflare) => {
                     tracing::info!("Starting in Cloudflare mode");
-                    Box::new(CloudflareRequestHandler)
+                    Box::new(runners::single::SingleRunner::new_request_handler(
+                        CloudflareRequestHandler,
+                        cmd.max_js_threads,
+                        user_code,
+                    ))
                 }
                 Some(HandlerName::WinterCG) | None => {
                     tracing::info!("Starting in WinterCG mode");
-                    Box::new(WinterCGRequestHandler)
+                    Box::new(runners::single::SingleRunner::new_request_handler(
+                        WinterCGRequestHandler,
+                        cmd.max_js_threads,
+                        user_code,
+                    ))
                 }
             };
 
             runtime::config::CONFIG
                 .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
                 .unwrap();
-
-            // if cmd.watch {
-            //     let runner = runners::watch::WatchRunner::new(
-            //         handler,
-            //         cmd.js_path.clone(),
-            //         cmd.script,
-            //         cmd.max_js_threads,
-            //     )?;
-            //     crate::server::run_server(config, runner).await
-            // } else {
-            let runner = runners::single::SingleRunner::new_request_handler(
-                handler,
-                cmd.max_js_threads,
-                user_code,
-            );
 
             #[cfg_attr(target_os = "wasi", allow(unused))]
             let (tx, rx) = tokio::sync::oneshot::channel();

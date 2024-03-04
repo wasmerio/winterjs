@@ -3,8 +3,10 @@ use std::{ffi::OsString, path::PathBuf, pin::Pin};
 use anyhow::{anyhow, bail, Context as _, Result};
 use futures::Future;
 use http::Uri;
-use ion::{function::Opt, string::byte::ByteString, ClassDefinition, Context, Object, Value};
-use mozjs::jsapi::PromiseState;
+use ion::{
+    function::Opt, string::byte::ByteString, ClassDefinition, Context, Object, TracedHeap, Value,
+};
+use mozjs::jsval::JSVal;
 use mozjs_sys::jsapi::JSObject;
 use runtime::{
     globals::fetch::{
@@ -93,39 +95,37 @@ pub trait RequestHandler: Clone + Send + Sync + 'static {
     fn finish_request(
         &mut self,
         cx: Context,
-        response: PendingResponse,
+        response: Result<TracedHeap<JSVal>, TracedHeap<JSVal>>,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
-        match response.promise.state(&cx) {
-            PromiseState::Pending => {
-                bail!("Internal error: promise is not fulfilled yet");
-            }
-            PromiseState::Rejected => {
-                let result = response.promise.result(&cx);
-                let message = result
-                    .to_object(&cx)
-                    .get(&cx, "message")
-                    .ok()
-                    .flatten()
-                    .and_then(|v| {
-                        if v.get().is_string() {
-                            Some(
-                                ion::String::from(cx.root(v.get().to_string()))
-                                    .to_owned(&cx)
-                                    .unwrap_or_else(|e| {
-                                        format!("Failed to read error message due to {e}")
-                                    }),
-                            )
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or("<No error message>".to_string());
+        match response {
+            Err(error) => {
+                let error = Value::from(error.root(&cx));
+                let message = if error.get().is_object() {
+                    error
+                        .to_object(&cx)
+                        .get(&cx, "message")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| {
+                            if v.get().is_string() {
+                                Some(
+                                    ion::String::from(cx.root(v.get().to_string()))
+                                        .to_owned(&cx)
+                                        .unwrap_or_else(|e| {
+                                            format!("Failed to read error message due to {e}")
+                                        }),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                } else {
+                    None
+                }
+                .unwrap_or("<No error message>".to_string());
                 bail!("Script execution failed: {message}")
             }
-            PromiseState::Fulfilled => {
-                let promise_result = response.promise.result(&cx);
-                self.finish_fulfilled_request(cx.duplicate(), promise_result)
-            }
+            Ok(result) => self.finish_fulfilled_request(cx.duplicate(), result.root(&cx).into()),
         }
     }
 
