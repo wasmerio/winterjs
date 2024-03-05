@@ -53,12 +53,12 @@ $ wrk -t12 -c400 -d10s http://127.0.0.1:8080
 Running 10s test @ http://127.0.0.1:8080
   12 threads and 400 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency     1.45ms  753.51us  27.43ms   90.65%
-    Req/Sec    12.40k     3.09k   24.55k    82.42%
-  1480619 requests in 10.01s, 169.44MB read
-  Socket errors: connect 155, read 68, write 0, timeout 0
-Requests/sec: 147947.00
-Transfer/sec:     16.93MB
+    Latency    11.70ms   89.98ms   1.52s    98.29%
+    Req/Sec    12.66k     6.49k   46.35k    58.80%
+  1517019 requests in 10.10s, 173.61MB read
+  Socket errors: connect 155, read 108, write 0, timeout 29
+Requests/sec: 150175.14
+Transfer/sec:     17.19MB
 ```
 
 
