@@ -30,6 +30,7 @@ pub struct TestConfig {
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub host: String,
+    pub host_header: Option<String>,
     pub port: u16,
     pub critical: bool,
 }
@@ -214,6 +215,9 @@ async fn run_test_once(
         server_config.host, server_config.port, test_case.test_route
     );
     let mut request = client.get(&url);
+    if let Some(host_header) = server_config.host_header.as_ref() {
+        request = request.header("Host", host_header);
+    }
     if let Some(timeout) = test_case.timeout {
         request = request.timeout(std::time::Duration::from_secs_f64(timeout));
     }
