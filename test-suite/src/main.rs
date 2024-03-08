@@ -26,6 +26,10 @@ struct TestSuiteArguments {
     #[arg(long)]
     host: Option<String>,
 
+    /// If set, send Host header with requests
+    #[arg(long)]
+    host_header: Option<String>,
+
     /// Defaults to 8080
     #[arg(long)]
     port: Option<u16>,
@@ -68,6 +72,7 @@ fn main() -> Result<()> {
     let test_config = read_test_cases(args.test_config_path)?;
     let server_config = ServerConfig {
         host: args.host.unwrap_or_else(|| "localhost".to_string()),
+        host_header: args.host_header,
         port: args.port.unwrap_or(8080),
         critical: !args.not_critical,
     };
