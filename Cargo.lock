@@ -1277,7 +1277,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#e9e2ec55a005317051334311ee67b052288f9824"
+source = "git+https://github.com/wasmerio/spiderfire.git#048eff8fc452080a4e7ad143c9a5ede9b012023a"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -1303,7 +1303,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#e9e2ec55a005317051334311ee67b052288f9824"
+source = "git+https://github.com/wasmerio/spiderfire.git#048eff8fc452080a4e7ad143c9a5ede9b012023a"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1510,7 +1510,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#e9e2ec55a005317051334311ee67b052288f9824"
+source = "git+https://github.com/wasmerio/spiderfire.git#048eff8fc452080a4e7ad143c9a5ede9b012023a"
 dependencies = [
  "bytes",
  "futures",
@@ -1527,7 +1527,7 @@ dependencies = [
 [[package]]
 name = "mozjs"
 version = "0.14.1"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#07a5f993d952e30f31aec03d9c9f9f8d4fb7d3c8"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#91349dc0efa5f1484c05d1f07bde8b5b348f4747"
 dependencies = [
  "bindgen",
  "cc",
@@ -1541,7 +1541,7 @@ dependencies = [
 [[package]]
 name = "mozjs_sys"
 version = "0.68.2"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#07a5f993d952e30f31aec03d9c9f9f8d4fb7d3c8"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#91349dc0efa5f1484c05d1f07bde8b5b348f4747"
 dependencies = [
  "bindgen",
  "cc",
@@ -2008,7 +2008,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git#e9e2ec55a005317051334311ee67b052288f9824"
+source = "git+https://github.com/wasmerio/spiderfire.git#048eff8fc452080a4e7ad143c9a5ede9b012023a"
 dependencies = [
  "as-any",
  "async-recursion",
