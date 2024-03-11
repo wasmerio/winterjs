@@ -152,14 +152,9 @@ impl StandardModules for Box<dyn ByRefStandardModules> {
     }
 }
 
-fn build_fetch_request(cx: &Context, request: Request) -> Result<*mut JSObject> {
-    let body = match &request.parts.method {
-        &http::Method::GET | &http::Method::HEAD => hyper::Body::empty(),
-        _ => request.body,
-    };
-
+fn build_request_uri(request: &Request) -> Result<Uri> {
     let host = get_host(&request.parts.uri, &request.parts.headers)?;
-    let uri = Uri::builder()
+    Uri::builder()
         .scheme("http")
         .authority(host)
         .path_and_query(
@@ -171,9 +166,17 @@ fn build_fetch_request(cx: &Context, request: Request) -> Result<*mut JSObject> 
                 .unwrap_or("/".parse().unwrap()),
         )
         .build()
-        .context("Failed to build request URI")?;
+        .context("Failed to build request URI")
+}
 
+fn build_fetch_request(cx: &Context, request: Request) -> Result<*mut JSObject> {
+    let uri = build_request_uri(&request)?;
     tracing::debug!(%uri, "Computed request URI");
+
+    let body = match &request.parts.method {
+        &http::Method::GET | &http::Method::HEAD => hyper::Body::empty(),
+        _ => request.body,
+    };
 
     let request_info = RequestInfo::String(uri.to_string());
 

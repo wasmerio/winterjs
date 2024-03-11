@@ -1,11 +1,14 @@
 use ion::{
     class::{NativeObject, Reflector},
-    ClassDefinition, Context, Exception, Heap, Object, Promise, PromiseFuture, Result, TracedHeap,
+    ClassDefinition, Context, Exception, Heap, Object, Promise, Result, TracedHeap,
 };
 use mozjs_sys::jsapi::JSObject;
-use runtime::{globals::fetch::Request as FetchRequest, promise::future_to_promise};
+use runtime::{
+    globals::fetch::Request as FetchRequest, globals::fetch::Response as FetchResponse,
+    promise::future_to_promise,
+};
 
-use crate::ion_err;
+use crate::{ion_err, ion_mk_err};
 
 #[js_class]
 pub struct Env {
@@ -86,13 +89,15 @@ impl EnvAssets {
                 let (parts, body) = http_req.into_parts();
                 let request = super::super::Request { parts, body };
 
-                let serve_file_promise =
-                    super::CloudflareRequestHandler::serve_static_file(&cx, request);
-                let (_, static_file_response) = PromiseFuture::new(cx, &serve_file_promise).await;
-
-                Ok(static_file_response
-                    .map_err(|e| Exception::Other(e.get()))?
-                    .get())
+                let url = url::Url::parse(request.parts.uri.to_string().as_str())?;
+                let (cx, response) = cx
+                    .await_native(super::CloudflareRequestHandler::serve_static_file(request))
+                    .await;
+                let response = response.map_err(|e| {
+                    ion_mk_err!(format!("Failed to fetch static asset due to {e}"), Normal)
+                })?;
+                let response = FetchResponse::from_hyper_response(&cx, response, url)?;
+                Ok(FetchResponse::new_object(&cx, Box::new(response)))
             })
         }
     }

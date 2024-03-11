@@ -10,6 +10,8 @@ use crate::{
     sm_utils::{self, error_report_option_to_anyhow_error},
 };
 
+use self::routes::Routes;
+
 use super::{
     ByRefStandardModules, Either, PendingResponse, ReadyResponse, Request, RequestHandler, UserCode,
 };
@@ -24,6 +26,7 @@ use static_web_server::{
 
 mod context;
 mod env;
+mod routes;
 
 // Still operating under the one-handler-per-thread model. The correct way
 // would to attach this to the context in some way.
@@ -52,6 +55,8 @@ struct CloudflareRequestHandlerPrivate {
     // map of paths to modules. In SingleSourceFile mode, this contains exactly
     // one entry with an empty path for the key.
     modules: HashMap<PathBuf, CloudflareCodeModule>,
+
+    routes: Option<Routes>,
 }
 
 struct CloudflareCodeModule {
@@ -59,9 +64,9 @@ struct CloudflareCodeModule {
 }
 
 impl CloudflareRequestHandler {
-    fn get_private(cx: &Context) -> anyhow::Result<&mut CloudflareRequestHandlerPrivate> {
+    fn get_private(cx: &Context) -> anyhow::Result<&CloudflareRequestHandlerPrivate> {
         if unsafe { cx.get_private() }.app_data.is_none() {
-            bail!("Internal error: evaluation_scripts should be called before using CloudflareRequestHandler");
+            bail!("Internal error: evaluate_scripts should be called before using CloudflareRequestHandler");
         }
 
         Ok(unsafe { cx.get_app_data::<CloudflareRequestHandlerPrivate>() })
@@ -115,22 +120,13 @@ impl CloudflareRequestHandler {
         })
     }
 
-    fn serve_static_file(cx: &Context, req: Request) -> ion::Promise {
-        unsafe {
-            future_to_promise::<_, _, _, ion::Error>(cx, move |cx| async move {
-                let mut hyper_req = hyper::Request::from_parts(req.parts, req.body);
-                let url = url::Url::parse(hyper_req.uri().to_string().as_str())?;
-                let (cx, response) = cx
-                    .await_native(Self::get_sws_request_handler()?.handle(&mut hyper_req, None))
-                    .await;
-                let response = response.map_err(|e| {
-                    ion_mk_err!(format!("Failed to fetch static asset due to: {e}"), Normal)
-                })?;
-                let response = FetchResponse::from_hyper_response(&cx, response, url)?;
-                Ok(FetchResponse::new_object(&cx, Box::new(response)))
-            })
-        }
-        .expect("Internal error: future queue should be initialized")
+    async fn serve_static_file(req: Request) -> ion::Result<hyper::Response<hyper::Body>> {
+        let mut hyper_req = hyper::Request::from_parts(req.parts, req.body);
+        let response = Self::get_sws_request_handler()?
+            .handle(&mut hyper_req, None)
+            .await;
+        response
+            .map_err(|e| ion_mk_err!(format!("Failed to fetch static asset due to: {e}"), Normal))
     }
 }
 
@@ -154,6 +150,7 @@ impl RequestHandler for CloudflareRequestHandler {
                 private = CloudflareRequestHandlerPrivate {
                     mode: SingleSourceFile,
                     modules: Default::default(),
+                    routes: None,
                 };
             }
 
@@ -163,17 +160,25 @@ impl RequestHandler for CloudflareRequestHandler {
                     modules: [(PathBuf::new(), eval_module(cx, path)?)]
                         .into_iter()
                         .collect(),
+                    routes: None,
                 };
             }
 
             UserCode::Directory(path) => match discover_worker_js(path)? {
                 Some(worker_js_path) => {
+                    let routes = Routes::try_parse(path)?;
+                    if routes.is_none() {
+                        tracing::info!(
+                            "_routes.json file not found, all requests will be routed to _worker.js"
+                        );
+                    }
                     Self::build_sws_request_handler(path);
                     private = CloudflareRequestHandlerPrivate {
                         mode: SingleSourceFile,
                         modules: [(PathBuf::new(), eval_module(cx, worker_js_path)?)]
                             .into_iter()
                             .collect(),
+                        routes,
                     };
                 }
                 None => {
@@ -194,6 +199,33 @@ impl RequestHandler for CloudflareRequestHandler {
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
         let private = Self::get_private(&cx)?;
+
+        if let Some(ref routes) = private.routes {
+            if !routes.should_route_to_function(request.parts.uri.path()) {
+                return Ok(Either::Left(PendingResponse {
+                    promise: unsafe {
+                        future_to_promise::<_, _, _, ion::Error>(&cx, move |cx| async move {
+                            let uri = super::build_request_uri(&request).map_err(|e| {
+                                ion_mk_err!(format!("Failed to parse request URI: {e}"), Normal)
+                            })?;
+                            let url = url::Url::parse(uri.to_string().as_str())?;
+                            let (cx, response) =
+                                cx.await_native(Self::serve_static_file(request)).await;
+                            let response = response.map_err(|e| {
+                                ion_mk_err!(
+                                    format!("Failed to fetch static asset due to {e}"),
+                                    Normal
+                                )
+                            })?;
+                            let response = FetchResponse::from_hyper_response(&cx, response, url)?;
+                            Ok(FetchResponse::new_object(&cx, Box::new(response)))
+                        })
+                        .expect("Future queue must be initialized")
+                    },
+                }));
+            }
+        }
+
         match private.mode {
             SingleSourceFile => start_request(&cx, request, private.modules.get(&PathBuf::new())),
         }
