@@ -500,15 +500,17 @@ async function handler(req) {
 
 async function echoHandler(req) {
   const data = {
-    headers: req.headers.items,
+    headers: Object.fromEntries(req.headers),
     method: req.method,
     body: req.body,
   };
 
   const body = JSON.stringify(data, 0, 2);
-  const headers = new Headers(req.headers.toList());
-  headers.set('content-type', 'application/json');
-  return new Response(body);
+  return new Response(body, {
+    headers: {
+      'content-type': 'application/json',
+    },
+  });
 }
 
 addEventListener('fetch', ev => ev.respondWith(handler(ev.request)));
