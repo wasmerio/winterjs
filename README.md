@@ -33,6 +33,15 @@ addEventListener('fetch', (req) => {
 });
 ```
 
+## Building from source
+
+WinterJS needs to build SpiderMonkey from source as part of its own build process.
+Please follow the steps outlined here to make sure you are ready to build SpiderMonkey: https://github.com/wasmerio/mozjs/blob/master/README.md.
+
+You also need to do this before installing WinterJS with `cargo install`, which builds builds WinterJS from source instead of downloading pre-built binaries.
+
+Once you can build SpiderMonkey, you simply need to run `cargo build` as usual to build WinterJS itself.
+
 ## Running WinterJS Natively
 
 You can install WinterJS natively with:
