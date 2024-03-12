@@ -47,7 +47,7 @@ Once you can build SpiderMonkey, you simply need to run `cargo build` as usual t
 You can install WinterJS natively with:
 
 ```
-cargo install --git https://github.com/wasmerio/winterjs
+cargo install --git https://github.com/wasmerio/winterjs winterjs
 ```
 
 Once you have WinterJS installed, you can simply do:
