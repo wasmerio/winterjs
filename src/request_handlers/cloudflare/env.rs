@@ -24,13 +24,19 @@ impl Env {
                 reflector: Default::default(),
             }),
         );
-        Env::new_object(
+        let env = Object::from(cx.root(Env::new_object(
             cx,
             Box::new(Env {
                 reflector: Default::default(),
                 assets: Heap::new(assets),
             }),
-        )
+        )));
+
+        if !crate::builtins::process::populate_env_object(cx, &env) {
+            panic!("Failed to populate env object");
+        }
+
+        (*env).get()
     }
 }
 
