@@ -100,30 +100,47 @@ pub trait RequestHandler: Clone + Send + Sync + 'static {
         match response {
             Err(error) => {
                 let error = Value::from(error.root(&cx));
-                let message = if error.get().is_object() {
-                    error
-                        .to_object(&cx)
-                        .get(&cx, "message")
-                        .ok()
-                        .flatten()
-                        .and_then(|v| {
-                            if v.get().is_string() {
-                                Some(
-                                    ion::String::from(cx.root(v.get().to_string()))
-                                        .to_owned(&cx)
-                                        .unwrap_or_else(|e| {
-                                            format!("Failed to read error message due to {e}")
-                                        }),
-                                )
-                            } else {
-                                None
-                            }
-                        })
+                let (message, stack) = if error.get().is_object() {
+                    let error = error.to_object(&cx);
+
+                    let message = error.get(&cx, "message").ok().flatten().and_then(|v| {
+                        if v.get().is_string() {
+                            Some(
+                                ion::String::from(cx.root(v.get().to_string()))
+                                    .to_owned(&cx)
+                                    .unwrap_or_else(|e| {
+                                        format!("Failed to read error message due to {e}")
+                                    }),
+                            )
+                        } else {
+                            None
+                        }
+                    });
+
+                    let stack = error.get(&cx, "stack").ok().flatten().and_then(|v| {
+                        if v.get().is_string() {
+                            Some(
+                                ion::String::from(cx.root(v.get().to_string()))
+                                    .to_owned(&cx)
+                                    .unwrap_or_else(|e| {
+                                        format!("Failed to read error message due to {e}")
+                                    }),
+                            )
+                        } else {
+                            None
+                        }
+                    });
+
+                    (message, stack)
                 } else {
-                    None
-                }
-                .unwrap_or("<No error message>".to_string());
-                bail!("Script execution failed: {message}")
+                    (None, None)
+                };
+
+                bail!(
+                    "Script execution failed: {}{}",
+                    message.unwrap_or("<No error message>".to_string()),
+                    stack.map(|s| format!("\nat: {s}")).unwrap_or_default()
+                )
             }
             Ok(result) => self.finish_fulfilled_request(cx.duplicate(), result.root(&cx).into()),
         }
