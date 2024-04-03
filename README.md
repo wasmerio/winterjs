@@ -40,6 +40,12 @@ Please follow the steps outlined here to make sure you are ready to build Spider
 
 You also need to do this before installing WinterJS with `cargo install`, which builds WinterJS from the source instead of downloading pre-built binaries.
 
+Also, when building WinterJS in debug mode, you need to have NodeJS and npm installed and run `npm install` beforehand.
+This is required since debug builds of WinterJS also build the TypeScript code in `src/builtins/internal_js_modules`.
+Release builds use the existing, pre-compiled `*.js` sources in that directory.
+This was done to simplify installing WinterJS with `cargo install`.
+If you update the TypeScript sources, make sure to update the `*.js` sources by building at least once in debug mode and commit the updated `*.js` files.
+
 Once you can build SpiderMonkey, you simply need to run `cargo build` as usual to build WinterJS itself.
 
 ## Running WinterJS Natively
