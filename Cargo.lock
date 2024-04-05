@@ -1283,7 +1283,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=fix-obj-file-lists#728abc556cab2d6f634ee4b1863eb759da3c0f23"
+source = "git+https://github.com/wasmerio/spiderfire.git#2a1b5be458f83425e2af231205ce12d42c981078"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -1309,7 +1309,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=fix-obj-file-lists#728abc556cab2d6f634ee4b1863eb759da3c0f23"
+source = "git+https://github.com/wasmerio/spiderfire.git#2a1b5be458f83425e2af231205ce12d42c981078"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -1516,7 +1516,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=fix-obj-file-lists#728abc556cab2d6f634ee4b1863eb759da3c0f23"
+source = "git+https://github.com/wasmerio/spiderfire.git#2a1b5be458f83425e2af231205ce12d42c981078"
 dependencies = [
  "bytes",
  "futures",
@@ -1533,7 +1533,7 @@ dependencies = [
 [[package]]
 name = "mozjs"
 version = "0.14.1"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=fix-obj-file-lists#f6cbd1226ea80aa8b50d52900bcb38b02682ad2d"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#5e3485eccf3fe6520862c470d771d16516088a3e"
 dependencies = [
  "bindgen",
  "cc",
@@ -1547,7 +1547,7 @@ dependencies = [
 [[package]]
 name = "mozjs_sys"
 version = "0.68.2"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=fix-obj-file-lists#f6cbd1226ea80aa8b50d52900bcb38b02682ad2d"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko#5e3485eccf3fe6520862c470d771d16516088a3e"
 dependencies = [
  "bindgen",
  "cc",
@@ -2014,7 +2014,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=fix-obj-file-lists#728abc556cab2d6f634ee4b1863eb759da3c0f23"
+source = "git+https://github.com/wasmerio/spiderfire.git#2a1b5be458f83425e2af231205ce12d42c981078"
 dependencies = [
  "as-any",
  "async-recursion",
@@ -3691,7 +3691,7 @@ checksum = "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04"
 
 [[package]]
 name = "winterjs"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
