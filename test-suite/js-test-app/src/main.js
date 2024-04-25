@@ -22,6 +22,7 @@ import { handleRequest as handleCrypto } from "./test-files/16-crypto.js";
 import { handleRequest as handleCryptoHmac } from "./test-files/16.1-crypto-hmac.js";
 import { handleRequest as handleCryptoSha } from "./test-files/16.2-crypto-sha.js";
 import { handleRequest as handleCache } from "./test-files/17-cache.js";
+import { handleRequest as handleEvent } from "./test-files/18-event.js";
 
 function router(req) {
   const url = new URL(req.url);
@@ -98,6 +99,9 @@ function router(req) {
   }
   if (path.startsWith("/17-cache")) {
     return handleCache(req);
+  }
+  if (path.startsWith("/18-event")) {
+    return handleEvent(req);
   }
   return new Response(`Route Not Found - ${path}`, { status: 404 });
 }
