@@ -74,7 +74,7 @@ async function handleRequest(request) {
       "test event 2 callback was unexpectedly called"
     );
 
-    return new Response("All Tests Passed!");
+    return new Response("All tests passed!");
   } catch (error) {
     return new Response(error.message, { status: 500 });
   }
