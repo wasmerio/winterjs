@@ -76,7 +76,7 @@ async function handleRequest(request) {
       assert_equals(await c.text(), "e, f, g\r\nh, i, j");
     }, "multipart/form-data body");
 
-    return new Response("All Tests Passed!", {
+    return new Response("All tests passed!", {
       headers: { "content-type": "text/plain" },
     });
   } catch (error) {

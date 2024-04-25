@@ -31,7 +31,7 @@ async function handleRequest(request) {
             throw new Error(`More intervals elapsed after clearInterval was called, total before clearing ${totalIntervals}, after ${intervalsElapsed}`);
         }
 
-        return new Response('All Tests Passed!');
+        return new Response('All tests passed!');
     }
     catch (e) {
         return new Response(e.toString(), { status: 500 });

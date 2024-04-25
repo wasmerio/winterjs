@@ -2455,7 +2455,7 @@ async function handleRequest(request) {
       ]);
     }, "controller.terminate() inside flush() should not prevent writer.close() from succeeding");
 
-    return new Response("All Tests Passed!", {
+    return new Response("All tests passed!", {
       headers: { "content-type": "text/plain" },
     });
   } catch (error) {

@@ -299,7 +299,7 @@ async function handleRequest(request) {
       return formData;
     }
 
-    return new Response('All Tests Passed!');
+    return new Response('All tests passed!');
   }
   catch (e) {
     return new Response(e.toString(), { status: 500 });
