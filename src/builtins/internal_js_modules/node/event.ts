@@ -83,7 +83,7 @@ class Event {
      * 5. Append currentTarget to composedPath..
      * 6. Let currentTargetIndex be 0.
      * 7. Let currentTargetHiddenSubtreeLevel be 0.
-     */ 1;
+     */
     composedPath.push({
       item: this.currentTarget,
       itemInShadowTree: false,
@@ -299,11 +299,7 @@ class EventTarget {
     // The new EventTarget() constructor steps are to do nothing.
   }
 
-  addEventListener(
-    type: DOMString,
-    callback: EventListenerOrEventListenerObject | null,
-    options?: AddEventListenerOptions | boolean
-  ): void {
+  addEventListener(type: DOMString, callback: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean): void {
     if (callback === null) return;
     const self = this;
 
@@ -349,11 +345,7 @@ class EventTarget {
     listenerList.push({ callback, options });
   }
 
-  removeEventListener(
-    type: string,
-    callback: EventListenerOrEventListenerObject | null,
-    options?: EventListenerOptions | boolean
-  ) {
+  removeEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: EventListenerOptions | boolean) {
     const self = this;
     const { listeners } = self.eventTargetData;
 
