@@ -73,7 +73,7 @@ async function handleRequest(request) {
         'object', 'writable property must pass brand check');
     }, 'TextEncoderStream readable and writable properties must pass brand checks');
 
-    return new Response("All Tests Passed!", {
+    return new Response("All tests passed!", {
       headers: { "content-type": "text/plain" },
     });
   } catch (error) {
