@@ -249,6 +249,15 @@ export class AsyncLocalStorage {
         const currentFrame = AsyncContextFrame.current();
         return currentFrame.get(this.#key);
     }
+    static bind(fn) {
+        return AsyncResource.bind(fn);
+    }
+    static snapshot() {
+        return AsyncLocalStorage.bind((
+            cb,
+            ...args
+        ) => cb(...args));
+    }
 }
 export function executionAsyncId() {
     return 1;
