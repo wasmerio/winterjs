@@ -177,3 +177,9 @@ test_name = "17-cache"
 test_route = "17-cache"
 expected_output = "All tests passed!"
 expected_response_status = 200
+
+[[test_case]]
+test_name = "18-event"
+test_route = "18-event"
+expected_output = "All tests passed!"
+expected_response_status = 200
