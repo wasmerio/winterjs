@@ -44,7 +44,7 @@ async function handleRequest(request) {
       assert(true, "atob threw error as expected with invalid base64 input");
     }
     // Create a response with the Blob's text
-    return new Response("All Tests Passed!", {
+    return new Response("All tests passed!", {
       headers: { "content-type": "text/plain" },
     });
   } catch (error) {

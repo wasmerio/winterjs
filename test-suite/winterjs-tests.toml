@@ -97,85 +97,85 @@ expected_response_status = 200
 [[test_case]]
 test_name = "10-atob-btoa"
 test_route = "10-atob-btoa"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "11-fetch"
 test_route = "11-fetch"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "11.1-fetch-body"
 test_route = "11.1-fetch-body"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "12-streams"
 test_route = "12-streams"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "12.1-transform-stream"
 test_route = "12.1-transform-stream"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "12.2-text-encoder-stream"
 test_route = "12.2-text-encoder-stream"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "12.3-text-decoder-stream"
 test_route = "12.3-text-decoder-stream"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "13-performance"
 test_route = "13-performance"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "14-form-data"
 test_route = "14-form-data"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "15-timers"
 test_route = "15-timers"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "16-crypto"
 test_route = "16-crypto"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "16.1-crypto-hmac"
 test_route = "16.1-crypto-hmac"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "16.2-crypto-sha"
 test_route = "16.2-crypto-sha"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]
 test_name = "17-cache"
 test_route = "17-cache"
-expected_output = "All Tests Passed!"
+expected_output = "All tests passed!"
 expected_response_status = 200
 
 [[test_case]]

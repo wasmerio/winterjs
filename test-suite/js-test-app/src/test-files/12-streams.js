@@ -169,7 +169,7 @@ async function handleRequest(request) {
     }
 
     // Create a response with the Blob's text
-    return new Response("All Tests Passed!", {
+    return new Response("All tests passed!", {
       headers: { "content-type": "text/plain" },
     });
   } catch (error) {

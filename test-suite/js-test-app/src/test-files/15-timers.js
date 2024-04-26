@@ -92,7 +92,7 @@ async function handleRequest(request) {
       timeout_trampoline(t, 100, "Expected setInterval callback to be called two times");
     }, "Calling setInterval with undefined interval should be the same as if called with 0 interval");
 
-    return new Response('All Tests Passed!');
+    return new Response('All tests passed!');
   }
   catch (e) {
     return new Response(e.toString(), { status: 500 });
