@@ -30,12 +30,12 @@ impl StandardModules for Modules {
     fn init(self, cx: &Context, global: &ion::Object) -> bool {
         let result = init_module::<core::CoreModule>(cx, global) && Self::define_common(cx, global);
 
-        js_modules::define(cx);
+        let result_js_modules = js_modules::define(cx);
 
         if self.include_internal {
-            result && internal_js_modules::define(cx)
+            result && result_js_modules && internal_js_modules::define(cx)
         } else {
-            result
+            result && result_js_modules
         }
     }
 
