@@ -28,7 +28,7 @@ pub(super) fn define(cx: &Context) -> bool {
 fn log_error(e: &Error) {
     tracing::error!(
         error = %e,
-        "Failed to load internal modules"
+        "Failed to load js modules"
     );
 }
 
@@ -68,10 +68,10 @@ fn compile_and_register_modules(cx: &Context, script_file: &File) -> anyhow::Res
             let request = ModuleRequest::new(cx, module_name);
             loader
                 .register(cx, module.module_object(), &request)
-                .map_err(|e| anyhow!("Failed to register internal module due to: {e}"))?;
+                .map_err(|e| anyhow!("Failed to register js module due to: {e}"))?;
             Ok(())
         }
-        None => anyhow::bail!("No module loader present, cannot register internal module"),
+        None => anyhow::bail!("No module loader present, cannot register js module"),
     }
 }
 
