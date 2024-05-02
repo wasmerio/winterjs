@@ -1,4 +1,3 @@
-import { Event, EventTarget } from "node:event";
 import { assert_equals } from "../test-utils";
 
 async function handleRequest(request) {

@@ -17,4 +17,17 @@ fn main() {
             .status
             .success());
     }
+
+    // npx tsc modules/*.ts --declaration --emitDeclarationOnly --module es6  --outDir __types
+    if profile == "debug" {
+        let mut dir = std::env::current_dir().unwrap();
+        dir.extend(["src", "builtins", "js_modules"]);
+        assert!(Command::new("npx")
+            .arg("tsc")
+            .current_dir(dir)
+            .output()
+            .unwrap()
+            .status
+            .success());
+    }
 }

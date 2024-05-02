@@ -337,4 +337,9 @@ function dispatch(eventTarget, event) {
     });
     return true;
 }
+const GLOBAL_MODULES = {
+    Event,
+    EventTarget,
+};
+export default GLOBAL_MODULES;
 export { Event, EventTarget };

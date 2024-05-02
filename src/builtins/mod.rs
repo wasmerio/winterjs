@@ -5,6 +5,7 @@ pub mod cache;
 pub mod core;
 pub mod crypto;
 pub mod internal_js_modules;
+pub mod js_modules;
 pub mod performance;
 pub mod process;
 
@@ -28,6 +29,8 @@ impl Modules {
 impl StandardModules for Modules {
     fn init(self, cx: &Context, global: &ion::Object) -> bool {
         let result = init_module::<core::CoreModule>(cx, global) && Self::define_common(cx, global);
+
+        js_modules::define(cx);
 
         if self.include_internal {
             result && internal_js_modules::define(cx)
