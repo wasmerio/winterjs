@@ -48,7 +48,7 @@ fn scan_dir(cx: &Context, modules_dir: &Dir) -> anyhow::Result<()> {
 
 fn compile_and_register_modules(cx: &Context, script_file: &File) -> anyhow::Result<()> {
     let module_name = format!(
-        "jsmodule:{}",
+        "winterjs:{}",
         script_file
             .path()
             .file_stem()

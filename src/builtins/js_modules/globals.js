@@ -12,5 +12,5 @@
  * export default GLOBAL_MODULES;
  * export { Event, EventTarget }; <- when use it as standard js modules only.
  */
-import Event from 'jsmodule:event';
+import Event from 'winterjs:event';
 Object.assign(globalThis, { ...Event });
