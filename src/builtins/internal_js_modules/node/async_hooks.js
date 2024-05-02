@@ -253,7 +253,10 @@ export class AsyncLocalStorage {
         return AsyncResource.bind(fn);
     }
     static snapshot() {
-        return AsyncLocalStorage.bind((cb, ...args) => cb(...args));
+        return AsyncLocalStorage.bind((
+            cb,
+            ...args
+        ) => cb(...args));
     }
 }
 export function executionAsyncId() {

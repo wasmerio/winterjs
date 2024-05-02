@@ -18,7 +18,6 @@ fn main() {
             .success());
     }
 
-    // npx tsc modules/*.ts --declaration --emitDeclarationOnly --module es6  --outDir __types
     if profile == "debug" {
         let mut dir = std::env::current_dir().unwrap();
         dir.extend(["src", "builtins", "js_modules"]);
