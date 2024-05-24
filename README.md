@@ -81,6 +81,8 @@ For more information, see the API Compatibility section below.
 This section will be updated as APIs are added/fixed.
 If an API is missing from this section, that means that it is still not implemented.
 
+You can check a more detailed list here: https://runtime-compat.unjs.io/
+
 The following words are used to describe the status of an API:
 
 * ✅ Stable - The API is implemented and fully compliant with the spec. This does not account for potential undiscovered implementation errors in the native code.
