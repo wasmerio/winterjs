@@ -11,13 +11,11 @@ async function handleRequest(request) {
 
     let testEvent1CalledCount = 0;
     const testEvent1CallBack = () => {
-      console.log("test event 1 callback is called");
       testEvent1CalledCount++;
     };
 
     let testEvent2CalledCount = 0;
     const testEvent2CallBack = () => {
-      console.log("test event 2 callback is called");
       testEvent2CalledCount++;
     };
 

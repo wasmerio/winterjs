@@ -2,7 +2,6 @@
   "compilerOptions": {
     "lib": ["es2022", "DOM"],
     "module": "ES2022",
-    "target": "ES2022",
-    "typeRoots": ["./__types"]
+    "target": "ES2022"
   }
 }
