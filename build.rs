@@ -7,8 +7,18 @@ fn main() {
     // once in debug mode, and the JS scripts will be updated and pushed.
     let profile = std::env::var("PROFILE").unwrap();
     if profile == "debug" {
-        let mut dir = std::env::current_dir().unwrap();
-        dir.extend(["src", "builtins", "internal_js_modules"]);
+        let builtins_dir = std::env::current_dir().unwrap().join("src/builtins");
+
+        let dir = builtins_dir.join("internal_js_modules");
+        assert!(Command::new("npx")
+            .arg("tsc")
+            .current_dir(dir)
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let dir = builtins_dir.join("js_globals");
         assert!(Command::new("npx")
             .arg("tsc")
             .current_dir(dir)

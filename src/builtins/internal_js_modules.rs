@@ -1,16 +1,17 @@
+//! Here, we initialize those modules that are defined in JS, as
+//! opposed to native modules defined in Rust. The sources for
+//! these modules should be put under the internal_js_modules dir
+//! that lives next to this source file.
+//!
+//! The name of the modules will be equivalent to their path on disk,
+//! but forward slashes (/) will be changed to a colon (:) and the .js
+//! extension will be stripped. So, to create a node:buffer module,
+//! one must put the source under `internal_js_modules/node/buffer.js`.
+//!
+//! Note: Files that don't have a .js extension will be ignored.
+
 use anyhow::{anyhow, Context as _};
 use clap::builder::OsStr;
-/// Here, we initialize those modules that are defined in JS, as
-/// opposed to native modules defined in Rust. The sources for
-/// these modules should be put under the internal_js_modules dir
-/// that lives next to this source file.
-///
-/// The name of the modules will be equivalent to their path on disk,
-/// but forward slashes (/) will be changed to a colon (:) and the .js
-/// extension will be stripped. So, to create a node:buffer module,
-/// one must put the source under `internal_js_modules/node/buffer.js`.
-///
-/// Note: Files that don't have a .js extension will be ignored.
 use include_dir::{include_dir, Dir, File};
 use ion::{
     module::{Module, ModuleRequest},
@@ -47,6 +48,8 @@ fn scan_dir(cx: &Context, dir: &Dir) -> anyhow::Result<()> {
 }
 
 fn compile_and_register(cx: &Context, script_file: &File) -> anyhow::Result<()> {
+    tracing::debug!("Registering internal module at {:?}", script_file.path());
+
     let module_name = script_file
         .path()
         .to_str()
