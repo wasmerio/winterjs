@@ -54,6 +54,21 @@ impl Env {
     }
 }
 
+#[derive(FromValue)]
+pub enum FetchInput<'cx> {
+    #[ion(inherit)]
+    Request(&'cx FetchRequest),
+    #[ion(inherit)]
+    Url(&'cx runtime::globals::url::URL),
+    #[ion(inherit)]
+    String(String),
+}
+
+enum FetchInputHeap {
+    Request(TracedHeap<*mut JSObject>),
+    Url(String),
+}
+
 #[js_class]
 pub struct EnvAssets {
     reflector: Reflector,
@@ -66,31 +81,50 @@ impl EnvAssets {
         ion_err!("Cannot construct this type", Type)
     }
 
-    pub fn fetch(&self, cx: &Context, request: &FetchRequest) -> Option<Promise> {
-        let request_heap = TracedHeap::new(request.reflector().get());
+    pub fn fetch<'cx>(&self, cx: &'cx Context, input: FetchInput<'cx>) -> Option<Promise> {
+        let input_heap = match input {
+            FetchInput::Request(req) => {
+                FetchInputHeap::Request(TracedHeap::new(req.reflector().get()))
+            }
+            FetchInput::Url(url) => FetchInputHeap::Url(url.to_string()),
+            FetchInput::String(url) => FetchInputHeap::Url(url),
+        };
 
         unsafe {
             future_to_promise::<_, _, _, Exception>(cx, move |cx| async move {
-                let request =
-                    FetchRequest::get_mut_private(&cx, &request_heap.root(&cx).into()).unwrap();
+                let (cx, http_req) = match input_heap {
+                    FetchInputHeap::Request(request_heap) => {
+                        let request =
+                            FetchRequest::get_mut_private(&cx, &request_heap.root(&cx).into())
+                                .unwrap();
 
-                let mut http_req = http::Request::builder()
-                    .uri(request.get_url())
-                    .method(request.method());
+                        let mut http_req = http::Request::builder()
+                            .uri(request.get_url())
+                            .method(request.method());
 
-                for header in request.headers(&cx) {
-                    http_req = http_req.header(header.0.clone(), header.1.clone())
-                }
+                        for header in request.headers(&cx) {
+                            http_req = http_req.header(header.0.clone(), header.1.clone())
+                        }
 
-                let request_body = request.take_body()?;
-                let (cx, body_bytes) = cx.await_native_cx(|cx| request_body.into_bytes(cx)).await;
-                let body_bytes = body_bytes?;
-                let body = match body_bytes {
-                    Some(bytes) => hyper::Body::from(bytes),
-                    None => hyper::Body::empty(),
+                        let request_body = request.take_body()?;
+                        let (cx, body_bytes) =
+                            cx.await_native_cx(|cx| request_body.into_bytes(cx)).await;
+                        let body_bytes = body_bytes?;
+                        let body = match body_bytes {
+                            Some(bytes) => hyper::Body::from(bytes),
+                            None => hyper::Body::empty(),
+                        };
+
+                        (cx, http_req.body(body)?)
+                    }
+                    FetchInputHeap::Url(url) => (
+                        cx,
+                        http::Request::builder()
+                            .uri(url)
+                            .method(http::Method::GET)
+                            .body(hyper::Body::empty())?,
+                    ),
                 };
-
-                let http_req = http_req.body(body)?;
 
                 let (parts, body) = http_req.into_parts();
                 let request = super::super::Request { parts, body };
