@@ -40,6 +40,7 @@ async fn handle_requests_inner<H: RequestHandler + Copy + Unpin>(
     mut handler: H,
     user_code: UserCode,
     recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
+    max_request_threads: u32,
 ) -> Result<(), anyhow::Error> {
     let is_module_mode = match user_code {
         UserCode::Script { .. } => false,
@@ -50,6 +51,7 @@ async fn handle_requests_inner<H: RequestHandler + Copy + Unpin>(
     let standard_modules = TwoStandardModules(
         builtins::Modules {
             include_internal: is_module_mode,
+            hardware_concurrency: max_request_threads,
         },
         handler.get_standard_modules(),
     );
@@ -137,8 +139,10 @@ async fn handle_requests<H: RequestHandler + Copy + Unpin>(
     handler: H,
     user_code: UserCode,
     mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
+    max_request_threads: u32,
 ) {
-    if let Err(e) = handle_requests_inner(handler, user_code, &mut recv).await {
+    if let Err(e) = handle_requests_inner(handler, user_code, &mut recv, max_request_threads).await
+    {
         // The request handling logic itself failed, so we send back the error
         // as long as the thread is alive and shutdown has not been requested.
         // This lets us report the error. The runner can shut us down as soon
@@ -339,6 +343,7 @@ impl<H: RequestHandler + Copy + Unpin> SingleRunner<H> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let handler = self.handler;
         let user_code = self.user_code.clone();
+        let max_threads = self.max_threads;
         let join_handle = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -347,7 +352,7 @@ impl<H: RequestHandler + Copy + Unpin> SingleRunner<H> {
                 .block_on(async move {
                     let local_set = LocalSet::new();
                     local_set
-                        .run_until(handle_requests(handler, user_code, rx))
+                        .run_until(handle_requests(handler, user_code, rx, max_threads as u32))
                         .await
                 })
         });

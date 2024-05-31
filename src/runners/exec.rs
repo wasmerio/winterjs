@@ -12,6 +12,7 @@ async fn exec_script_inner(path: impl AsRef<Path>, script_mode: bool) -> Result<
     let module_loader = (!script_mode).then(runtime::module::Loader::default);
     let standard_modules = builtins::Modules {
         include_internal: !script_mode,
+        hardware_concurrency: 1,
     };
 
     let js_app = JsApp::build(module_loader, Some(standard_modules));

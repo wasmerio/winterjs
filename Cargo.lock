@@ -3732,6 +3732,7 @@ dependencies = [
  "sha2",
  "static-web-server",
  "strum",
+ "sys-locale",
  "tokio",
  "tracing",
  "tracing-subscriber",
