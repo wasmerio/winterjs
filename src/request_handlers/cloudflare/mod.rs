@@ -289,16 +289,23 @@ fn eval_module(cx: &Context, path: impl AsRef<Path>) -> anyhow::Result<Cloudflar
             if def.handle().is_object() {
                 def.to_object(cx).get(cx, "fetch").ok().flatten()
             } else {
+                tracing::warn!("Expected exported default to be an object");
                 None
             }
         })
         .and_then(|fetch| {
-            if fetch.handle().is_object() {
-                let obj = fetch.to_object(cx);
-                Function::from_object(cx, &obj)
-            } else {
-                None
+            let fetch_func = fetch
+                .handle()
+                .is_object()
+                .then(|| {
+                    let obj = fetch.to_object(cx);
+                    Function::from_object(cx, &obj)
+                })
+                .flatten();
+            if fetch_func.is_none() {
+                tracing::warn!("Expected exported default.fetch to be a function");
             }
+            fetch_func
         });
     Ok(CloudflareCodeModule {
         fetch_function: fetch_func.map(|f| TracedHeap::from_local(&f)),
