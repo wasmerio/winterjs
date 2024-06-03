@@ -8,14 +8,11 @@ use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 
-#[derive(Clone, Debug)]
-pub struct ServerConfig {
-    pub addr: SocketAddr,
-}
+pub use super::server::ServerConfig;
 
 pub async fn run_server(
     config: ServerConfig,
-    handler: Box<dyn Runner + Send + Sync>,
+    handler: Box<dyn SingleThreadedRunner>,
     shutdown_signal: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
     let context = AppContext { runner: handler };
@@ -42,39 +39,9 @@ pub async fn run_server(
         .context("hyper server failed")
 }
 
-// pub async fn run_server_on_current_thread(
-//     config: ServerConfig,
-//     handler: Box<dyn Runner + Send + Sync>,
-//     shutdown_signal: tokio::sync::oneshot::Receiver<()>,
-// ) -> Result<(), anyhow::Error> {
-//     let context = AppContext { runner: handler };
-
-//     let make_service = make_service_fn(move |conn: &AddrStream| {
-//         let context = context.clone();
-
-//         let addr = conn.remote_addr();
-
-//         // Create a `Service` for responding to the request.
-//         let service = service_fn(move |req| handle(context.clone(), addr, req));
-
-//         // Return the service to hyper.
-//         async move { Ok::<_, Infallible>(service) }
-//     });
-
-//     let addr = config.addr;
-//     tracing::info!(listen=%addr, "starting server on '{addr}'");
-
-//     Server::bind(&addr)
-//         .executor(tokio::runtime::current_thread)
-//         .serve(make_service)
-//         // .with_graceful_shutdown(async move { _ = shutdown_signal.await })
-//         .await
-//         .context("hyper server failed")
-// }
-
-#[async_trait]
+#[async_trait(?Send)]
 #[dyn_clonable::clonable]
-pub trait Runner: Clone + 'static {
+pub trait SingleThreadedRunner: Clone + 'static {
     async fn handle(
         &self,
         addr: SocketAddr,
@@ -87,7 +54,7 @@ pub trait Runner: Clone + 'static {
 
 #[derive(Clone)]
 struct AppContext {
-    runner: Box<dyn Runner + Send + Sync>,
+    runner: Box<dyn SingleThreadedRunner>,
 }
 
 async fn handle(

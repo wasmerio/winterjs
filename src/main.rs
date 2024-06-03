@@ -5,6 +5,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
+    pin::Pin,
 };
 
 #[cfg(not(target_os = "wasi"))]
@@ -13,10 +14,12 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::{Parser, ValueEnum};
 use request_handlers::{
-    cloudflare::CloudflareRequestHandler, wintercg::WinterCGRequestHandler, UserCode,
+    cloudflare::CloudflareRequestHandler, wintercg::WinterCGRequestHandler, Either, UserCode,
 };
 
 use server::Runner;
+use single_threaded_server::SingleThreadedRunner;
+use tokio::select;
 
 #[macro_use]
 extern crate ion_proc;
@@ -47,16 +50,16 @@ mod builtins;
 mod request_handlers;
 mod runners;
 mod server;
+mod single_threaded_server;
 mod sm_utils;
 
-#[tokio::main]
-async fn main() {
-    if let Err(e) = run().await {
+fn main() {
+    if let Err(e) = run() {
         println!("{e:?}");
     }
 }
 
-async fn run() -> Result<(), anyhow::Error> {
+fn run() -> Result<(), anyhow::Error> {
     // Initialize logging.
     if std::env::var("RUST_LOG").is_err() {
         // Set default log level.
@@ -113,30 +116,56 @@ async fn run() -> Result<(), anyhow::Error> {
             let addr: SocketAddr = (interface, port).into();
             let config = crate::server::ServerConfig { addr };
 
-            let user_code = UserCode::from_path(&cmd.js_path, cmd.script).await?;
-
-            let runner: Box<dyn Runner + Send + Sync> = match cmd.mode {
-                Some(HandlerName::Cloudflare) => {
-                    tracing::info!("Starting in Cloudflare mode");
-                    Box::new(runners::single::SingleRunner::new_request_handler(
-                        CloudflareRequestHandler,
-                        cmd.max_js_threads,
-                        user_code,
-                    ))
-                }
-                Some(HandlerName::WinterCG) | None => {
-                    tracing::info!("Starting in WinterCG mode");
-                    Box::new(runners::single::SingleRunner::new_request_handler(
-                        WinterCGRequestHandler,
-                        cmd.max_js_threads,
-                        user_code,
-                    ))
-                }
-            };
-
             runtime::config::CONFIG
                 .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
                 .unwrap();
+
+            let user_code = UserCode::from_path(&cmd.js_path, cmd.script)?;
+
+            let runner: Either<
+                Box<dyn Runner + Send + Sync>,
+                (
+                    Box<dyn SingleThreadedRunner>,
+                    Pin<Box<dyn runners::inline::InlineRunnerRequestHandlerFuture>>,
+                ),
+            > = match (cmd.mode, cmd.single_threaded) {
+                (Some(HandlerName::Cloudflare), false) => {
+                    tracing::info!("Starting in Cloudflare mode");
+                    Either::Left(Box::new(
+                        runners::single::SingleRunner::new_request_handler(
+                            CloudflareRequestHandler,
+                            cmd.max_js_threads,
+                            user_code,
+                        ),
+                    ))
+                }
+                (Some(HandlerName::Cloudflare), true) => {
+                    tracing::info!("Starting in Cloudflare mode");
+                    let (runner, future) = runners::inline::InlineRunner::new_request_handler(
+                        CloudflareRequestHandler,
+                        user_code,
+                    );
+                    Either::Right((Box::new(runner), Box::pin(future)))
+                }
+                (Some(HandlerName::WinterCG) | None, false) => {
+                    tracing::info!("Starting in WinterCG mode");
+                    Either::Left(Box::new(
+                        runners::single::SingleRunner::new_request_handler(
+                            WinterCGRequestHandler,
+                            cmd.max_js_threads,
+                            user_code,
+                        ),
+                    ))
+                }
+                (Some(HandlerName::WinterCG) | None, true) => {
+                    tracing::info!("Starting in WinterCG mode");
+                    let (runner, future) = runners::inline::InlineRunner::new_request_handler(
+                        WinterCGRequestHandler,
+                        user_code,
+                    );
+                    Either::Right((Box::new(runner), Box::pin(future)))
+                }
+            };
 
             #[cfg_attr(target_os = "wasi", allow(unused))]
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -163,9 +192,16 @@ async fn run() -> Result<(), anyhow::Error> {
                     Some(timeout)
                 };
 
-                let runner_clone = runner.clone();
+                let runner_clone = match runner {
+                    Either::Left(r) => Either::Left(r.clone()),
+                    Either::Right((r, _)) => Either::Right(r.clone()),
+                };
                 let mut shutdown_future = Some(async move {
-                    runner_clone.shutdown(timeout).await;
+                    match runner_clone {
+                        Either::Left(r) => r.shutdown(timeout),
+                        Either::Right(r) => r.shutdown(timeout),
+                    }
+                    .await;
                     _ = tx.send(());
                 });
                 ctrlc::set_handler(move || {
@@ -180,7 +216,46 @@ async fn run() -> Result<(), anyhow::Error> {
                 .expect("Failed to set Ctrl-C handler");
             }
 
-            crate::server::run_server(config, runner, rx).await
+            match runner {
+                Either::Left(runner) => tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed building the Runtime")
+                    .block_on(crate::server::run_server(config, runner, rx)),
+                Either::Right((runner, runner_future)) => {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("Failed building the Runtime")
+                        .block_on(async move {
+                            let server_future = Some(crate::single_threaded_server::run_server(
+                                config, runner, rx,
+                            ));
+                            let runner_future = Some(runner_future);
+                            let result = Ok(());
+
+                            select! {
+                                r = server_future.unwrap() => {
+                                    server_future = None;
+                                    result = r;
+                                }
+                                () = runner_future.unwrap() => {
+                                    runner_future = None;
+                                }
+                            }
+
+                            if let Some(f) = server_future {
+                                result = f.await;
+                            }
+
+                            if let Some(f) = runner_future {
+                                f.await;
+                            }
+
+                            result
+                        })
+                }
+            }
         }
     }
 }
@@ -232,6 +307,10 @@ struct CmdServe {
     /// out.
     #[clap(short = 'H', long, env = "WINTERJS_MODE")]
     mode: Option<HandlerName>,
+
+    /// If this flag is specified, WinterJS will run in single-threaded mode,
+    /// using only the main thread.
+    single_threaded: bool,
 
     #[cfg(not(target_os = "wasi"))]
     /// Clean shutdown timeout, i.e. how long to wait before forcefully
