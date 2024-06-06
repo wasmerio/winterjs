@@ -1,3 +1,5 @@
+import { assert_array_equals, readableStreamToArray } from "../test-utils";
+
 async function handleRequest(request) {
   const assert = (condition, message) => {
     if (!condition) {
@@ -166,6 +168,45 @@ async function handleRequest(request) {
       );
     } catch (error) {
       assert(false, `Stream error propagation test failed: ${error}`);
+    }
+
+    try {
+      let stream = ReadableStream.from(
+        (function* () {
+          yield "a";
+          yield "b";
+          yield "c";
+        })()
+      );
+      let arr = await readableStreamToArray(stream);
+      assert_array_equals(
+        arr,
+        ["a", "b", "c"],
+        "Stream contents should be correct"
+      );
+    } catch (error) {
+      assert(false, `ReadableStream.from test failed: ${error}`);
+    }
+
+    try {
+      let stream = ReadableStream.from(
+        (async function* () {
+          yield "a";
+          yield "b";
+          yield "c";
+        })()
+      );
+      let arr = await readableStreamToArray(stream);
+      assert_array_equals(
+        arr,
+        ["a", "b", "c"],
+        "Stream contents should be correct"
+      );
+    } catch (error) {
+      assert(
+        false,
+        `ReadableStream.from test with async iterable failed: ${error}`
+      );
     }
 
     // Create a response with the Blob's text
