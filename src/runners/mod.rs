@@ -1,5 +1,7 @@
 mod event_loop_stream;
 pub mod exec;
+pub mod inline;
+mod request_loop;
 mod request_queue;
 pub mod single;
 pub mod watch;

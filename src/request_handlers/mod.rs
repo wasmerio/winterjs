@@ -28,12 +28,11 @@ pub enum UserCode {
 }
 
 impl UserCode {
-    pub async fn from_path(path: &PathBuf, script_mode: bool) -> anyhow::Result<Self> {
+    pub fn from_path(path: &PathBuf, script_mode: bool) -> anyhow::Result<Self> {
         let path = runtime::wasi_polyfills::canonicalize(path)
             .context("Failed to canonicalize root module path")?;
-        let path_metadata = tokio::fs::metadata(&path)
-            .await
-            .context("Failed to get metadata for provided code path")?;
+        let path_metadata =
+            std::fs::metadata(&path).context("Failed to get metadata for provided code path")?;
 
         if path_metadata.is_dir() {
             if script_mode {
@@ -42,7 +41,7 @@ impl UserCode {
                 Ok(Self::Directory(path.clone()))
             }
         } else if script_mode {
-            let code = tokio::fs::read_to_string(&path).await.with_context(|| {
+            let code = std::fs::read_to_string(&path).with_context(|| {
                 format!("Could not read Javascript file at '{}'", path.display())
             })?;
             let file_name = path

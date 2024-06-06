@@ -15,7 +15,7 @@ pub struct ServerConfig {
 
 pub async fn run_server(
     config: ServerConfig,
-    handler: Box<dyn Runner + Send + Sync>,
+    handler: BoxedDynRunner,
     shutdown_signal: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
     let context = AppContext { runner: handler };
@@ -44,7 +44,7 @@ pub async fn run_server(
 
 #[async_trait]
 #[dyn_clonable::clonable]
-pub trait Runner: Send + Clone + 'static {
+pub trait Runner: Send + Sync + Clone + 'static {
     async fn handle(
         &self,
         addr: SocketAddr,
@@ -55,9 +55,11 @@ pub trait Runner: Send + Clone + 'static {
     async fn shutdown(&self, timeout: Option<Duration>);
 }
 
+pub type BoxedDynRunner = Box<dyn Runner>;
+
 #[derive(Clone)]
 struct AppContext {
-    runner: Box<dyn Runner + Send + Sync>,
+    runner: BoxedDynRunner,
 }
 
 async fn handle(
