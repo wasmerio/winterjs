@@ -1,14 +1,29 @@
-// The definition of ReadableStream is from SpiderMonkey, and I'd rather not mess with
-// that just to add in a couple of short functions.
+// The definition of ReadableStream is in SpiderMonkey's C++ source, and
+// I'd rather not mess with that just to add in a couple of short functions.
 
 (function () {
+  class ReadableStreamAsyncIterator {
+    reader;
+
+    constructor(stream) {
+      this.reader = stream.getReader();
+    }
+
+    next() {
+      return this.reader.read();
+    }
+
+    [Symbol.asyncIterator]() {
+      return this;
+    }
+  }
+
   globalThis.ReadableStream.prototype[Symbol.asyncIterator] = function () {
-    const reader = this.getReader();
-    return {
-      next: function () {
-        return reader.read();
-      },
-    };
+    return new ReadableStreamAsyncIterator(this);
+  };
+
+  globalThis.ReadableStream.prototype["values"] = function () {
+    return new ReadableStreamAsyncIterator(this);
   };
 
   globalThis.ReadableStream.from = function (iterable) {
