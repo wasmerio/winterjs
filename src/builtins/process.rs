@@ -1,5 +1,7 @@
 use ion::{conversions::ToValue, flags::PropertyFlags, Context, Object};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub fn populate_env_object(cx: &Context, env: &Object) -> bool {
     for (name, value) in std::env::vars() {
         // WINTERJS_* env vars are used to pass args to WinterJS itself, and are
@@ -27,6 +29,12 @@ pub fn define(cx: &Context, global: &Object) -> bool {
     populate_env_object(cx, &env);
 
     process.define(cx, "env", &env.as_value(cx), PropertyFlags::ENUMERATE)
+        && process.define(
+            cx,
+            "version",
+            &format!("WinterJS {VERSION}").as_value(cx),
+            PropertyFlags::CONSTANT_ENUMERATED,
+        )
         && global.define(
             cx,
             "process",
