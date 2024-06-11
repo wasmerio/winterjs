@@ -1,0 +1,61 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-libc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: show git config
+        run: |
+          env
+          cat ~/.config/git/config || true
+          cat ~/.gitconfig || true
+          ls -lha ./wasix-libc || true
+
+      - name: Check out wasix-libc
+        uses: actions/checkout@v3
+        with:
+          repository: wasix-org/wasix-libc
+          ref: main
+          path: wasix-libc
+          submodules: "recursive"
+
+      - name: OS Setup (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget xz-utils git python3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check out cargo-wasix
+        uses: actions/checkout@v3
+        with:
+          repository: wasix-org/cargo-wasix
+          ref: main
+          path: cargo-wasix
+          fetch-depth: 2
+
+      - name: Print cargo-wasix info
+        run: |
+          cd ./cargo-wasix
+          echo "cargo-wasix commit:"
+          git rev-parse HEAD
+
+      - name: Build
+        shell: bash
+        run: |
+          cd $GITHUB_WORKSPACE/cargo-wasix
+          WASIX_NO_UPDATE_REPOS=1 WASIX_BUILD_DIR=$GITHUB_WORKSPACE WASIX_COMPONENTS=libc cargo run -- wasix build-toolchain
+
+          # Workaround for preserving artifact directory structure
+          # See https://github.com/actions/upload-artifact/issues/174
+          touch $GITHUB_WORKSPACE/.stub
+
+      - name: Archive build output
+        uses: actions/upload-artifact@v3
+        with:
+          name: wasix-libc
+          path: wasix-libc/sysroot32

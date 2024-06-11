@@ -1,0 +1,24 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: build-artifacts
+
+      - run: |
+          ls
+          ls build-artifacts
+          ls build-artifacts/wasix-libc
+          echo "So far, so good"
