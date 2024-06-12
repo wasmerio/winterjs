@@ -71,6 +71,7 @@ jobs:
         run: |
           cd wasix-rust-toolchain
           tar xzf toolchain.tar.gz
+          chmod +x bin/*
           rustup toolchain link wasix .
 
       - name: Download wasix-libc
