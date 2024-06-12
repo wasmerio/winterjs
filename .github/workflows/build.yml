@@ -25,8 +25,7 @@ jobs:
       - name: OS Setup (Ubuntu)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl wget xz-utils git python3 llvm lld
-          ln -s /usr/bin/llvm-ar
+          sudo apt-get install -y build-essential curl wget xz-utils git python3 llvm lld build-essential python3 python3-distutils llvm libclang-dev clang
 
       - name: Build wasix-libc
         run: |
@@ -50,13 +49,30 @@ jobs:
         with:
           submodules: "recursive"
 
+      - name: OS Setup (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3.11 python3-distutils llvm libclang-dev clang
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.76"
+          components: "clippy,rustfmt"
+
       - name: Download wasix-libc
         uses: actions/download-artifact@v3
         with:
           name: wasix-libc
-          path: wasix-libc
+          path: sysroot
 
-      - name: ls
+      - name: Build
         run: |
-          ls
-          ls wasix-libc
+          export WASI_SYSROOT=$(pwd)/sysroot
+          ./build.sh
+
+      - name: Archive build output
+        uses: actions/upload-artifact@v3
+        with:
+          name: winterjs-wasm
+          path: target/wasm32-wasmer-wasi/release/winterjs.wasm
