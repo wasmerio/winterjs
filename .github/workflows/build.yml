@@ -69,7 +69,7 @@ jobs:
       - name: Build
         run: |
           export WASI_SYSROOT=$(pwd)/sysroot
-          ./build.sh
+          bash build.sh
 
       - name: Archive build output
         uses: actions/upload-artifact@v3
