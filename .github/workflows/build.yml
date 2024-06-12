@@ -65,12 +65,12 @@ jobs:
         with:
           repo: wasix-org/rust
           file: rust-toolchain-x86_64-unknown-linux-gnu.tar.gz
-          target: rust-toolchain
+          target: rust-toolchain/toolchain.tar.gz
 
       - name: Install wasix toolchain
         run: |
           cd rust-toolchain
-          tar xzf rust-toolchain-x86_64-unknown-linux-gnu.tar.gz
+          tar xzf toolchain.tar.gz
           rustup toolchain link wasix .
 
       - name: Download wasix-libc
