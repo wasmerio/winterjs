@@ -25,34 +25,14 @@ jobs:
       - name: OS Setup (Ubuntu)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl wget xz-utils git python3
+          sudo apt-get install -y build-essential curl wget xz-utils git python3 llvm-15
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Check out cargo-wasix
-        uses: actions/checkout@v3
-        with:
-          repository: wasix-org/cargo-wasix
-          ref: main
-          path: cargo-wasix
-          fetch-depth: 2
-
-      - name: Print cargo-wasix info
+      - name: Build wasix-libc
         run: |
-          cd ./cargo-wasix
-          echo "cargo-wasix commit:"
-          git rev-parse HEAD
-
-      - name: Build
-        shell: bash
-        run: |
-          cd $GITHUB_WORKSPACE/cargo-wasix
-          WASIX_NO_UPDATE_REPOS=1 WASIX_BUILD_DIR=$GITHUB_WORKSPACE WASIX_COMPONENTS=libc cargo run -- wasix build-toolchain
-
-          # Workaround for preserving artifact directory structure
-          # See https://github.com/actions/upload-artifact/issues/174
-          touch $GITHUB_WORKSPACE/.stub
+          cd wasix-libc
+          ./build32.sh
+          ls
+          ls sysroot32
 
       - name: Archive build output
         uses: actions/upload-artifact@v3
