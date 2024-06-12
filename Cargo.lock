@@ -3053,7 +3053,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tokio"
 version = "1.35.1"
-source = "git+https://github.com/wasix-org/tokio.git?branch=wasix-1.35.1#833de7254d9ce3a549ce6201e887e17ee896cd74"
+source = "git+https://github.com/wasix-org/tokio.git?branch=wasix-1.35.1#e99d66994b28a153b4d0c23a2f90bc87e53e706f"
 dependencies = [
  "backtrace",
  "bytes",
@@ -3070,7 +3070,7 @@ dependencies = [
 [[package]]
 name = "tokio-macros"
 version = "2.2.0"
-source = "git+https://github.com/wasix-org/tokio.git?branch=wasix-1.35.1#833de7254d9ce3a549ce6201e887e17ee896cd74"
+source = "git+https://github.com/wasix-org/tokio.git?branch=wasix-1.35.1#e99d66994b28a153b4d0c23a2f90bc87e53e706f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3101,7 +3101,7 @@ dependencies = [
 [[package]]
 name = "tokio-util"
 version = "0.7.10"
-source = "git+https://github.com/wasix-org/tokio.git?branch=wasix-1.35.1#833de7254d9ce3a549ce6201e887e17ee896cd74"
+source = "git+https://github.com/wasix-org/tokio.git?branch=wasix-1.35.1#e99d66994b28a153b4d0c23a2f90bc87e53e706f"
 dependencies = [
  "bytes",
  "futures-core",
