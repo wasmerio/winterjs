@@ -60,6 +60,18 @@ jobs:
           toolchain: "1.76"
           components: "clippy,rustfmt"
 
+      - name: Check out cargo-wasix
+        uses: actions/checkout@v3
+        with:
+          repository: wasix-org/cargo-wasix
+          ref: main
+          path: cargo-wasix
+
+      - name: Install wasix toolchain
+        run: |
+          cd cargo-wasix
+          cargo run -- wasix download-toolchain
+
       - name: Download wasix-libc
         uses: actions/download-artifact@v3
         with:
