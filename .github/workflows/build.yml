@@ -40,3 +40,23 @@ jobs:
         with:
           name: wasix-libc
           path: wasix-libc/sysroot32
+
+  build:
+    needs: build-libc
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v3
+        with:
+          submodules: "recursive"
+
+      - name: Download wasix-libc
+        uses: actions/download-artifact@v3
+        with:
+          name: wasix-libc
+          path: wasix-libc
+
+      - name: ls
+        run: |
+          ls
+          ls wasix-libc
