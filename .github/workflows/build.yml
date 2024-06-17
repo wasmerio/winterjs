@@ -47,8 +47,8 @@ jobs:
           cd wasix-rust-toolchain
           tar xzf toolchain.tar.gz
           chmod +x bin/*
-          ls lib/rustlib
-          find -type file lib/rustlib/x86_64-unknown-linux-gnu/bin | xargs chmod +x
+          chmod +x lib/rustlib/x86_64-unknown-linux-gnu/bin/*
+          chmod +x lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/*
           rustup toolchain link wasix .
 
       - name: Build
