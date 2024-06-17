@@ -4,44 +4,7 @@ on:
   workflow_call:
 
 jobs:
-  build-libc:
-    runs-on: ubuntu-latest
-    steps:
-      - name: show git config
-        run: |
-          env
-          cat ~/.config/git/config || true
-          cat ~/.gitconfig || true
-          ls -lha ./wasix-libc || true
-
-      - name: Check out wasix-libc
-        uses: actions/checkout@v3
-        with:
-          repository: wasix-org/wasix-libc
-          ref: main
-          path: wasix-libc
-          submodules: "recursive"
-
-      - name: OS Setup (Ubuntu)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl wget xz-utils git python3 llvm lld build-essential python3 python3-distutils llvm libclang-dev clang
-
-      - name: Build wasix-libc
-        run: |
-          cd wasix-libc
-          ./build32.sh
-          ls
-          ls sysroot32
-
-      - name: Archive build output
-        uses: actions/upload-artifact@v3
-        with:
-          name: wasix-libc
-          path: wasix-libc/sysroot32
-
   build:
-    needs: build-libc
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -59,6 +22,13 @@ jobs:
         with:
           toolchain: "1.76"
           components: "clippy,rustfmt"
+
+      - name: Download wasix-libc
+        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        with:
+          repo: wasix-org/rust
+          file: wasix-libc.tar.gz
+          target: wasix-libc/wasix-libc.tar.gz
 
       - name: Download wasix toolchain
         uses: dsaltares/fetch-gh-release-asset@1.1.2
