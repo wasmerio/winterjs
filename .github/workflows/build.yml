@@ -28,7 +28,12 @@ jobs:
         with:
           repo: wasix-org/rust
           file: wasix-libc.tar.gz
-          target: wasix-libc/wasix-libc.tar.gz
+          target: sysroot/wasix-libc.tar.gz
+
+      - name: Unpack wasix-libc
+        run: |
+          cd sysroot
+          tar xzf wasix-libc.tar.gz
 
       - name: Download wasix toolchain
         uses: dsaltares/fetch-gh-release-asset@1.1.2
@@ -42,17 +47,12 @@ jobs:
           cd wasix-rust-toolchain
           tar xzf toolchain.tar.gz
           chmod +x bin/*
+          find lib/rustlib/x86_64-unknown-linux-gnu/bin -type file | xargs chmod +x
           rustup toolchain link wasix .
-
-      - name: Download wasix-libc
-        uses: actions/download-artifact@v3
-        with:
-          name: wasix-libc
-          path: sysroot
 
       - name: Build
         run: |
-          export WASI_SYSROOT=$(pwd)/sysroot
+          export WASI_SYSROOT=$(pwd)/sysroot/sysroot32
           bash build.sh
 
       - name: Archive build output
