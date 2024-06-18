@@ -16,6 +16,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15
+          npm i -g wasm-opt
           sudo rm /usr/bin/clang
           sudo rm /usr/bin/clang++
           sudo ln -s /usr/bin/clang-15 /usr/bin/clang
@@ -23,6 +24,26 @@ jobs:
           sudo ln -s /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
           sudo ln -s /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
           sudo ln -s /usr/bin/llvm-ranlib-15 /usr/bin/llvm-ranlib
+
+      - name: Tool Versions
+        run: |
+          echo clang
+          clang -v
+          echo '####################'
+          echo llvm-ar
+          llvm-ar -v
+          echo '####################'
+          echo llvm-nm
+          llvm-nm -v
+          echo '####################'
+          echo llvm-ranlib
+          llvm-ranlib -v
+          echo '####################'
+          echo wasm-opt
+          wasm-opt --version
+          echo '####################'
+          echo python
+          python3.11 -V
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
