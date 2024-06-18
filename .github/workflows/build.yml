@@ -54,7 +54,12 @@ jobs:
       - name: Build
         run: |
           export WASI_SYSROOT=$(pwd)/sysroot/wasix-libc/sysroot32
-          bash build.sh || find . -name config.log | xargs cat
+          bash build.sh || true
+          echo '###########################################'
+          find . -name config.log
+          echo '###########################################'
+          find . -name config.log | xargs cat
+          echo '###########################################'
 
       - name: Archive build output
         uses: actions/upload-artifact@v3
