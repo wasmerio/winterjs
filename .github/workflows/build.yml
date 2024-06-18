@@ -15,7 +15,10 @@ jobs:
       - name: OS Setup (Ubuntu)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential python3.11 python3-distutils llvm libclang-dev clang
+          sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15
+          ln -s /usr/bin/clang /usr/bin/clang-15
+          ln -s /usr/bin/llvm-ar /usr/bin/llvm-ar-15
+          ln -s /usr/bin/llvm-nm /usr/bin/llvm-nm-15
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
