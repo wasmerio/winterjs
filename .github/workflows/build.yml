@@ -22,6 +22,7 @@ jobs:
           sudo ln -s /usr/bin/clang++-15 /usr/bin/clang++
           sudo ln -s /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
           sudo ln -s /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
+          sudo ln -s /usr/bin/llvm-ranlib-15 /usr/bin/llvm-ranlib
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -60,12 +61,7 @@ jobs:
       - name: Build
         run: |
           export WASI_SYSROOT=$(pwd)/sysroot/wasix-libc/sysroot32
-          bash build.sh || true
-          echo '###########################################'
-          find . -name config.log
-          echo '###########################################'
-          find . -name config.log | xargs cat
-          echo '###########################################'
+          bash build.sh
 
       - name: Archive build output
         uses: actions/upload-artifact@v3
