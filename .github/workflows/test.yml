@@ -20,7 +20,7 @@ jobs:
           path: build-artifacts
 
       - run: |
-          ls
-          ls build-artifacts
-          ls build-artifacts/wasix-libc
+          ls -alsh
+          ls build-artifacts -alsh
+          ls build-artifacts/winterjs-wasm -alsh
           echo "So far, so good"
