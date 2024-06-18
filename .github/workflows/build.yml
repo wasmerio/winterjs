@@ -31,10 +31,10 @@ jobs:
           clang -v
           echo '####################'
           echo llvm-ar
-          llvm-ar -v
+          llvm-ar -V
           echo '####################'
           echo llvm-nm
-          llvm-nm -v
+          llvm-nm -V
           echo '####################'
           echo llvm-ranlib
           llvm-ranlib -v
