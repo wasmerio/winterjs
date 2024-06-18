@@ -15,7 +15,7 @@ jobs:
       - name: OS Setup (Ubuntu)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15
+          sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15 wabt
           npm i -g wasm-opt
           sudo rm /usr/bin/clang
           sudo rm /usr/bin/clang++
@@ -41,6 +41,9 @@ jobs:
           echo '####################'
           echo wasm-opt
           wasm-opt --version
+          echo '####################'
+          echo wasm-strip
+          wasm-strip --version
           echo '####################'
           echo python
           python3.11 -V
