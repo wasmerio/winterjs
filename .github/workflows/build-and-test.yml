@@ -2,10 +2,10 @@ name: Build
 
 on:
   workflow_call:
-  # pull_request:
-  # push:
-  #   branches:
-  #     - main
+  pull_request:
+  push:
+    branches:
+      - main
 
 jobs:
   build-and-test:

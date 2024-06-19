@@ -6,8 +6,8 @@ on:
       - "x*"
 
 jobs:
-  # build-and-test:
-  #   uses: "./.github/workflows/build-and-test.yml"
+  build-and-test:
+    uses: "./.github/workflows/build-and-test.yml"
 
   release:
     runs-on: ubuntu-latest
