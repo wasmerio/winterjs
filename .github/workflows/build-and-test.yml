@@ -2,10 +2,10 @@ name: Build
 
 on:
   workflow_call:
-  pull_request:
-  push:
-    branches:
-      - main
+  # pull_request:
+  # push:
+  #   branches:
+  #     - main
 
 jobs:
   build-and-test:
@@ -106,7 +106,7 @@ jobs:
         run: |
           conc --kill-others --success "command-1" \
             "wasmer run build-artifacts/winterjs-wasm/winterjs.wasm --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
-            "cd test-suite && cargo run"
+            "sleep 10 && cd test-suite && cargo run"
           echo All tests are passing! 🎉
 
       - name: Archive build output
