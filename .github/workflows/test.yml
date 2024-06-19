@@ -19,9 +19,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15 wabt
-          npm i -g wasm-opt
-          npm i -g pnpm
-          npm i -g concurrently
+          npm i -g wasm-opt pnpm concurrently
           sudo rm /usr/bin/clang
           sudo rm /usr/bin/clang++
           sudo ln -s /usr/bin/clang-15 /usr/bin/clang
