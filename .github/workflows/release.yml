@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "x*"
+      - "v*"
 
 jobs:
   build-and-test:
@@ -29,7 +29,7 @@ jobs:
       - name: Publish
         run: |
           TAG_NAME=${{github.ref_name}}
-          VERSION_NUMBER=${TAG_NAME#x}
+          VERSION_NUMBER=${TAG_NAME#v}
           echo Publishing version $VERSION_NUMBER
 
           if ! grep -q "version = ['\"]$VERSION_NUMBER['\"]" wasmer.toml; then
@@ -45,6 +45,6 @@ jobs:
           mkdir -p target/wasm32-wasmer-wasi/release
           mv build-artifacts/winterjs-wasm/winterjs.wasm target/wasm32-wasmer-wasi/release/winterjs.wasm
 
-          wasmer publish --registry="wasmer.wtf" --token=${{ secrets.WAPM_DEV_TOKEN }} --non-interactive
+          wasmer publish --registry="wasmer.io" --token=${{ secrets.WAPM_PROD_TOKEN }} --non-interactive
 
-          echo so far, so good
+          echo WinterJS version $VERSION_NUMBER was published successfully 🎉
