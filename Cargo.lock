@@ -3691,7 +3691,7 @@ checksum = "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04"
 
 [[package]]
 name = "winterjs"
-version = "1.1.5"
+version = "1.2.1-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
