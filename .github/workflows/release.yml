@@ -27,7 +27,8 @@ jobs:
 
       - name: Publish
         run: |
-          VERSION_NUMBER=${${{github.ref_name}}#x}
+          TAG_NAME=${{github.ref_name}}
+          VERSION_NUMBER=${TAG_NAME#x}
           echo Publishing version $VERSION_NUMBER
 
           if ! grep -q "version = ['\"]$VERSION_NUMBER['\"]" wasmer.toml; then
