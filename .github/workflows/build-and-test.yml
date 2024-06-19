@@ -105,7 +105,7 @@ jobs:
         # that cargo builds the test-suite app. This may not be the case forever.
         run: |
           conc --kill-others --success "command-1" \
-            "wasmer run build-artifacts/winterjs-wasm/winterjs.wasm --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
+            "wasmer run target/wasm32-wasmer-wasi/release/winterjs.wasm --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
             "sleep 10 && cd test-suite && cargo run"
           echo All tests are passing! 🎉
 
