@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "x*"
+
+jobs:
+  # build-and-test:
+  #   uses: "./.github/workflows/build-and-test.yml"
+
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Wasmer
+        uses: wasmerio/setup-wasmer@v3.1
+
+      - name: Check out
+        uses: actions/checkout@v3
+        with:
+          submodules: "recursive"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: build-artifacts
+
+      - name: Publish
+        run: |
+          VERSION_NUMBER=${${{github.ref_name}}#x}
+          echo Publishing version $VERSION_NUMBER
+
+          if ! grep -q "version = ['\"]$VERSION_NUMBER['\"]" wasmer.toml; then
+            echo Tagged version must match version in wasmer.toml
+            exit -1
+          fi
+
+          if ! grep -q "version = ['\"]$VERSION_NUMBER['\"]" Cargo.toml; then
+            echo Tagged version must match version in Cargo.toml
+            exit -1
+          fi
+
+          echo so far, so good
