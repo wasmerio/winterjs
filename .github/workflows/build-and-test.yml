@@ -28,6 +28,7 @@ jobs:
           sudo ln -s /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
           sudo ln -s /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
           sudo ln -s /usr/bin/llvm-ranlib-15 /usr/bin/llvm-ranlib
+          sudo ln -s /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
 
       - name: Tool Versions
         run: |
