@@ -84,6 +84,6 @@ h2 = { git = "https://github.com/wasix-org/h2", branch = "v0.3.23" }
 [profile.release]
 opt-level = 'z'
 lto = true
-codegen-units = 
+codegen-units = 1
 panic = 'abort'
 strip = true
