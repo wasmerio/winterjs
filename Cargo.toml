@@ -82,8 +82,9 @@ hyper = { git = "https://github.com/wasix-org/hyper.git", branch = "v0.14.28" }
 h2 = { git = "https://github.com/wasix-org/h2", branch = "v0.3.23" }
 
 [profile.release-compact]
-opt-level = 'z'
+inherits = "release"
+opt-level = "z"
 lto = true
 codegen-units = 1
-panic = 'abort'
+panic = "abort"
 strip = true
