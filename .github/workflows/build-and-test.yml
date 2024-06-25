@@ -91,9 +91,7 @@ jobs:
           rustup toolchain link wasix .
 
       - name: Build native
-        run: |
-          cargo build -r
-          du -sh target/release/winterjs
+        run: cargo build --profile release-compact
 
       - name: Archive build native output
         uses: actions/upload-artifact@v3

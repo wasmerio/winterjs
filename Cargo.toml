@@ -81,7 +81,7 @@ rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.22.2" }
 hyper = { git = "https://github.com/wasix-org/hyper.git", branch = "v0.14.28" }
 h2 = { git = "https://github.com/wasix-org/h2", branch = "v0.3.23" }
 
-[profile.release]
+[profile.release-compact]
 opt-level = 'z'
 lto = true
 codegen-units = 1
