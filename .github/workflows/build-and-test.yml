@@ -90,9 +90,19 @@ jobs:
           chmod +x lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/*
           rustup toolchain link wasix .
 
-      - name: Build
+      - name: Build native
         run: |
           cargo build -r
+          tree target
+
+      - name: Archive build native output
+        uses: actions/upload-artifact@v3
+        with:
+          name: winterjs-linux
+          path: target/release/winterjs
+
+      # - name: Build wasm
+      #   run: |
       #     export WASI_SYSROOT=$(pwd)/sysroot/wasix-libc/sysroot32
       #     bash build.sh
 
@@ -111,7 +121,7 @@ jobs:
       #       "sleep 10 && cd test-suite && cargo run"
       #     echo All tests are passing! 🎉
 
-      # - name: Archive build output
+      # - name: Archive build wasm output
       #   uses: actions/upload-artifact@v3
       #   with:
       #     name: winterjs-wasm
