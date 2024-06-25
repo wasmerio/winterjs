@@ -93,7 +93,7 @@ jobs:
       - name: Build native
         run: |
           cargo build -r
-          tree target
+          du -sh target/release/winterjs
 
       - name: Archive build native output
         uses: actions/upload-artifact@v3
