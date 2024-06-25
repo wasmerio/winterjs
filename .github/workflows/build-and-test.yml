@@ -99,28 +99,28 @@ jobs:
           name: winterjs-linux
           path: target/release/winterjs
 
-      # - name: Build wasm
-      #   run: |
-      #     export WASI_SYSROOT=$(pwd)/sysroot/wasix-libc/sysroot32
-      #     bash build.sh
+      - name: Build wasm
+        run: |
+          export WASI_SYSROOT=$(pwd)/sysroot/wasix-libc/sysroot32
+          bash build.sh
 
-      # - name: build test suite JS app
-      #   run: |
-      #     cd test-suite/js-test-app
-      #     pnpm i
-      #     pnpm run build
+      - name: build test suite JS app
+        run: |
+          cd test-suite/js-test-app
+          pnpm i
+          pnpm run build
 
-      # - name: Run API test suite
-      #   # note: we're counting on wasmer compiling and running WinterJS faster
-      #   # that cargo builds the test-suite app. This may not be the case forever.
-      #   run: |
-      #     conc --kill-others --success "command-1" \
-      #       "wasmer run target/wasm32-wasmer-wasi/release/winterjs.wasm --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
-      #       "sleep 10 && cd test-suite && cargo run"
-      #     echo All tests are passing! 🎉
+      - name: Run API test suite
+        # note: we're counting on wasmer compiling and running WinterJS faster
+        # that cargo builds the test-suite app. This may not be the case forever.
+        run: |
+          conc --kill-others --success "command-1" \
+            "wasmer run target/wasm32-wasmer-wasi/release/winterjs.wasm --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
+            "sleep 10 && cd test-suite && cargo run"
+          echo All tests are passing! 🎉
 
-      # - name: Archive build wasm output
-      #   uses: actions/upload-artifact@v3
-      #   with:
-      #     name: winterjs-wasm
-      #     path: target/wasm32-wasmer-wasi/release/winterjs.wasm
+      - name: Archive build wasm output
+        uses: actions/upload-artifact@v3
+        with:
+          name: winterjs-wasm
+          path: target/wasm32-wasmer-wasi/release/winterjs.wasm
