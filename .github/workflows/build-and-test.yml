@@ -28,6 +28,7 @@ jobs:
           sudo ln -s /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
           sudo ln -s /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
           sudo ln -s /usr/bin/llvm-ranlib-15 /usr/bin/llvm-ranlib
+          sudo ln -s /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
 
       - name: Tool Versions
         run: |
@@ -89,7 +90,16 @@ jobs:
           chmod +x lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/*
           rustup toolchain link wasix .
 
-      - name: Build
+      - name: Build native
+        run: cargo build --profile release-compact
+
+      - name: Archive build native output
+        uses: actions/upload-artifact@v3
+        with:
+          name: winterjs-linux
+          path: target/release-compact/winterjs
+
+      - name: Build wasm
         run: |
           export WASI_SYSROOT=$(pwd)/sysroot/wasix-libc/sysroot32
           bash build.sh
@@ -109,7 +119,7 @@ jobs:
             "sleep 10 && cd test-suite && cargo run"
           echo All tests are passing! 🎉
 
-      - name: Archive build output
+      - name: Archive build wasm output
         uses: actions/upload-artifact@v3
         with:
           name: winterjs-wasm
