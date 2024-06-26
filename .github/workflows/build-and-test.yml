@@ -97,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: winterjs-linux
-          path: target/release/winterjs
+          path: target/release-compact/winterjs
 
       - name: Build wasm
         run: |
