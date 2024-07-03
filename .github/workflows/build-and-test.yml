@@ -70,7 +70,7 @@ jobs:
       - name: OS Setup (macOS)
         if: ${{ matrix.metadata.os == 'macos-latest' }}
         run: |
-            brew install wabt
+            brew install wabt llvm@15
             npm i -g wasm-opt pnpm concurrently
 
       - name: Tool Versions
