@@ -9,27 +9,34 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    matrix:
+      metadata: [
+        {
+          os: ubuntu-latest,
+          wasix-toolchain-release-asset: rust-toolchain-x86_64-unknown-linux-gnu.tar.gz,
+          setup: |
+            sudo apt-get update
+            sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15 wabt
+            npm i -g wasm-opt pnpm concurrently
+            sudo rm /usr/bin/clang
+            sudo rm /usr/bin/clang++
+            sudo ln -s /usr/bin/clang-15 /usr/bin/clang
+            sudo ln -s /usr/bin/clang++-15 /usr/bin/clang++
+            sudo ln -s /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
+            sudo ln -s /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
+            sudo ln -s /usr/bin/llvm-ranlib-15 /usr/bin/llvm-ranlib
+            sudo ln -s /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
+        }
+      ]
+    runs-on: ${{ matrix.metadata.os }}
     steps:
       - name: Check out
         uses: actions/checkout@v3
         with:
           submodules: "recursive"
 
-      - name: OS Setup (Ubuntu)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15 wabt
-          npm i -g wasm-opt pnpm concurrently
-          sudo rm /usr/bin/clang
-          sudo rm /usr/bin/clang++
-          sudo ln -s /usr/bin/clang-15 /usr/bin/clang
-          sudo ln -s /usr/bin/clang++-15 /usr/bin/clang++
-          sudo ln -s /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
-          sudo ln -s /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
-          sudo ln -s /usr/bin/llvm-ranlib-15 /usr/bin/llvm-ranlib
-          sudo ln -s /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
-
+      - name: OS Setup
+        run: ${{ matrix.metadata.setup }}
       - name: Tool Versions
         run: |
           echo clang
@@ -78,7 +85,7 @@ jobs:
         uses: dsaltares/fetch-gh-release-asset@1.1.2
         with:
           repo: wasix-org/rust
-          file: rust-toolchain-x86_64-unknown-linux-gnu.tar.gz
+          file: ${{ matrix.metadata.wasix-toolchain-release-asset }}
           target: wasix-rust-toolchain/toolchain.tar.gz
 
       - name: Install wasix toolchain
@@ -86,8 +93,8 @@ jobs:
           cd wasix-rust-toolchain
           tar xzf toolchain.tar.gz
           chmod +x bin/*
-          chmod +x lib/rustlib/x86_64-unknown-linux-gnu/bin/*
-          chmod +x lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/*
+          chmod +x lib/rustlib/*/bin/*
+          chmod +x lib/rustlib/*/bin/gcc-ld/*
           rustup toolchain link wasix .
 
       - name: Build native
