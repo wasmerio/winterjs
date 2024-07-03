@@ -66,6 +66,13 @@ jobs:
             sudo ln -s /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
             sudo ln -s /usr/bin/llvm-ranlib-15 /usr/bin/llvm-ranlib
             sudo ln -s /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
+
+      - name: OS Setup (macOS)
+        if: ${{ matrix.metadata.os == 'macos-latest' }}
+        run: |
+            brew install wabt
+            npm i -g wasm-opt pnpm concurrently
+
       - name: Tool Versions
         run: |
           echo clang
