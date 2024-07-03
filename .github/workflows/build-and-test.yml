@@ -15,9 +15,20 @@ jobs:
         metadata: [
           {
             os: ubuntu-latest,
+            bin-path: target/release-compact/winterjs,
+            artifact-name: winterjs-linux,
+            target: native,
+            wasix-toolchain-release-asset: rust-toolchain-x86_64-unknown-linux-gnu.tar.gz
+          },
+          {
+            os: ubuntu-latest,
+            bin-path: target/wasm32-wasmer-wasi/release/winterjs.wasm,
+            artifact-name: winterjs-wasm,
+            target: wasm,
             wasix-toolchain-release-asset: rust-toolchain-x86_64-unknown-linux-gnu.tar.gz
           }
         ]
+    name: Build and Test in ${{ matrix.metadata.os }} (${{ matrix.metadata.target }})
     runs-on: ${{ matrix.metadata.os }}
     steps:
       - name: Check out
@@ -100,18 +111,20 @@ jobs:
           rustup toolchain link wasix .
 
       - name: Build native
+        if: ${{ matrix.metadata.target == 'native' }}
         run: cargo build --profile release-compact
 
-      - name: Archive build native output
-        uses: actions/upload-artifact@v3
-        with:
-          name: winterjs-linux
-          path: target/release-compact/winterjs
-
       - name: Build wasm
+        if: ${{ matrix.metadata.target == 'wasm' }}
         run: |
           export WASI_SYSROOT=$(pwd)/sysroot/wasix-libc/sysroot32
           bash build.sh
+
+      - name: Archive build
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.metadata.artifact-name }}
+          path: ${{ matrix.metadata.bin-path }}
 
       - name: build test suite JS app
         run: |
@@ -119,17 +132,22 @@ jobs:
           pnpm i
           pnpm run build
 
-      - name: Run API test suite
+      - name: Run API test suite (wasm)
         # note: we're counting on wasmer compiling and running WinterJS faster
         # that cargo builds the test-suite app. This may not be the case forever.
+        if: ${{ matrix.metadata.target == 'wasm' }}
         run: |
           conc --kill-others --success "command-1" \
-            "wasmer run target/wasm32-wasmer-wasi/release/winterjs.wasm --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
+            "wasmer run . --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
             "sleep 10 && cd test-suite && cargo run"
           echo All tests are passing! 🎉
 
-      - name: Archive build wasm output
-        uses: actions/upload-artifact@v3
-        with:
-          name: winterjs-wasm
-          path: target/wasm32-wasmer-wasi/release/winterjs.wasm
+      - name: Run API test suite (native)
+        # note: we're counting on wasmer compiling and running WinterJS faster
+        # that cargo builds the test-suite app. This may not be the case forever.
+        if: ${{ matrix.metadata.target == 'native' }}
+        run: |
+          conc --kill-others --success "command-1" \
+            "./target/release-compact/winterjs serve ./test-suite/js-test-app/dist/bundle.js" \
+            "sleep 10 && cd test-suite && cargo run"
+          echo All tests are passing! 🎉
