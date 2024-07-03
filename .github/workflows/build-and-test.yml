@@ -80,9 +80,11 @@ jobs:
           components: "clippy,rustfmt"
 
       - name: Setup Wasmer
+        if: ${{ matrix.metadata.target == 'wasm' }}
         uses: wasmerio/setup-wasmer@v3.1
 
       - name: Download wasix-libc
+        if: ${{ matrix.metadata.target == 'wasm' }}
         uses: dsaltares/fetch-gh-release-asset@1.1.2
         with:
           repo: wasix-org/rust
@@ -90,11 +92,13 @@ jobs:
           target: sysroot/wasix-libc.tar.gz
 
       - name: Unpack wasix-libc
+        if: ${{ matrix.metadata.target == 'wasm' }}
         run: |
           cd sysroot
           tar xzf wasix-libc.tar.gz
 
       - name: Download wasix toolchain
+        if: ${{ matrix.metadata.target == 'wasm' }}
         uses: dsaltares/fetch-gh-release-asset@1.1.2
         with:
           repo: wasix-org/rust
@@ -102,6 +106,7 @@ jobs:
           target: wasix-rust-toolchain/toolchain.tar.gz
 
       - name: Install wasix toolchain
+        if: ${{ matrix.metadata.target == 'wasm' }}
         run: |
           cd wasix-rust-toolchain
           tar xzf toolchain.tar.gz
