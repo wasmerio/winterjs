@@ -22,7 +22,7 @@ jobs:
           },
           {
             name: "macOS (native)",
-            os: macos-15-xlarge,
+            os: macos-latest,
             bin-path: target/release-compact/winterjs,
             artifact-name: winterjs-macos,
             target: native,
