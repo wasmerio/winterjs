@@ -78,9 +78,7 @@ jobs:
         if: ${{ startsWith(matrix.metadata.os, 'macos-') }}
         run: |
           brew install wabt llvm@15
-          ls -al /usr/local/opt/llvm@15/bin
-          echo PATH="/usr/local/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
-          # echo PATH="/opt/homebrew/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
+          echo PATH="$HOMEBREW_PREFIX/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
           npm i -g wasm-opt pnpm concurrently
 
       - name: Tool Versions
