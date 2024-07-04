@@ -75,7 +75,7 @@ jobs:
           sudo ln -s /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
 
       - name: OS Setup (macOS)
-        if: ${{ matrix.metadata.os == 'macos-latest' }}
+        if: ${{ startsWith(matrix.metadata.os, 'macos-') }}
         run: |
           brew install wabt llvm@15
           echo PATH="/opt/homebrew/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
