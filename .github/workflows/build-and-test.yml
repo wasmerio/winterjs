@@ -23,7 +23,6 @@ jobs:
           {
             name: "macOS (arm native)",
             os: macos-latest,
-            homebrew-prefix: /opt/homebrew,
             bin-path: target/release-compact/winterjs,
             artifact-name: winterjs-macos-arm,
             target: native,
@@ -31,7 +30,6 @@ jobs:
           {
             name: "macOS (x86 native)",
             os: macos-13,
-            homebrew-prefix: /usr/local,
             bin-path: target/release-compact/winterjs,
             artifact-name: winterjs-macos-x86,
             target: native,
@@ -47,7 +45,6 @@ jobs:
           {
             name: "macOS (wasix)",
             os: macos-latest,
-            homebrew-prefix: /opt/homebrew,
             bin-path: target/release-compact/winterjs,
             artifact-name: winterjs-macos-wasix,
             target: wasix,
@@ -81,7 +78,8 @@ jobs:
         if: ${{ startsWith(matrix.metadata.os, 'macos-') }}
         run: |
           brew install wabt llvm@15
-          echo PATH="${{ matrix.metadata.homebrew-prefx }}/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
+          [ -d "/opt/homebrew" ] && echo PATH="/opt/homebrew/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
+          [ ! -d "/opt/homebrew" ] && echo PATH="/usr/local/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
           npm i -g wasm-opt pnpm concurrently
 
       - name: Tool Versions
