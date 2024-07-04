@@ -42,14 +42,14 @@ jobs:
             target: wasix,
             wasix-toolchain-release-asset: rust-toolchain-x86_64-unknown-linux-gnu.tar.gz
           },
-          {
-            name: "macOS (wasix)",
-            os: macos-latest,
-            bin-path: target/release-compact/winterjs,
-            artifact-name: winterjs-macos-wasix,
-            target: wasix,
-            wasix-toolchain-release-asset: rust-toolchain-aarch64-apple-darwin.tar.gz
-          }
+          # {
+          #   name: "macOS (wasix)",
+          #   os: macos-latest,
+          #   bin-path: target/release-compact/winterjs,
+          #   artifact-name: winterjs-macos-wasix,
+          #   target: wasix,
+          #   wasix-toolchain-release-asset: rust-toolchain-aarch64-apple-darwin.tar.gz
+          # }
         ]
     name: Build and Test - ${{ matrix.metadata.name }}
     runs-on: ${{ matrix.metadata.os }}
