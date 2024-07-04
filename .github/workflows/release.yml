@@ -43,7 +43,7 @@ jobs:
           fi
 
           mkdir -p target/wasm32-wasmer-wasi/release
-          mv build-artifacts/winterjs-wasm/winterjs.wasm target/wasm32-wasmer-wasi/release/winterjs.wasm
+          mv build-artifacts/winterjs-wasix/winterjs.wasm target/wasm32-wasmer-wasi/release/winterjs.wasm
 
           wasmer publish --registry="wasmer.io" --token=${{ secrets.WAPM_PROD_TOKEN }} --non-interactive
 
