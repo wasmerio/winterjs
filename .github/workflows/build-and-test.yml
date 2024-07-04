@@ -9,7 +9,50 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        metadata: [
+          {
+            name: "Ubuntu (x86 native)",
+            os: ubuntu-latest,
+            bin-path: target/release-compact/winterjs,
+            artifact-name: winterjs-linux-x86,
+            target: native,
+          },
+          {
+            name: "macOS (arm native)",
+            os: macos-latest,
+            bin-path: target/release-compact/winterjs,
+            artifact-name: winterjs-macos-arm,
+            target: native,
+          },
+          {
+            name: "macOS (x86 native)",
+            os: macos-13,
+            bin-path: target/release-compact/winterjs,
+            artifact-name: winterjs-macos-x86,
+            target: native,
+          },
+          {
+            name: "Ubuntu (wasix)",
+            os: ubuntu-latest,
+            bin-path: target/wasm32-wasmer-wasi/release/winterjs.wasm,
+            artifact-name: winterjs-wasix,
+            target: wasix,
+            wasix-toolchain-release-asset: rust-toolchain-x86_64-unknown-linux-gnu.tar.gz
+          },
+          # {
+          #   name: "macOS (wasix)",
+          #   os: macos-latest,
+          #   bin-path: target/release-compact/winterjs,
+          #   artifact-name: winterjs-macos-wasix,
+          #   target: wasix,
+          #   wasix-toolchain-release-asset: rust-toolchain-aarch64-apple-darwin.tar.gz
+          # }
+        ]
+    name: Build and Test - ${{ matrix.metadata.name }}
+    runs-on: ${{ matrix.metadata.os }}
     steps:
       - name: Check out
         uses: actions/checkout@v3
@@ -17,6 +60,7 @@ jobs:
           submodules: "recursive"
 
       - name: OS Setup (Ubuntu)
+        if: ${{ matrix.metadata.os == 'ubuntu-latest' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15 wabt
@@ -29,6 +73,14 @@ jobs:
           sudo ln -s /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
           sudo ln -s /usr/bin/llvm-ranlib-15 /usr/bin/llvm-ranlib
           sudo ln -s /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
+
+      - name: OS Setup (macOS)
+        if: ${{ startsWith(matrix.metadata.os, 'macos-') }}
+        run: |
+          brew install wabt llvm@15
+          [ -d "/opt/homebrew" ] && echo PATH="/opt/homebrew/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
+          [ ! -d "/opt/homebrew" ] && echo PATH="/usr/local/opt/llvm@15/bin:$PATH" >> $GITHUB_ENV
+          npm i -g wasm-opt pnpm concurrently
 
       - name: Tool Versions
         run: |
@@ -60,9 +112,11 @@ jobs:
           components: "clippy,rustfmt"
 
       - name: Setup Wasmer
+        if: ${{ matrix.metadata.target == 'wasix' }}
         uses: wasmerio/setup-wasmer@v3.1
 
       - name: Download wasix-libc
+        if: ${{ matrix.metadata.target == 'wasix' }}
         uses: dsaltares/fetch-gh-release-asset@1.1.2
         with:
           repo: wasix-org/rust
@@ -70,39 +124,44 @@ jobs:
           target: sysroot/wasix-libc.tar.gz
 
       - name: Unpack wasix-libc
+        if: ${{ matrix.metadata.target == 'wasix' }}
         run: |
           cd sysroot
           tar xzf wasix-libc.tar.gz
 
       - name: Download wasix toolchain
+        if: ${{ matrix.metadata.target == 'wasix' }}
         uses: dsaltares/fetch-gh-release-asset@1.1.2
         with:
           repo: wasix-org/rust
-          file: rust-toolchain-x86_64-unknown-linux-gnu.tar.gz
+          file: ${{ matrix.metadata.wasix-toolchain-release-asset }}
           target: wasix-rust-toolchain/toolchain.tar.gz
 
       - name: Install wasix toolchain
+        if: ${{ matrix.metadata.target == 'wasix' }}
         run: |
           cd wasix-rust-toolchain
           tar xzf toolchain.tar.gz
           chmod +x bin/*
-          chmod +x lib/rustlib/x86_64-unknown-linux-gnu/bin/*
-          chmod +x lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/*
+          chmod +x lib/rustlib/*/bin/*
+          chmod +x lib/rustlib/*/bin/gcc-ld/*
           rustup toolchain link wasix .
 
       - name: Build native
+        if: ${{ matrix.metadata.target == 'native' }}
         run: cargo build --profile release-compact
 
-      - name: Archive build native output
-        uses: actions/upload-artifact@v3
-        with:
-          name: winterjs-linux
-          path: target/release-compact/winterjs
-
-      - name: Build wasm
+      - name: Build wasix
+        if: ${{ matrix.metadata.target == 'wasix' }}
         run: |
           export WASI_SYSROOT=$(pwd)/sysroot/wasix-libc/sysroot32
           bash build.sh
+
+      - name: Archive build
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.metadata.artifact-name }}
+          path: ${{ matrix.metadata.bin-path }}
 
       - name: build test suite JS app
         run: |
@@ -110,17 +169,22 @@ jobs:
           pnpm i
           pnpm run build
 
-      - name: Run API test suite
+      - name: Run API test suite (wasix)
         # note: we're counting on wasmer compiling and running WinterJS faster
         # that cargo builds the test-suite app. This may not be the case forever.
+        if: ${{ matrix.metadata.target == 'wasix' }}
         run: |
           conc --kill-others --success "command-1" \
-            "wasmer run target/wasm32-wasmer-wasi/release/winterjs.wasm --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
+            "wasmer run . --net --mapdir /app:./test-suite/js-test-app/dist -- serve /app/bundle.js" \
             "sleep 10 && cd test-suite && cargo run"
           echo All tests are passing! 🎉
 
-      - name: Archive build wasm output
-        uses: actions/upload-artifact@v3
-        with:
-          name: winterjs-wasm
-          path: target/wasm32-wasmer-wasi/release/winterjs.wasm
+      - name: Run API test suite (native)
+        # note: we're counting on wasmer compiling and running WinterJS faster
+        # that cargo builds the test-suite app. This may not be the case forever.
+        if: ${{ matrix.metadata.target == 'native' }}
+        run: |
+          conc --kill-others --success "command-1" \
+            "./target/release-compact/winterjs serve ./test-suite/js-test-app/dist/bundle.js" \
+            "sleep 10 && cd test-suite && cargo run"
+          echo All tests are passing! 🎉
