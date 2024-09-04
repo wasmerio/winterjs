@@ -32,14 +32,14 @@ static-web-server = { git = "https://github.com/wasix-org/static-web-server", re
 
 ion = { package = "ion", features = [
     "macros",
-], git = "https://github.com/wasmerio/spiderfire.git" }
-ion-proc = { package = "ion-proc", git = "https://github.com/wasmerio/spiderfire.git" }
-runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git", features = ["fetch"]}
-modules = { package = "modules", git = "https://github.com/wasmerio/spiderfire.git" }
-mozjs = { version = "0.14.1", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi-gecko", features = [
+], git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127"}
+ion-proc = { package = "ion-proc", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127" }
+runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127", features = ["fetch"]}
+modules = { package = "modules", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127" }
+mozjs = { version = "0.14.1", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi-gecko-127-0-2-squashed", features = [
     "streams",
 ] }
-mozjs_sys = { version = "0.68.2", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi-gecko" }
+mozjs_sys = { version = "0.68.2", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi-gecko-127-0-2-squashed" }
 
 # for mozjs
 libc = { version = "=0.2.152", git = "https://github.com/wasix-org/libc.git", branch = "v0.2.152" }
