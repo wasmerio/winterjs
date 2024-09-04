@@ -4,7 +4,10 @@ use ion::{
     conversions::ToValue, function_spec, ClassDefinition, Context, Error, ErrorKind, Object, Result,
 };
 use mozjs::{
-    jsapi::{DataView_ClassPtr, UnwrapFloat32Array, UnwrapFloat64Array},
+    jsapi::{
+        DataView_FixedLengthClassPtr, DataView_ResizableClassPtr, UnwrapFloat32Array,
+        UnwrapFloat64Array,
+    },
     typedarray::ArrayBufferView,
 };
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject, JS_InstanceOf};
@@ -22,7 +25,13 @@ fn get_random_values(cx: &Context, array: ArrayBufferView) -> Result<*mut JSObje
             || JS_InstanceOf(
                 cx.as_ptr(),
                 rooted.handle().into(),
-                DataView_ClassPtr,
+                DataView_FixedLengthClassPtr,
+                std::ptr::null_mut(),
+            )
+            || JS_InstanceOf(
+                cx.as_ptr(),
+                rooted.handle().into(),
+                DataView_ResizableClassPtr,
                 std::ptr::null_mut(),
             )
         {

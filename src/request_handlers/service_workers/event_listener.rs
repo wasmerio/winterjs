@@ -4,7 +4,7 @@ use ion::{function_spec, Context, ErrorReport, Function, Object, PermanentHeap, 
 use mozjs_sys::jsapi::{JSFunction, JSFunctionSpec};
 
 thread_local! {
-    static EVENT_CALLBACK: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
+    static EVENT_CALLBACK: RefCell<Option<PermanentHeap<*mut JSFunction>>> = const { RefCell::new(None) };
 }
 
 #[js_fn]

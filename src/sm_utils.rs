@@ -2,10 +2,7 @@ use std::{ffi::OsStr, path::Path};
 
 use anyhow::{anyhow, Context as _};
 use ion::{module::ModuleLoader, Context, ErrorReport};
-use mozjs::{
-    jsapi::WeakRefSpecifier,
-    rust::{JSEngine, JSEngineHandle, RealmOptions},
-};
+use mozjs::rust::{JSEngine, JSEngineHandle, RealmOptions};
 use runtime::{module::StandardModules, Runtime, RuntimeBuilder};
 use self_cell::self_cell;
 
@@ -72,7 +69,6 @@ impl JsApp {
     ) -> Runtime {
         let mut realm_options = RealmOptions::default();
         realm_options.creationOptions_.streams_ = true;
-        realm_options.creationOptions_.weakRefs_ = WeakRefSpecifier::EnabledWithCleanupSome;
         let rt_builder = RuntimeBuilder::<Ml, Std>::new()
             .microtask_queue()
             .macrotask_queue()

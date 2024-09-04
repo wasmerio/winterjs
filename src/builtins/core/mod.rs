@@ -11,11 +11,11 @@ use runtime::module::NativeModule;
 use crate::ion_mk_err;
 
 thread_local! {
-    static CALLBACKS_REGISTERED: RefCell<bool> = RefCell::new(false);
-    static INIT: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
-    static BEFORE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
-    static AFTER: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
-    static RESOLVE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = RefCell::new(None);
+    static CALLBACKS_REGISTERED: RefCell<bool> = const { RefCell::new(false) };
+    static INIT: RefCell<Option<PermanentHeap<*mut JSFunction>>> = const { RefCell::new(None) };
+    static BEFORE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = const { RefCell::new(None) };
+    static AFTER: RefCell<Option<PermanentHeap<*mut JSFunction>>> = const { RefCell::new(None) };
+    static RESOLVE: RefCell<Option<PermanentHeap<*mut JSFunction>>> = const { RefCell::new(None) };
 }
 
 static TRAPS: PromiseLifecycleTraps = PromiseLifecycleTraps {

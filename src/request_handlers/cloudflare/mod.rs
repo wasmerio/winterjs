@@ -31,7 +31,7 @@ mod routes;
 // Still operating under the one-handler-per-thread model. The correct way
 // would to attach this to the context in some way.
 thread_local! {
-    static SWS_OPTS: OnceCell<Arc<SwsRequestHandlerOpts>> = OnceCell::new();
+    static SWS_OPTS: OnceCell<Arc<SwsRequestHandlerOpts>> = const { OnceCell::new() };
 }
 
 #[derive(Clone, Copy)]

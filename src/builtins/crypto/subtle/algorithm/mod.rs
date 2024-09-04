@@ -9,7 +9,10 @@ use super::{
     HeapKeyData,
 };
 
-#[allow(unused_variables)]
+// Some of the functions in this trait have no implementation,
+// so we allow them to be unused for now. Should be removed once
+// more crypto algorithms are implemented.
+#[allow(unused)]
 pub trait CryptoAlgorithm {
     fn name(&self) -> &'static str;
 
