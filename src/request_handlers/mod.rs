@@ -53,6 +53,13 @@ impl UserCode {
             Ok(Self::Module(path))
         }
     }
+
+    pub fn is_module_mode(&self) -> bool {
+        match self {
+            Self::Script { .. } => false,
+            Self::Module(..) | Self::Directory(..) => true,
+        }
+    }
 }
 
 pub struct Request {
@@ -74,14 +81,28 @@ pub struct PendingResponse {
     pub promise: ion::Promise,
 }
 
-#[dyn_clonable::clonable]
-pub trait RequestHandler: Clone + Send + Sync + 'static {
+// A bit of type-state magic to keep everything nice and typed.
+pub trait NewRequestHandler: Clone + Copy + Send + Sync + Unpin + 'static {
+    type InitializedHandler: RequestHandler;
+
     // Registers additional modules required for the handler to work
     fn get_standard_modules(&self) -> Box<dyn ByRefStandardModules>;
 
     /// Evaluate the user script(s) to prepare for request execution.
-    fn evaluate_scripts(&mut self, cx: &Context, code: &UserCode) -> Result<()>;
+    fn evaluate_scripts(self, cx: &Context, code: &UserCode) -> Result<Self::InitializedHandler>;
 
+    /// Evaluate the user script(s) in the context of specialization.
+    /// Implementations of this function should behave mostly similarly
+    /// to evaluate_scripts, except there may be additional restrictions
+    /// on what is considered invalid when specializing.
+    fn specialize_with_scripts(
+        self,
+        cx: &Context,
+        code: &UserCode,
+    ) -> Result<Self::InitializedHandler>;
+}
+
+pub trait RequestHandler: Clone + Copy + Send + Sync + Unpin + 'static {
     /// Start handling the given request.
     fn start_handling_request(
         &mut self,

@@ -50,7 +50,7 @@ pub trait Runner: Send + Sync + Clone + 'static {
         addr: SocketAddr,
         req: http::request::Parts,
         body: hyper::Body,
-    ) -> anyhow::Result<hyper::Response<hyper::Body>>;
+    ) -> hyper::Response<hyper::Body>;
 
     async fn shutdown(&self, timeout: Option<Duration>);
 }
@@ -67,30 +67,6 @@ async fn handle(
     addr: SocketAddr,
     req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
-    let res = match handle_inner(context, addr, req).await {
-        Ok(r) => r,
-        Err(err) => {
-            tracing::error!(error = format!("{err:#?}"), "could not process request");
-
-            hyper::Response::builder()
-                .status(hyper::StatusCode::INTERNAL_SERVER_ERROR)
-                .body(hyper::Body::from(err.to_string()))
-                .unwrap()
-        }
-    };
-
-    Ok(res)
-}
-
-async fn handle_inner(
-    context: AppContext,
-    addr: SocketAddr,
-    req: Request<Body>,
-) -> Result<Response<Body>, anyhow::Error> {
     let (parts, body) = req.into_parts();
-    context
-        .runner
-        .handle(addr, parts, body)
-        .await
-        .context("JavaScript failed")
+    Ok(context.runner.handle(addr, parts, body).await)
 }

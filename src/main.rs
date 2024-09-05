@@ -13,9 +13,8 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::{Parser, ValueEnum};
-use request_handlers::{
-    cloudflare::CloudflareRequestHandler, wintercg::WinterCGRequestHandler, Either, UserCode,
-};
+use js_app::JsApp;
+use request_handlers::{cloudflare, wintercg, Either, NewRequestHandler, UserCode};
 
 use server::BoxedDynRunner;
 use tokio::{join, task::LocalSet};
@@ -46,6 +45,7 @@ macro_rules! js_try {
 }
 
 mod builtins;
+mod js_app;
 mod request_handlers;
 mod runners;
 mod server;
@@ -119,6 +119,12 @@ fn run() -> Result<(), anyhow::Error> {
                 .unwrap();
 
             let user_code = UserCode::from_path(&cmd.js_path, cmd.script)?;
+            let mode = match cmd.mode {
+                Some(m) => m,
+                None => HandlerName::WinterCG,
+            };
+
+            tracing::info!("Starting in {mode:?} mode");
 
             let runner: Either<
                 BoxedDynRunner,
@@ -126,43 +132,41 @@ fn run() -> Result<(), anyhow::Error> {
                     BoxedDynRunner,
                     Pin<Box<dyn runners::inline::InlineRunnerRequestHandlerFuture>>,
                 ),
-            > = match (cmd.mode, cmd.single_threaded) {
-                (Some(HandlerName::Cloudflare), false) => {
-                    tracing::info!("Starting in Cloudflare mode");
-                    Either::Left(Box::new(
-                        runners::single::SingleRunner::new_request_handler(
-                            CloudflareRequestHandler,
+            > = if cmd.single_threaded {
+                fn build_runner(
+                    handler: impl NewRequestHandler,
+                    user_code: &UserCode,
+                ) -> anyhow::Result<(
+                    BoxedDynRunner,
+                    Pin<Box<dyn runners::inline::InlineRunnerRequestHandlerFuture>>,
+                )> {
+                    let js_app =
+                        JsApp::build(handler, 1, user_code).context("Failed to evaluate script")?;
+                    let (runner, future) =
+                        runners::inline::InlineRunner::new_request_handler(js_app);
+                    Ok((Box::new(runner), Box::pin(future)))
+                }
+                Either::Right(match mode {
+                    HandlerName::Cloudflare => build_runner(cloudflare::new_handler(), &user_code)?,
+                    HandlerName::WinterCG => build_runner(wintercg::new_handler(), &user_code)?,
+                })
+            } else {
+                Either::Left(match mode {
+                    HandlerName::Cloudflare => {
+                        Box::new(runners::single::SingleRunner::new_request_handler(
                             cmd.max_js_threads,
+                            cloudflare::new_handler(),
                             user_code,
-                        ),
-                    ))
-                }
-                (Some(HandlerName::Cloudflare), true) => {
-                    tracing::info!("Starting in Cloudflare mode");
-                    let (runner, future) = runners::inline::InlineRunner::new_request_handler(
-                        CloudflareRequestHandler,
-                        user_code,
-                    );
-                    Either::Right((Box::new(runner), Box::pin(future)))
-                }
-                (Some(HandlerName::WinterCG) | None, false) => {
-                    tracing::info!("Starting in WinterCG mode");
-                    Either::Left(Box::new(
-                        runners::single::SingleRunner::new_request_handler(
-                            WinterCGRequestHandler,
+                        ))
+                    }
+                    HandlerName::WinterCG => {
+                        Box::new(runners::single::SingleRunner::new_request_handler(
                             cmd.max_js_threads,
+                            wintercg::new_handler(),
                             user_code,
-                        ),
-                    ))
-                }
-                (Some(HandlerName::WinterCG) | None, true) => {
-                    tracing::info!("Starting in WinterCG mode");
-                    let (runner, future) = runners::inline::InlineRunner::new_request_handler(
-                        WinterCGRequestHandler,
-                        user_code,
-                    );
-                    Either::Right((Box::new(runner), Box::pin(future)))
-                }
+                        ))
+                    }
+                })
             };
 
             #[cfg_attr(target_os = "wasi", allow(unused))]

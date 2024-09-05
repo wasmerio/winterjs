@@ -1,6 +1,7 @@
 use std::{
     cell::OnceCell,
     collections::HashMap,
+    marker::PhantomData,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -13,7 +14,8 @@ use crate::{
 use self::routes::Routes;
 
 use super::{
-    ByRefStandardModules, Either, PendingResponse, ReadyResponse, Request, RequestHandler, UserCode,
+    ByRefStandardModules, Either, NewRequestHandler, PendingResponse, ReadyResponse, Request,
+    RequestHandler, UserCode,
 };
 use anyhow::{bail, Context as _, Result};
 use ion::{ClassDefinition, Context, Function, Object, Promise, TracedHeap, Value};
@@ -35,7 +37,15 @@ thread_local! {
 }
 
 #[derive(Clone, Copy)]
-pub struct CloudflareRequestHandler;
+pub struct New;
+
+#[derive(Clone, Copy)]
+pub struct Initialized;
+
+#[derive(Clone, Copy)]
+pub struct CloudflareRequestHandler<State> {
+    _state: PhantomData<State>,
+}
 
 enum CloudflareRequestHandlerMode {
     // This mode gets picked if we get a file or a directory with a _worker.js
@@ -63,79 +73,20 @@ struct CloudflareCodeModule {
     fetch_function: Option<TracedHeap<*mut JSFunction>>,
 }
 
-impl CloudflareRequestHandler {
-    fn get_private(cx: &Context) -> anyhow::Result<&CloudflareRequestHandlerPrivate> {
-        if unsafe { cx.get_private() }.app_data.is_none() {
-            bail!("Internal error: evaluate_scripts should be called before using CloudflareRequestHandler");
-        }
-
-        Ok(unsafe { cx.get_app_data::<CloudflareRequestHandlerPrivate>() })
-    }
-
-    fn build_sws_request_handler(path: impl AsRef<Path>) {
-        SWS_OPTS.with(move |s| {
-            s.get_or_init(|| {
-                let path = path.as_ref().to_path_buf();
-
-                Arc::new(static_web_server::handler::RequestHandlerOpts {
-                    advanced_opts: None,
-                    basic_auth: String::new(),
-                    // TODO: have WinterJS-themed defaults
-                    page404: std::fs::read(path.join("404.html")).unwrap_or_default(),
-                    page50x: std::fs::read(path.join("500.html")).unwrap_or_default(),
-                    page_fallback: std::fs::read(path.join("_fallback.html")).unwrap_or_default(),
-                    // We need to allow hidden paths if the root path itself is
-                    // hidden, otherwise every response is a 404
-                    ignore_hidden_files: !path.is_hidden(),
-                    root_dir: path,
-                    compression: true,
-                    compression_static: false,
-                    dir_listing: false,
-                    dir_listing_format: static_web_server::directory_listing::DirListFmt::Html,
-                    dir_listing_order: 0,
-                    cache_control_headers: true,
-                    cors: None,
-                    log_remote_address: false,
-                    redirect_trailing_slash: false,
-                    security_headers: true,
-                })
-            });
-        })
-    }
-
-    fn get_sws_request_handler() -> ion::Result<SwsRequestHandler> {
-        SWS_OPTS.with(|h| {
-            Ok(SwsRequestHandler {
-                opts: h
-                    .get()
-                    .ok_or_else(|| {
-                        ion_mk_err!(
-                            "To allow static files to be served, WinterJS must be run \
-                            with the JS_PATH argument pointing to a directory",
-                            Normal
-                        )
-                    })?
-                    .clone(),
-            })
-        })
-    }
-
-    async fn serve_static_file(req: Request) -> ion::Result<hyper::Response<hyper::Body>> {
-        let mut hyper_req = hyper::Request::from_parts(req.parts, req.body);
-        let response = Self::get_sws_request_handler()?
-            .handle(&mut hyper_req, None)
-            .await;
-        response
-            .map_err(|e| ion_mk_err!(format!("Failed to fetch static asset due to: {e}"), Normal))
+pub fn new_handler() -> CloudflareRequestHandler<New> {
+    CloudflareRequestHandler::<New> {
+        _state: PhantomData,
     }
 }
 
-impl RequestHandler for CloudflareRequestHandler {
+impl NewRequestHandler for CloudflareRequestHandler<New> {
+    type InitializedHandler = CloudflareRequestHandler<Initialized>;
+
     fn get_standard_modules(&self) -> Box<dyn super::ByRefStandardModules> {
         Box::new(CloudflareStandardModules)
     }
 
-    fn evaluate_scripts(&mut self, cx: &Context, code: &UserCode) -> Result<()> {
+    fn evaluate_scripts(self, cx: &Context, code: &UserCode) -> Result<Self::InitializedHandler> {
         if unsafe { cx.get_private() }.app_data.is_some() {
             bail!("Internal error: evaluate_scripts should only be called once");
         }
@@ -172,7 +123,7 @@ impl RequestHandler for CloudflareRequestHandler {
                             "_routes.json file not found, all requests will be routed to _worker.js"
                         );
                     }
-                    Self::build_sws_request_handler(path);
+                    build_sws_request_handler(path);
                     private = CloudflareRequestHandlerPrivate {
                         mode: SingleSourceFile,
                         modules: [(PathBuf::new(), eval_module(cx, worker_js_path)?)]
@@ -190,15 +141,51 @@ impl RequestHandler for CloudflareRequestHandler {
         let private: Box<dyn std::any::Any> = Box::<CloudflareRequestHandlerPrivate>::new(private);
         cx.set_app_data(private);
 
-        Ok(())
+        Ok(CloudflareRequestHandler::<Initialized> {
+            _state: PhantomData,
+        })
     }
 
+    fn specialize_with_scripts(
+        self,
+        cx: &Context,
+        code: &UserCode,
+    ) -> Result<Self::InitializedHandler> {
+        if unsafe { cx.get_private() }.app_data.is_some() {
+            bail!("Internal error: evaluate_scripts should only be called once");
+        }
+
+        let private = match code {
+            UserCode::Script { code, file_name } => {
+                sm_utils::evaluate_script(cx, code, file_name)?;
+                // Note: can't use exports in script mode, so the only option is
+                // an event handler
+                CloudflareRequestHandlerPrivate {
+                    mode: SingleSourceFile,
+                    modules: Default::default(),
+                    routes: None,
+                }
+            }
+
+            _ => bail!("Modules cannot be specialized yet"),
+        };
+
+        let private: Box<dyn std::any::Any> = Box::<CloudflareRequestHandlerPrivate>::new(private);
+        cx.set_app_data(private);
+
+        Ok(CloudflareRequestHandler::<Initialized> {
+            _state: PhantomData,
+        })
+    }
+}
+
+impl RequestHandler for CloudflareRequestHandler<Initialized> {
     fn start_handling_request(
         &mut self,
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
-        let private = Self::get_private(&cx)?;
+        let private = get_private(&cx)?;
 
         if let Some(ref routes) = private.routes {
             if !routes.should_route_to_function(request.parts.uri.path()) {
@@ -209,8 +196,7 @@ impl RequestHandler for CloudflareRequestHandler {
                                 ion_mk_err!(format!("Failed to parse request URI: {e}"), Normal)
                             })?;
                             let url = url::Url::parse(uri.to_string().as_str())?;
-                            let (cx, response) =
-                                cx.await_native(Self::serve_static_file(request)).await;
+                            let (cx, response) = cx.await_native(serve_static_file(request)).await;
                             let response = response.map_err(|e| {
                                 ion_mk_err!(
                                     format!("Failed to fetch static asset due to {e}"),
@@ -363,4 +349,68 @@ fn build_response(cx: &Context, result: Object) -> Result<Either<PendingResponse
     } else {
         bail!("Script error: Unsupported object received, must be an instance of Response")
     }
+}
+
+fn get_private(cx: &Context) -> anyhow::Result<&CloudflareRequestHandlerPrivate> {
+    if unsafe { cx.get_private() }.app_data.is_none() {
+        bail!("Internal error: evaluate_scripts should be called before using CloudflareRequestHandler");
+    }
+
+    Ok(unsafe { cx.get_app_data::<CloudflareRequestHandlerPrivate>() })
+}
+
+fn build_sws_request_handler(path: impl AsRef<Path>) {
+    SWS_OPTS.with(move |s| {
+        s.get_or_init(|| {
+            let path = path.as_ref().to_path_buf();
+
+            Arc::new(static_web_server::handler::RequestHandlerOpts {
+                advanced_opts: None,
+                basic_auth: String::new(),
+                // TODO: have WinterJS-themed defaults
+                page404: std::fs::read(path.join("404.html")).unwrap_or_default(),
+                page50x: std::fs::read(path.join("500.html")).unwrap_or_default(),
+                page_fallback: std::fs::read(path.join("_fallback.html")).unwrap_or_default(),
+                // We need to allow hidden paths if the root path itself is
+                // hidden, otherwise every response is a 404
+                ignore_hidden_files: !path.is_hidden(),
+                root_dir: path,
+                compression: true,
+                compression_static: false,
+                dir_listing: false,
+                dir_listing_format: static_web_server::directory_listing::DirListFmt::Html,
+                dir_listing_order: 0,
+                cache_control_headers: true,
+                cors: None,
+                log_remote_address: false,
+                redirect_trailing_slash: false,
+                security_headers: true,
+            })
+        });
+    })
+}
+
+fn get_sws_request_handler() -> ion::Result<SwsRequestHandler> {
+    SWS_OPTS.with(|h| {
+        Ok(SwsRequestHandler {
+            opts: h
+                .get()
+                .ok_or_else(|| {
+                    ion_mk_err!(
+                        "To allow static files to be served, WinterJS must be run \
+                            with the JS_PATH argument pointing to a directory",
+                        Normal
+                    )
+                })?
+                .clone(),
+        })
+    })
+}
+
+async fn serve_static_file(req: Request) -> ion::Result<hyper::Response<hyper::Body>> {
+    let mut hyper_req = hyper::Request::from_parts(req.parts, req.body);
+    let response = get_sws_request_handler()?
+        .handle(&mut hyper_req, None)
+        .await;
+    response.map_err(|e| ion_mk_err!(format!("Failed to fetch static asset due to: {e}"), Normal))
 }

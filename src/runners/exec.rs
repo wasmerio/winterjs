@@ -5,7 +5,8 @@ use tokio::task::LocalSet;
 
 use crate::{
     builtins,
-    sm_utils::{error_report_option_to_anyhow_error, evaluate_module, evaluate_script, JsApp},
+    js_app::JsAppContextAndRuntime,
+    sm_utils::{error_report_option_to_anyhow_error, evaluate_module, evaluate_script},
 };
 
 async fn exec_script_inner(path: impl AsRef<Path>, script_mode: bool) -> Result<()> {
@@ -15,9 +16,9 @@ async fn exec_script_inner(path: impl AsRef<Path>, script_mode: bool) -> Result<
         hardware_concurrency: 1,
     };
 
-    let js_app = JsApp::build(module_loader, Some(standard_modules));
-    let cx = js_app.cx();
-    let rt = js_app.rt();
+    let cx_rt = JsAppContextAndRuntime::build(module_loader, Some(standard_modules));
+    let cx = cx_rt.cx();
+    let rt = cx_rt.rt();
 
     if script_mode {
         let code = std::fs::read_to_string(&path).context("Failed to read script file")?;

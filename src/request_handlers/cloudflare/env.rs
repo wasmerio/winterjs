@@ -130,9 +130,7 @@ impl EnvAssets {
                 let request = super::super::Request { parts, body };
 
                 let url = url::Url::parse(request.parts.uri.to_string().as_str())?;
-                let (cx, response) = cx
-                    .await_native(super::CloudflareRequestHandler::serve_static_file(request))
-                    .await;
+                let (cx, response) = cx.await_native(super::serve_static_file(request)).await;
                 let response = response.map_err(|e| {
                     ion_mk_err!(format!("Failed to fetch static asset due to {e}"), Normal)
                 })?;

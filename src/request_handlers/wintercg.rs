@@ -1,21 +1,40 @@
+use std::marker::PhantomData;
+
 use anyhow::{bail, Result};
 use ion::{Context, Object, Value};
 
 use crate::sm_utils;
 
 use super::{
-    ByRefStandardModules, Either, PendingResponse, ReadyResponse, Request, RequestHandler, UserCode,
+    ByRefStandardModules, Either, NewRequestHandler, PendingResponse, ReadyResponse, Request,
+    RequestHandler, UserCode,
 };
 
 #[derive(Clone, Copy)]
-pub struct WinterCGRequestHandler;
+pub struct New;
 
-impl RequestHandler for WinterCGRequestHandler {
+#[derive(Clone, Copy)]
+pub struct Initialized;
+
+#[derive(Clone, Copy)]
+pub struct WinterCGRequestHandler<State> {
+    _state: PhantomData<State>,
+}
+
+pub fn new_handler() -> WinterCGRequestHandler<New> {
+    WinterCGRequestHandler::<New> {
+        _state: PhantomData,
+    }
+}
+
+impl NewRequestHandler for WinterCGRequestHandler<New> {
+    type InitializedHandler = WinterCGRequestHandler<Initialized>;
+
     fn get_standard_modules(&self) -> Box<dyn ByRefStandardModules> {
         Box::new(WinterCGStandardModules)
     }
 
-    fn evaluate_scripts(&mut self, cx: &Context, code: &UserCode) -> Result<()> {
+    fn evaluate_scripts(self, cx: &Context, code: &UserCode) -> Result<Self::InitializedHandler> {
         match code {
             UserCode::Script { code, file_name } => {
                 sm_utils::evaluate_script(cx, code, file_name)?;
@@ -26,9 +45,30 @@ impl RequestHandler for WinterCGRequestHandler {
             UserCode::Directory(_) => bail!("WinterCG mode does not support directories"),
         };
 
-        Ok(())
+        Ok(WinterCGRequestHandler::<Initialized> {
+            _state: PhantomData,
+        })
     }
 
+    fn specialize_with_scripts(
+        self,
+        cx: &Context,
+        code: &UserCode,
+    ) -> Result<Self::InitializedHandler> {
+        match code {
+            UserCode::Script { code, file_name } => {
+                sm_utils::evaluate_script(cx, code, file_name)?;
+            }
+            _ => bail!("Modules cannot be specialized yet"),
+        };
+
+        Ok(WinterCGRequestHandler::<Initialized> {
+            _state: PhantomData,
+        })
+    }
+}
+
+impl RequestHandler for WinterCGRequestHandler<Initialized> {
     fn start_handling_request(
         &mut self,
         cx: Context,

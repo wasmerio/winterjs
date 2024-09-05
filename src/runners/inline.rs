@@ -10,12 +10,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use futures::Future;
 use tokio::sync::mpsc;
 
-use crate::request_handlers::{RequestHandler, UserCode};
+use crate::{
+    js_app::JsApp,
+    request_handlers::RequestHandler,
+    runners::{generate_error_response, generate_internal_error},
+};
 
 use super::{
     request_loop::{handle_requests, ControlMessage, RequestData},
@@ -34,8 +37,7 @@ impl<T: Future<Output = ()>> InlineRunnerRequestHandlerFuture for T {}
 
 impl InlineRunner {
     pub fn new_request_handler(
-        handler: impl RequestHandler + Copy + Unpin,
-        user_code: UserCode,
+        js_app: JsApp<impl RequestHandler>,
     ) -> (Self, impl InlineRunnerRequestHandlerFuture) {
         let (tx, rx) = mpsc::unbounded_channel();
         let this = Self {
@@ -44,7 +46,7 @@ impl InlineRunner {
         };
         let finished_clone = this.finished.clone();
         let fut = async move {
-            handle_requests(handler, user_code, rx, 1).await;
+            handle_requests(js_app, rx).await;
             // Remember, we're running single-threaded, so no need
             // for any specific ordering logic.
             finished_clone.store(true, Ordering::Relaxed);
@@ -60,25 +62,42 @@ impl crate::server::Runner for InlineRunner {
         _addr: std::net::SocketAddr,
         req: http::request::Parts,
         body: hyper::Body,
-    ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
+    ) -> hyper::Response<hyper::Body> {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
-        self.channel.send(ControlMessage::HandleRequest(
+        if let Err(e) = self.channel.send(ControlMessage::HandleRequest(
             RequestData { _addr, req, body },
             tx,
-        ))?;
+        )) {
+            tracing::error!(?e, "Failed to send control message to inline worker");
+            return generate_internal_error();
+        };
 
-        let response = rx.await?;
+        let response = match rx.await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(?e, "Failed to receive response from inline worker");
+                return generate_internal_error();
+            }
+        };
 
-        // TODO: handle script errors
         match response {
-            ResponseData::Done(resp) => Ok(resp),
-            ResponseData::RequestError(err) => Err(err),
-            ResponseData::ScriptError(err) => {
-                if let Some(err) = err {
-                    println!("{err:?}");
+            ResponseData::Done(resp) => resp,
+            ResponseData::RequestError(err) => {
+                tracing::error!(?err, "Script error");
+                // TODO: this should be a CLI switch
+                #[cfg(debug_assertions)]
+                {
+                    generate_error_response(500, format!("{err:?}").into())
                 }
-                Err(anyhow!("Error encountered while evaluating user script"))
+                #[cfg(not(debug_assertions))]
+                {
+                    generate_error_response(500, "Script execution failed")
+                }
+            }
+            ResponseData::InternalError(err) => {
+                tracing::error!(?err, "Internal error in worker thread");
+                generate_internal_error()
             }
         }
     }

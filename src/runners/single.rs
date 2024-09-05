@@ -8,13 +8,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use tokio::{sync::Mutex, task::LocalSet};
 
 use crate::{
-    request_handlers::{RequestHandler, UserCode},
-    runners::{request_loop::handle_requests, ResponseData},
+    js_app::JsApp,
+    request_handlers::{NewRequestHandler, UserCode},
+    runners::{
+        generate_error_response, generate_internal_error, request_loop::handle_requests,
+        ResponseData,
+    },
 };
 
 use super::request_loop::{ControlMessage, RequestData};
@@ -32,18 +35,19 @@ impl WorkerThreadInfo {
 }
 
 // TODO: replace failing threads
-pub struct SingleRunner<H: RequestHandler + Copy + Unpin> {
+pub struct SingleRunner<N: NewRequestHandler> {
     threads: Vec<WorkerThreadInfo>,
     max_threads: usize,
-    handler: H,
-    user_code: UserCode,
     shut_down: bool,
+    new_handler: N,
+    user_code: UserCode,
+    script_init_error: Option<anyhow::Error>,
 }
 
-pub type SharedSingleRunner<H> = Arc<Mutex<SingleRunner<H>>>;
+pub type SharedSingleRunner<N> = Arc<Mutex<SingleRunner<N>>>;
 
-impl<H: RequestHandler + Copy + Unpin> SingleRunner<H> {
-    pub fn new(max_threads: usize, handler: H, user_code: UserCode) -> Self {
+impl<N: NewRequestHandler> SingleRunner<N> {
+    pub fn new(max_threads: usize, new_handler: N, user_code: UserCode) -> Self {
         if max_threads == 0 {
             panic!("max_threads must be at least 1");
         }
@@ -51,37 +55,57 @@ impl<H: RequestHandler + Copy + Unpin> SingleRunner<H> {
         Self {
             threads: vec![],
             max_threads,
-            handler,
-            user_code,
             shut_down: false,
+            new_handler,
+            user_code,
+            script_init_error: None,
         }
     }
 
     pub fn new_request_handler(
-        handler: H,
         max_threads: usize,
+        new_handler: N,
         user_code: UserCode,
-    ) -> SharedSingleRunner<H> {
-        Arc::new(Mutex::new(Self::new(max_threads, handler, user_code)))
+    ) -> SharedSingleRunner<N> {
+        Arc::new(Mutex::new(Self::new(max_threads, new_handler, user_code)))
     }
 
-    fn spawn_thread(&mut self) -> &WorkerThreadInfo {
+    async fn spawn_thread(&mut self) -> anyhow::Result<&WorkerThreadInfo> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let handler = self.handler;
+        let (init_tx, init_rx) = tokio::sync::oneshot::channel();
+
+        let new_handler = self.new_handler;
         let user_code = self.user_code.clone();
-        let max_threads = self.max_threads;
+        let concurrency = self.max_threads as u32;
+
         let join_handle = std::thread::spawn(move || {
+            let app = match JsApp::build(new_handler, concurrency, &user_code) {
+                Ok(app) => {
+                    init_tx.send(Ok(())).expect("spawn_thread dropped dead");
+                    app
+                }
+                Err(e) => {
+                    init_tx.send(Err(e)).expect("spawn_thread dropped dead");
+                    return;
+                }
+            };
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap()
                 .block_on(async move {
                     let local_set = LocalSet::new();
-                    local_set
-                        .run_until(handle_requests(handler, user_code, rx, max_threads as u32))
-                        .await
+                    local_set.run_until(handle_requests(app, rx)).await
                 })
         });
+
+        // Catch script parsing/evaluation errors and report them
+        match init_rx.await {
+            Err(_) => panic!("New request handler thread disappeared!"),
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok(())) => (),
+        }
+
         let worker = WorkerThreadInfo {
             thread: join_handle,
             channel: tx,
@@ -90,10 +114,10 @@ impl<H: RequestHandler + Copy + Unpin> SingleRunner<H> {
         self.threads.push(worker);
         let spawned_index = self.threads.len() - 1;
         tracing::debug!("Starting new handler thread #{spawned_index}");
-        &self.threads[spawned_index]
+        Ok(&self.threads[spawned_index])
     }
 
-    fn find_or_spawn_thread(&mut self) -> Option<&WorkerThreadInfo> {
+    async fn find_or_spawn_thread(&mut self) -> Option<anyhow::Result<&WorkerThreadInfo>> {
         if self.shut_down {
             return None;
         }
@@ -115,14 +139,14 @@ impl<H: RequestHandler + Copy + Unpin> SingleRunner<H> {
         for t in &request_counts {
             if t.1 <= 0 {
                 tracing::debug!("Using idle handler thread #{}", t.0);
-                return Some(&self.threads[t.0]);
+                return Some(Ok(&self.threads[t.0]));
             }
         }
 
         // Step 2: can we spawn a new thread?
         if self.threads.len() < self.max_threads {
             tracing::debug!("Spawning new request handler thread");
-            return Some(self.spawn_thread());
+            return Some(self.spawn_thread().await);
         }
 
         // Step 3: find the thread with the least active requests
@@ -135,25 +159,39 @@ impl<H: RequestHandler + Copy + Unpin> SingleRunner<H> {
                 .in_flight_requests
                 .load(std::sync::atomic::Ordering::SeqCst)
         );
-        Some(&self.threads[min.0])
+        Some(Ok(&self.threads[min.0]))
     }
 }
 
 #[async_trait]
-impl<H: RequestHandler + Copy + Unpin> crate::server::Runner for SharedSingleRunner<H> {
+impl<N: NewRequestHandler> crate::server::Runner for SharedSingleRunner<N> {
     async fn handle(
         &self,
         _addr: std::net::SocketAddr,
         req: http::request::Parts,
         body: hyper::Body,
-    ) -> Result<hyper::Response<hyper::Body>, anyhow::Error> {
+    ) -> hyper::Response<hyper::Body> {
+        // TODO: I believe this lock can be a serious contention point,
+        // we should find a different way to handle things here. Maybe
+        // a work-stealing queue? A multi-consumer message broadcaster?
+        // Any such approach would also need a way to keep the workers
+        // handling similar amounts of load.
         let mut this = self.lock().await;
-        let Some(thread) = this.find_or_spawn_thread() else {
-            let response = hyper::Response::builder()
-                .status(503)
-                .body(hyper::Body::from("Server is shutting down"))
-                .expect("Failed to construct 503 response");
-            return Ok(response);
+
+        if this.script_init_error.is_some() {
+            return generate_error_response(500, "Scripts failed to initialize".into());
+        }
+
+        let thread = match this.find_or_spawn_thread().await {
+            None => {
+                return generate_error_response(503, "Server is shutting down".into());
+            }
+            Some(Err(e)) => {
+                tracing::error!(?e, "Error in initial script evaluation");
+                this.script_init_error = Some(e);
+                return generate_error_response(500, "Scripts failed to initialize".into());
+            }
+            Some(Ok(thread)) => thread,
         };
 
         let request_count = thread.in_flight_requests.clone();
@@ -161,27 +199,44 @@ impl<H: RequestHandler + Copy + Unpin> crate::server::Runner for SharedSingleRun
 
         let (tx, rx) = tokio::sync::oneshot::channel();
 
-        thread.channel.send(ControlMessage::HandleRequest(
+        if let Err(e) = thread.channel.send(ControlMessage::HandleRequest(
             RequestData { _addr, req, body },
             tx,
-        ))?;
+        )) {
+            tracing::error!(?e, "Failed to send control message to worker thread");
+            return generate_internal_error();
+        };
 
         // explicitly drop mutex guard to unlock mutex
         drop(this);
 
-        let response = rx.await?;
+        let response = match rx.await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(?e, "Failed to receive response from worker thread");
+                return generate_internal_error();
+            }
+        };
 
         drop(increment_guard);
 
-        // TODO: handle script errors
         match response {
-            ResponseData::Done(resp) => Ok(resp),
-            ResponseData::RequestError(err) => Err(err),
-            ResponseData::ScriptError(err) => {
-                if let Some(err) = err {
-                    println!("{err:?}");
+            ResponseData::Done(resp) => resp,
+            ResponseData::RequestError(err) => {
+                tracing::error!(?err, "Script error");
+                // TODO: this should be a CLI switch
+                #[cfg(debug_assertions)]
+                {
+                    generate_error_response(500, format!("{err:?}").into())
                 }
-                Err(anyhow!("Error encountered while evaluating user script"))
+                #[cfg(not(debug_assertions))]
+                {
+                    generate_error_response(500, "Script execution failed")
+                }
+            }
+            ResponseData::InternalError(err) => {
+                tracing::error!(?err, "Internal error in worker thread");
+                generate_internal_error()
             }
         }
     }

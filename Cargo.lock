@@ -1798,7 +1798,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#f644a812493e72b3c2cccd8f6b1f0a8b50d19dde"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#75c1e9db0bb953f101c928336ec729c57efa0f9e"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -1824,7 +1824,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#f644a812493e72b3c2cccd8f6b1f0a8b50d19dde"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#75c1e9db0bb953f101c928336ec729c57efa0f9e"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -2046,7 +2046,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#f644a812493e72b3c2cccd8f6b1f0a8b50d19dde"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#75c1e9db0bb953f101c928336ec729c57efa0f9e"
 dependencies = [
  "bytes",
  "futures",
@@ -2063,7 +2063,7 @@ dependencies = [
 [[package]]
 name = "mozjs"
 version = "0.14.1"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko-127-0-2-squashed#2b4e7458d5b9d1c29a54b3bb9a4063b416ba3b27"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko-127-0-2-squashed#56370eb5df28bbe54cf5820712e4174c02dd3d0d"
 dependencies = [
  "bindgen",
  "cc",
@@ -2077,7 +2077,7 @@ dependencies = [
 [[package]]
 name = "mozjs_sys"
 version = "0.68.2"
-source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko-127-0-2-squashed#2b4e7458d5b9d1c29a54b3bb9a4063b416ba3b27"
+source = "git+https://github.com/wasmerio/mozjs.git?branch=wasi-gecko-127-0-2-squashed#56370eb5df28bbe54cf5820712e4174c02dd3d0d"
 dependencies = [
  "bindgen",
  "cc",
@@ -2570,7 +2570,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#f644a812493e72b3c2cccd8f6b1f0a8b50d19dde"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#75c1e9db0bb953f101c928336ec729c57efa0f9e"
 dependencies = [
  "as-any",
  "async-recursion",

@@ -5,10 +5,10 @@ use mozjs::{jsapi::JSContext, jsval::JSVal};
 use tokio::{select, sync::oneshot};
 
 use crate::{
-    builtins,
-    request_handlers::{Either, Request, RequestHandler, UserCode},
+    js_app::JsApp,
+    request_handlers::{Either, Request, RequestHandler},
     runners::ResponseData,
-    sm_utils::{error_report_option_to_anyhow_error, JsApp, TwoStandardModules},
+    sm_utils::error_report_option_to_anyhow_error,
 };
 
 use super::{
@@ -43,66 +43,25 @@ impl std::fmt::Debug for ControlMessage {
 // there really isn't anything we can do
 fn ignore_error<E>(_r: std::result::Result<(), E>) {}
 
-pub(super) async fn handle_requests<H: RequestHandler + Copy + Unpin>(
-    handler: H,
-    user_code: UserCode,
+pub(super) async fn handle_requests<H: RequestHandler>(
+    js_app: JsApp<H>,
     mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
-    max_request_threads: u32,
 ) {
-    if let Err(e) = handle_requests_inner(handler, user_code, &mut recv, max_request_threads).await
-    {
-        // The request handling logic itself failed, so we send back the error
-        // as long as the thread is alive and shutdown has not been requested.
-        // This lets us report the error. The runner can shut us down as soon
-        // as it discovers the error.
-
-        let mut error = Some(e);
-
-        loop {
-            match recv.recv().await {
-                None | Some(ControlMessage::Shutdown) | Some(ControlMessage::Terminate) => break,
-                Some(ControlMessage::HandleRequest(_, resp_tx)) => {
-                    ignore_error(resp_tx.send(ResponseData::ScriptError(error.take())))
-                }
-            }
-        }
-    }
-}
-
-async fn handle_requests_inner<H: RequestHandler + Copy + Unpin>(
-    mut handler: H,
-    user_code: UserCode,
-    recv: &mut tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
-    max_request_threads: u32,
-) -> Result<(), anyhow::Error> {
-    let is_module_mode = match user_code {
-        UserCode::Script { .. } => false,
-        UserCode::Directory(_) | UserCode::Module(_) => true,
-    };
-
-    let module_loader = is_module_mode.then(runtime::module::Loader::default);
-    let standard_modules = TwoStandardModules(
-        builtins::Modules {
-            include_internal: is_module_mode,
-            hardware_concurrency: max_request_threads,
-        },
-        handler.get_standard_modules(),
-    );
-
-    let js_app = JsApp::build(module_loader, Some(standard_modules));
     let cx = js_app.cx();
     let rt = js_app.rt();
-    let mut event_loop_stream = EventLoopStream { app: &js_app };
-
-    handler.evaluate_scripts(cx, &user_code)?;
+    let mut event_loop_stream = EventLoopStream {
+        cx_rt: &js_app.context_and_runtime,
+    };
 
     // Wait for any promises resulting from running the script to be resolved, giving
     // scripts a chance to initialize before accepting requests
     // Note we will return the error here if one happens, since an error happening
     // in this stage means the script didn't initialize successfully.
-    rt.run_event_loop()
-        .await
-        .map_err(|e| error_report_option_to_anyhow_error(cx, e))?;
+
+    // TODO: MOVE THIS TO JS APP! -> JsApp::warmup() ?
+    // rt.run_event_loop()
+    //     .await
+    //     .map_err(|e| error_report_option_to_anyhow_error(cx, e))?;
 
     let mut request_queue = RequestQueue::new(cx);
 
@@ -121,17 +80,17 @@ async fn handle_requests_inner<H: RequestHandler + Copy + Unpin>(
                     },
                     Some(ControlMessage::Terminate) => {
                         request_queue.cancel_all(RequestCancelledReason::ServerShuttingDown);
-                        return Ok(());
+                        return ;
                     }
                     Some(ControlMessage::HandleRequest(req, resp_tx)) => {
                         if shutdown_requested {
-                            ignore_error(resp_tx.send(ResponseData::ScriptError(Some(
+                            ignore_error(resp_tx.send(ResponseData::InternalError(
                                 anyhow!("New request received after shutdown requested")
-                            ))));
+                            )));
                         } else {
                             handle_new_request(
                                 cx,
-                                handler,
+                                js_app.request_handler,
                                 &mut request_queue,
                                 req,
                                 resp_tx
@@ -164,8 +123,6 @@ async fn handle_requests_inner<H: RequestHandler + Copy + Unpin>(
             }
         }
     }
-
-    Ok(())
 }
 
 fn handle_new_request<H: RequestHandler + Copy + Unpin>(
