@@ -56,7 +56,7 @@ impl InlineRunner {
 }
 
 #[async_trait]
-impl crate::server::Runner for InlineRunner {
+impl super::Runner for InlineRunner {
     async fn handle(
         &self,
         _addr: std::net::SocketAddr,
@@ -92,7 +92,7 @@ impl crate::server::Runner for InlineRunner {
                 }
                 #[cfg(not(debug_assertions))]
                 {
-                    generate_error_response(500, "Script execution failed")
+                    generate_error_response(500, "Script execution failed".into())
                 }
             }
             ResponseData::InternalError(err) => {

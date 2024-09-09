@@ -1,4 +1,8 @@
-use std::{ffi::OsString, path::PathBuf, pin::Pin};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    pin::Pin,
+};
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use futures::Future;
@@ -28,7 +32,7 @@ pub enum UserCode {
 }
 
 impl UserCode {
-    pub fn from_path(path: &PathBuf, script_mode: bool) -> anyhow::Result<Self> {
+    pub fn from_path(path: &Path, script_mode: bool) -> anyhow::Result<Self> {
         let path = runtime::wasi_polyfills::canonicalize(path)
             .context("Failed to canonicalize root module path")?;
         let path_metadata =

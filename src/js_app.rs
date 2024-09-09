@@ -1,5 +1,5 @@
 use ion::{module::ModuleLoader, Context};
-use mozjs::rust::RealmOptions;
+use mozjs::{jsapi::ReadOnlyCompileOptions, rust::RealmOptions};
 use runtime::{
     module::{Loader, StandardModules},
     Runtime, RuntimeBuilder,
@@ -27,6 +27,11 @@ self_cell!(
     }
 );
 
+fn compile_options(options: &mut ReadOnlyCompileOptions) {
+    options._base.eagerDelazificationStrategy_ =
+        mozjs::jsapi::DelazificationOption::ParseEverythingEagerly;
+}
+
 impl JsAppContextAndRuntime {
     pub fn build<Ml: ModuleLoader + 'static, Std: StandardModules + 'static>(
         loader: Option<Ml>,
@@ -34,6 +39,21 @@ impl JsAppContextAndRuntime {
     ) -> Self {
         let rt = mozjs::rust::Runtime::new(crate::sm_utils::ENGINE.clone());
         let cx = Context::from_runtime(&rt);
+        unsafe {
+            mozjs::jsapi::JS_SetGlobalJitCompilerOption(
+                cx.as_ptr(),
+                mozjs::jsapi::JSJitCompilerOption::JSJITCOMPILER_PORTABLE_BASELINE_ENABLE,
+                1,
+            );
+            mozjs::jsapi::JS_SetGlobalJitCompilerOption(
+                cx.as_ptr(),
+                mozjs::jsapi::JSJitCompilerOption::JSJITCOMPILER_PORTABLE_BASELINE_WARMUP_THRESHOLD,
+                0,
+            );
+            // TODO: why do this?
+            // mozjs::jsapi::DisableIncrementalGC(cx.as_ptr());
+        }
+        cx.set_modify_compile_options_callback(Some(compile_options));
         let wrapper = ContextWrapper { _rt: rt, cx };
         Self::new(wrapper, |w| Self::create_runtime(w, loader, modules))
     }
@@ -95,17 +115,15 @@ impl<Handler: RequestHandler> JsApp<Handler> {
         })
     }
 
-    pub fn build_specialized<
-        NewHandler: NewRequestHandler<InitializedHandler = Handler> + 'static,
-        Ml: ModuleLoader + 'static,
-        Std: StandardModules + 'static,
-    >(
+    pub fn build_specialized<NewHandler: NewRequestHandler<InitializedHandler = Handler>>(
         new_handler: NewHandler,
-        loader: Option<Ml>,
-        modules: Option<Std>,
+        hardware_concurrency: u32,
         code: &UserCode,
     ) -> anyhow::Result<Self> {
-        let cx_and_rt = JsAppContextAndRuntime::build(loader, modules);
+        let modules =
+            JsAppModules::for_handler(&new_handler, code.is_module_mode(), hardware_concurrency);
+        let cx_and_rt =
+            JsAppContextAndRuntime::build(modules.module_loader, Some(modules.standard_modules));
         let request_handler =
             new_handler.specialize_with_scripts(cx_and_rt.borrow_dependent().cx(), code)?;
         Ok(Self {

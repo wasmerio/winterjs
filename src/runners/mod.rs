@@ -1,3 +1,7 @@
+use std::{net::SocketAddr, time::Duration};
+
+use async_trait::async_trait;
+
 mod event_loop_stream;
 pub mod exec;
 pub mod inline;
@@ -5,6 +9,21 @@ mod request_loop;
 mod request_queue;
 pub mod single;
 pub mod watch;
+
+#[async_trait]
+#[dyn_clonable::clonable]
+pub trait Runner: Send + Sync + Clone + 'static {
+    async fn handle(
+        &self,
+        addr: SocketAddr,
+        req: http::request::Parts,
+        body: hyper::Body,
+    ) -> hyper::Response<hyper::Body>;
+
+    async fn shutdown(&self, timeout: Option<Duration>);
+}
+
+pub type BoxedDynRunner = Box<dyn Runner>;
 
 #[derive(Debug)]
 pub enum ResponseData {

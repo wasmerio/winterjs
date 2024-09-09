@@ -1,12 +1,12 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use anyhow::Context as _;
-use async_trait::async_trait;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
+
+use crate::runners::BoxedDynRunner;
 
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -15,10 +15,10 @@ pub struct ServerConfig {
 
 pub async fn run_server(
     config: ServerConfig,
-    handler: BoxedDynRunner,
+    runner: BoxedDynRunner,
     shutdown_signal: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
-    let context = AppContext { runner: handler };
+    let context = AppContext { runner };
 
     let make_service = make_service_fn(move |conn: &AddrStream| {
         let context = context.clone();
@@ -41,21 +41,6 @@ pub async fn run_server(
         .await
         .context("hyper server failed")
 }
-
-#[async_trait]
-#[dyn_clonable::clonable]
-pub trait Runner: Send + Sync + Clone + 'static {
-    async fn handle(
-        &self,
-        addr: SocketAddr,
-        req: http::request::Parts,
-        body: hyper::Body,
-    ) -> hyper::Response<hyper::Body>;
-
-    async fn shutdown(&self, timeout: Option<Duration>);
-}
-
-pub type BoxedDynRunner = Box<dyn Runner>;
 
 #[derive(Clone)]
 struct AppContext {

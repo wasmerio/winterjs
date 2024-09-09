@@ -164,7 +164,7 @@ impl<N: NewRequestHandler> SingleRunner<N> {
 }
 
 #[async_trait]
-impl<N: NewRequestHandler> crate::server::Runner for SharedSingleRunner<N> {
+impl<N: NewRequestHandler> super::Runner for SharedSingleRunner<N> {
     async fn handle(
         &self,
         _addr: std::net::SocketAddr,
@@ -231,7 +231,7 @@ impl<N: NewRequestHandler> crate::server::Runner for SharedSingleRunner<N> {
                 }
                 #[cfg(not(debug_assertions))]
                 {
-                    generate_error_response(500, "Script execution failed")
+                    generate_error_response(500, "Script execution failed".into())
                 }
             }
             ResponseData::InternalError(err) => {
