@@ -54,6 +54,10 @@ fn initialize() {
         std::sync::atomic::Ordering::Relaxed,
     );
 
+    runtime::config::CONFIG
+        .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
+        .unwrap();
+
     let file_name = "/app/simple.js"; // TODO
     let mode = HandlerName::WinterCG; // TODO
     let user_code = UserCode::from_path(std::path::Path::new(file_name), true)
@@ -101,10 +105,6 @@ pub fn run_wizened() -> anyhow::Result<()> {
 
     let addr: SocketAddr = (interface, port).into();
     let config = crate::server::ServerConfig { addr };
-
-    runtime::config::CONFIG
-        .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
-        .unwrap();
 
     // The server code needs a signal receiver, but we don't ever actually use it under WASIX
     let (_tx, rx) = tokio::sync::oneshot::channel();
