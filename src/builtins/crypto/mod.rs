@@ -15,6 +15,7 @@ use rand::RngCore;
 
 #[js_fn]
 fn get_random_values(cx: &Context, array: ArrayBufferView) -> Result<*mut JSObject> {
+    panic!("OUUCH!");
     if array.len() > 65536 {
         return Err(Error::new("Quota exceeded", ErrorKind::Normal));
     }

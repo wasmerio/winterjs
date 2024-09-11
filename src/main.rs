@@ -36,7 +36,7 @@ mod runners;
 mod server;
 mod sm_utils;
 mod standalone_mode;
-#[cfg(feature = "weval")]
+// #[cfg(feature = "weval")]
 mod wizened_mode;
 
 #[derive(Debug, Clone, ValueEnum)]

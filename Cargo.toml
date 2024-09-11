@@ -29,17 +29,29 @@ http = "0.2.9"
 form_urlencoded = "1.2.0"
 
 static-web-server = { git = "https://github.com/wasix-org/static-web-server", rev = "87bb6804a7e60db08399f8f7f22bb10bf028a489" }
+wizex_macros = { path = "../wizex/crates/wizex_macros" }
 
-ion = { package = "ion", features = [
-    "macros",
-], git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127"}
-ion-proc = { package = "ion-proc", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127" }
-runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127", features = ["fetch"]}
-modules = { package = "modules", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127" }
+# ion = { package = "ion", features = [
+#     "macros",
+# ], git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127"}
+# ion-proc = { package = "ion-proc", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127" }
+# runtime = { package = "runtime", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127", features = ["fetch"]}
+# modules = { package = "modules", git = "https://github.com/wasmerio/spiderfire.git", branch = "feat/sm-127" }
 mozjs = { version = "0.14.1", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi-gecko-127-0-2-squashed", features = [
     "streams",
 ] }
 mozjs_sys = { version = "0.68.2", git = "https://github.com/wasmerio/mozjs.git", branch = "wasi-gecko-127-0-2-squashed" }
+
+ion = { package = "ion", features = [
+    "macros",
+], path = "../spiderfire/ion" }
+ion-proc = { package = "ion-proc", path = "../spiderfire/ion-proc" }
+runtime = { package = "runtime", path = "../spiderfire/runtime", features = ["fetch"]}
+modules = { package = "modules", path = "../spiderfire/modules" }
+# mozjs = { version = "0.14.1", path = "../mozjs/mozjs", features = [
+#     "streams",
+# ] }
+# mozjs_sys = { version = "0.68.2", path = "../mozjs/mozjs-sys" }
 
 # for mozjs
 libc = { version = "=0.2.152", git = "https://github.com/wasix-org/libc.git", branch = "v0.2.152" }
