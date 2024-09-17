@@ -648,7 +648,7 @@ dependencies = [
  "hashbrown",
  "lock_api 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "once_cell",
- "parking_lot_core 0.9.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -1798,7 +1798,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#75c1e9db0bb953f101c928336ec729c57efa0f9e"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#7ea8ee999cb915c1b178b06103d34782878b5e55"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -1824,7 +1824,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#75c1e9db0bb953f101c928336ec729c57efa0f9e"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#7ea8ee999cb915c1b178b06103d34782878b5e55"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -2046,7 +2046,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#75c1e9db0bb953f101c928336ec729c57efa0f9e"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#7ea8ee999cb915c1b178b06103d34782878b5e55"
 dependencies = [
  "bytes",
  "futures",
@@ -2242,20 +2242,7 @@ version = "0.12.1"
 source = "git+https://github.com/wasix-org/parking_lot.git?branch=master#6be7461cfebb826ba14e938718562117ce4ebff3"
 dependencies = [
  "lock_api 0.4.11 (git+https://github.com/wasix-org/parking_lot.git?branch=master)",
- "parking_lot_core 0.9.9 (git+https://github.com/wasix-org/parking_lot.git?branch=master)",
-]
-
-[[package]]
-name = "parking_lot_core"
-version = "0.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c42a9226546d68acdd9c0a280d17ce19bfe27a46bf68784e4066115788d008e"
-dependencies = [
- "cfg-if",
- "libc 0.2.152",
- "redox_syscall 0.4.1",
- "smallvec",
- "windows-targets 0.48.5",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -2570,7 +2557,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
-source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#75c1e9db0bb953f101c928336ec729c57efa0f9e"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#7ea8ee999cb915c1b178b06103d34782878b5e55"
 dependencies = [
  "as-any",
  "async-recursion",
@@ -4325,6 +4312,7 @@ dependencies = [
  "mozjs_sys",
  "once_cell",
  "parking_lot",
+ "parking_lot_core",
  "rand",
  "rand_core",
  "runtime",
@@ -4343,7 +4331,12 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid 1.5.0",
+ "wizex_macros",
 ]
+
+[[package]]
+name = "wizex_macros"
+version = "0.1.0"
 
 [[package]]
 name = "write16"
