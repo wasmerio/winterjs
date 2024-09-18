@@ -11,17 +11,3 @@ mv target/wasm32-wasmer-wasi/release/winterjs.wasm x.wasm
 wasm-opt x.wasm -o target/wasm32-wasmer-wasi/release/winterjs-wevalable.wasm -O1 --enable-bulk-memory --enable-reference-types --no-validation
 rm x.wasm
 wasm-strip target/wasm32-wasmer-wasi/release/winterjs-wevalable.wasm
-
-../wizex/target/release/wizex \
-    target/wasm32-wasmer-wasi/release/winterjs-wevalable.wasm \
-    -o target/wasm32-wasmer-wasi/release/winterjs-wevalable-wizened.wasm \
-    -r _start=wizex.resume \
-    --allow-wasix \
-    --inherit-stdio true \
-    --mapdir /app::./tests \
-    --wasm-bulk-memory true \
-    --preload weval=../wevalx/lib/weval-stubs.wat
-
-../wevalx/target/release/wevalx weval \
-    -i target/wasm32-wasmer-wasi/release/winterjs-wevalable-wizened.wasm \
-    -o target/wasm32-wasmer-wasi/release/winterjs-wevalable-wevaled.wasm

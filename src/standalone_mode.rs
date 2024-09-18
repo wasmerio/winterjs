@@ -216,9 +216,6 @@ struct CmdServe {
     #[clap(long, default_value = "16", env = "WINTERJS_MAX_JS_THREADS")]
     max_js_threads: usize,
 
-    // /// Watch the Javascript file for changes and automatically reload.
-    // #[clap(short, long, env = "WINTERJS_WATCH")]
-    // watch: bool,
     /// Path to a Javascript file to serve.
     #[clap(env = "WINTERJS_PATH")]
     js_path: PathBuf,

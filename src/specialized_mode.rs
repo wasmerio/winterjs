@@ -1,10 +1,12 @@
 use std::{
     cell::RefCell,
     net::{IpAddr, SocketAddr},
+    path::PathBuf,
     pin::Pin,
     sync::atomic::AtomicU8,
 };
 
+use anyhow::Context;
 use clap::Parser;
 use tokio::{join, task::LocalSet};
 
@@ -25,13 +27,13 @@ thread_local! {
     > = const { RefCell::new(None) };
 }
 
-pub const WIZENING_STATE_NONE: u8 = 0; // WinterJS is running standalone with no wizening whatsoever
-pub const WIZENING_STATE_WIZENING: u8 = 1; // WinterJS is currently being wizened
-pub const WIZENING_STATE_WIZENED: u8 = 2; // WinterJS was wizened before and is now resuming
+pub const SPECIALIZATION_STATE_NONE: u8 = 0; // WinterJS is running standalone with no specialization whatsoever
+pub const SPECIALIZATION_STATE_SPECIALIZING: u8 = 1; // WinterJS is currently being specialized
+pub const SPECIALIZATION_STATE_SPECIALIZED: u8 = 2; // WinterJS was specialized before and is now resuming
 
-pub static WIZENING_STATE: AtomicU8 = AtomicU8::new(WIZENING_STATE_NONE);
+pub static SPECIALIZATION_STATE: AtomicU8 = AtomicU8::new(SPECIALIZATION_STATE_NONE);
 
-wizex_macros::WIZEX_INIT!(crate::wizened_mode::initialize);
+wizex_macros::WIZEX_INIT!(crate::specialized_mode::initialize);
 
 // TODO: reduce duplication between this file and standalone_mode.rs
 
@@ -49,18 +51,38 @@ fn initialize() {
         (Box::new(runner), Box::pin(future))
     }
 
-    WIZENING_STATE.store(
-        WIZENING_STATE_WIZENING,
+    SPECIALIZATION_STATE.store(
+        SPECIALIZATION_STATE_SPECIALIZING,
         std::sync::atomic::Ordering::Relaxed,
     );
+
+    // Args are separated by newline instead of the usual quoting that shells do. This is
+    // meant to simplify parsing and prevent odd edge cases where WinterJS doesn't parse
+    // exactly like a shell does.
+    let input = std::iter::once(std::ffi::OsString::from("winterjs")).chain(
+        std::io::stdin()
+            .lines()
+            .map(|l| std::ffi::OsString::from(l.context("Failed to read from stdin").unwrap())),
+    );
+
+    let cmd = CmdSpecialize::parse_from(input);
 
     runtime::config::CONFIG
         .set(runtime::config::Config::default().log_level(runtime::config::LogLevel::Error))
         .unwrap();
 
-    let file_name = "/app/simple.js"; // TODO
-    let mode = HandlerName::WinterCG; // TODO
-    let user_code = UserCode::from_path(std::path::Path::new(file_name), true)
+    let mode = match cmd.mode {
+        Some(m) => m,
+        None => HandlerName::WinterCG,
+    };
+
+    tracing::info!(
+        "Specializing with code at path '{:?}' in {:?} mode",
+        cmd.js_path,
+        mode
+    );
+
+    let user_code = UserCode::from_path(std::path::Path::new(&cmd.js_path), true)
         .expect("Failed to read user code");
 
     RUNNER.with_borrow_mut(|runner| {
@@ -70,11 +92,14 @@ fn initialize() {
         })
     });
 
-    WIZENING_STATE.store(WIZENING_STATE_WIZENED, std::sync::atomic::Ordering::Relaxed);
+    SPECIALIZATION_STATE.store(
+        SPECIALIZATION_STATE_SPECIALIZED,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
-// Called by main when WIZENING_STATE is equal to WIZENING_STATE_WIZENED
-pub fn run_wizened() -> anyhow::Result<()> {
+// Called by main when SPECIALIZATION_STATE is equal to SPECIALIZATION_STATE_SPECIALIZED
+pub fn run_specialized() -> anyhow::Result<()> {
     let Some((runner, runner_future)) = RUNNER.with_borrow_mut(|runner| runner.take()) else {
         panic!("There is no pre-initialized runner");
     };
@@ -149,6 +174,18 @@ struct CmdServe {
     /// Defaults to 127.0.0.1
     #[clap(long, default_value = "127.0.0.1", env = "WINTERJS_IP")]
     ip: Option<IpAddr>,
+
+    /// The operating mode of the server. Defaults to WinterCG mode if left
+    /// out.
+    #[clap(short = 'H', long, env = "WINTERJS_MODE")]
+    mode: Option<HandlerName>,
+}
+
+#[derive(clap::Parser, Debug)]
+struct CmdSpecialize {
+    /// Path to a Javascript file to serve.
+    #[clap(env = "WINTERJS_PATH")]
+    js_path: PathBuf,
 
     /// The operating mode of the server. Defaults to WinterCG mode if left
     /// out.
