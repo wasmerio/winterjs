@@ -53,16 +53,6 @@ pub(super) async fn handle_requests<H: RequestHandler>(
         cx_rt: &js_app.context_and_runtime,
     };
 
-    // Wait for any promises resulting from running the script to be resolved, giving
-    // scripts a chance to initialize before accepting requests
-    // Note we will return the error here if one happens, since an error happening
-    // in this stage means the script didn't initialize successfully.
-
-    // TODO: MOVE THIS TO JS APP! -> JsApp::warmup() ?
-    // rt.run_event_loop()
-    //     .await
-    //     .map_err(|e| error_report_option_to_anyhow_error(cx, e))?;
-
     let mut request_queue = RequestQueue::new(cx);
 
     let mut shutdown_requested = false;

@@ -38,6 +38,7 @@ mod sm_utils;
 #[cfg(feature = "weval")]
 mod specialized_mode;
 mod standalone_mode;
+mod tokio_utils;
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum HandlerName {

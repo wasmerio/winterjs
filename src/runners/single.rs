@@ -9,7 +9,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use tokio::{sync::Mutex, task::LocalSet};
+use tokio::sync::Mutex;
 
 use crate::{
     js_app::JsApp,
@@ -80,23 +80,24 @@ impl<N: NewRequestHandler> SingleRunner<N> {
 
         let join_handle = std::thread::spawn(move || {
             let app = match JsApp::build(new_handler, concurrency, &user_code) {
-                Ok(app) => {
-                    init_tx.send(Ok(())).expect("spawn_thread dropped dead");
-                    app
-                }
+                Ok(app) => app,
                 Err(e) => {
                     init_tx.send(Err(e)).expect("spawn_thread dropped dead");
                     return;
                 }
             };
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async move {
-                    let local_set = LocalSet::new();
-                    local_set.run_until(handle_requests(app, rx)).await
-                })
+            crate::tokio_utils::run_in_single_thread_runtime(async move {
+                match app.warmup().await {
+                    Ok(()) => {
+                        init_tx.send(Ok(())).expect("spawn_thread dropped dead");
+                    }
+                    Err(e) => {
+                        init_tx.send(Err(e)).expect("spawn_thread dropped dead");
+                        return;
+                    }
+                }
+                handle_requests(app, rx).await
+            })
         });
 
         // Catch script parsing/evaluation errors and report them
