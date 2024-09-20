@@ -1,3 +1,5 @@
+use std::{rc::Rc, sync::Arc};
+
 use ion::{module::ModuleLoader, Context};
 use mozjs::{jsapi::ReadOnlyCompileOptions, rust::RealmOptions};
 use runtime::{
@@ -92,50 +94,13 @@ impl JsAppContextAndRuntime {
     }
 }
 
-pub struct JsApp<Handler: RequestHandler> {
-    pub context_and_runtime: JsAppContextAndRuntime,
-    pub request_handler: Handler,
+#[derive(Clone)]
+pub struct JsApp {
+    pub context_and_runtime: Rc<JsAppContextAndRuntime>,
+    pub request_handler: Arc<dyn RequestHandler>,
 }
 
-impl<Handler: RequestHandler> JsApp<Handler> {
-    pub fn build<NewHandler: NewRequestHandler<InitializedHandler = Handler>>(
-        new_handler: NewHandler,
-        hardware_concurrency: u32,
-        code: &UserCode,
-    ) -> anyhow::Result<Self> {
-        Self::build_impl(new_handler, hardware_concurrency, code, |h, cx, uc| {
-            h.evaluate_scripts(cx, uc)
-        })
-    }
-
-    pub fn build_specialized<NewHandler: NewRequestHandler<InitializedHandler = Handler>>(
-        new_handler: NewHandler,
-        hardware_concurrency: u32,
-        code: &UserCode,
-    ) -> anyhow::Result<Self> {
-        Self::build_impl(new_handler, hardware_concurrency, code, |h, cx, uc| {
-            h.specialize_with_scripts(cx, uc)
-        })
-    }
-
-    fn build_impl<NewHandler: NewRequestHandler<InitializedHandler = Handler>>(
-        new_handler: NewHandler,
-        hardware_concurrency: u32,
-        code: &UserCode,
-        evaluate_scripts: impl FnOnce(NewHandler, &Context, &UserCode) -> anyhow::Result<Handler>,
-    ) -> anyhow::Result<Self> {
-        let modules =
-            JsAppModules::for_handler(&new_handler, code.is_module_mode(), hardware_concurrency);
-        let cx_and_rt =
-            JsAppContextAndRuntime::build(modules.module_loader, Some(modules.standard_modules));
-        let request_handler = evaluate_scripts(new_handler, cx_and_rt.cx(), code)?;
-
-        Ok(Self {
-            context_and_runtime: cx_and_rt,
-            request_handler,
-        })
-    }
-
+impl JsApp {
     pub async fn warmup(&self) -> anyhow::Result<()> {
         // Wait for any promises resulting from running the script to be resolved, giving
         // scripts a chance to initialize before accepting requests
@@ -154,6 +119,49 @@ impl<Handler: RequestHandler> JsApp<Handler> {
 
     pub fn rt(&self) -> &Runtime {
         self.context_and_runtime.rt()
+    }
+}
+
+impl JsApp {
+    pub fn build<NewHandler: NewRequestHandler>(
+        new_handler: NewHandler,
+        hardware_concurrency: u32,
+        code: &UserCode,
+    ) -> anyhow::Result<Self> {
+        Self::build_impl(new_handler, hardware_concurrency, code, |h, cx, uc| {
+            h.evaluate_scripts(cx, uc)
+        })
+    }
+
+    pub fn build_specialized<NewHandler: NewRequestHandler>(
+        new_handler: NewHandler,
+        hardware_concurrency: u32,
+        code: &UserCode,
+    ) -> anyhow::Result<Self> {
+        Self::build_impl(new_handler, hardware_concurrency, code, |h, cx, uc| {
+            h.specialize_with_scripts(cx, uc)
+        })
+    }
+
+    fn build_impl<
+        Handler: RequestHandler,
+        NewHandler: NewRequestHandler<InitializedHandler = Handler>,
+    >(
+        new_handler: NewHandler,
+        hardware_concurrency: u32,
+        code: &UserCode,
+        evaluate_scripts: impl FnOnce(NewHandler, &Context, &UserCode) -> anyhow::Result<Handler>,
+    ) -> anyhow::Result<Self> {
+        let modules =
+            JsAppModules::for_handler(&new_handler, code.is_module_mode(), hardware_concurrency);
+        let cx_and_rt =
+            JsAppContextAndRuntime::build(modules.module_loader, Some(modules.standard_modules));
+        let request_handler = evaluate_scripts(new_handler, cx_and_rt.cx(), code)?;
+
+        Ok(Self {
+            context_and_runtime: Rc::new(cx_and_rt),
+            request_handler: Arc::new(request_handler),
+        })
     }
 }
 

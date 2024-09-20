@@ -29,7 +29,6 @@ http = "0.2.9"
 form_urlencoded = "1.2.0"
 
 static-web-server = { git = "https://github.com/wasix-org/static-web-server", rev = "87bb6804a7e60db08399f8f7f22bb10bf028a489" }
-wizex_macros = { path = "../wizex/crates/wizex_macros" }
 
 ion = { package = "ion", features = [
     "macros",
@@ -69,6 +68,9 @@ dyn-clonable = "0.9.0"
 self_cell = "1.0.3"
 glob-match = "0.2.1"
 sys-locale = "0.3.1"
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wizex_macros = { path = "../wizex/crates/wizex_macros" }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 ctrlc = "3.4.2"

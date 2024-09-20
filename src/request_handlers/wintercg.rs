@@ -61,7 +61,7 @@ impl NewRequestHandler for WinterCGRequestHandler<New> {
 
 impl RequestHandler for WinterCGRequestHandler<Initialized> {
     fn start_handling_request(
-        &mut self,
+        &self,
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
@@ -69,7 +69,7 @@ impl RequestHandler for WinterCGRequestHandler<Initialized> {
     }
 
     fn finish_fulfilled_request(
-        &mut self,
+        &self,
         cx: Context,
         val: Value,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {

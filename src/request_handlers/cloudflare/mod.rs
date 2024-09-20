@@ -157,7 +157,7 @@ impl NewRequestHandler for CloudflareRequestHandler<New> {
 
 impl RequestHandler for CloudflareRequestHandler<Initialized> {
     fn start_handling_request(
-        &mut self,
+        &self,
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
@@ -194,7 +194,7 @@ impl RequestHandler for CloudflareRequestHandler<Initialized> {
     }
 
     fn finish_fulfilled_request(
-        &mut self,
+        &self,
         cx: Context,
         val: Value,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {

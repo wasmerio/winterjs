@@ -106,10 +106,10 @@ pub trait NewRequestHandler: Clone + Copy + Send + Sync + Unpin + 'static {
     ) -> Result<Self::InitializedHandler>;
 }
 
-pub trait RequestHandler: Clone + Copy + Send + Sync + Unpin + 'static {
+pub trait RequestHandler: Send + Sync + Unpin + 'static {
     /// Start handling the given request.
     fn start_handling_request(
-        &mut self,
+        &self,
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>>;
@@ -117,7 +117,7 @@ pub trait RequestHandler: Clone + Copy + Send + Sync + Unpin + 'static {
     /// Finish handling the request. The associated promise must be
     /// either fulfilled or rejected before calling this method.
     fn finish_request(
-        &mut self,
+        &self,
         cx: Context,
         response: Result<TracedHeap<JSVal>, TracedHeap<JSVal>>,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
@@ -171,7 +171,7 @@ pub trait RequestHandler: Clone + Copy + Send + Sync + Unpin + 'static {
     }
 
     fn finish_fulfilled_request(
-        &mut self,
+        &self,
         cx: Context,
         val: Value,
     ) -> Result<Either<PendingResponse, ReadyResponse>>;

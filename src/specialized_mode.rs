@@ -2,7 +2,6 @@ use std::{
     cell::RefCell,
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
-    pin::Pin,
     sync::atomic::AtomicU8,
 };
 
@@ -12,19 +11,15 @@ use tokio::{join, select};
 
 use crate::{
     js_app::JsApp,
-    request_handlers::{cloudflare, wintercg, NewRequestHandler, UserCode},
-    runners::{self, BoxedDynRunner, Runner},
+    request_handlers::{cloudflare, wintercg, UserCode},
+    runners::{self, inline::InlineRunner, Runner},
+    sm_utils::error_report_option_to_anyhow_error,
     HandlerName,
 };
 
 thread_local! {
     #[allow(clippy::type_complexity)]
-    static RUNNER: RefCell<
-        Option<(
-            BoxedDynRunner,
-            Pin<Box<dyn runners::inline::InlineRunnerRequestHandlerFuture>>,
-        )>,
-    > = const { RefCell::new(None) };
+    static JS_APP: RefCell<Option<JsApp>> = const { RefCell::new(None) };
 }
 
 pub const SPECIALIZATION_STATE_NONE: u8 = 0; // WinterJS is running standalone with no specialization whatsoever
@@ -33,28 +28,13 @@ pub const SPECIALIZATION_STATE_SPECIALIZED: u8 = 2; // WinterJS was specialized 
 
 pub static SPECIALIZATION_STATE: AtomicU8 = AtomicU8::new(SPECIALIZATION_STATE_NONE);
 
+#[cfg(target_os = "wasi")]
 wizex_macros::WIZEX_INIT!(crate::specialized_mode::initialize);
 
 // TODO: reduce duplication between this file and standalone_mode.rs
 
+#[cfg_attr(not(target_os = "wasi"), allow(unused))]
 fn initialize() {
-    fn build_runner(
-        handler: impl NewRequestHandler,
-        user_code: &UserCode,
-    ) -> (
-        BoxedDynRunner,
-        Pin<Box<dyn runners::inline::InlineRunnerRequestHandlerFuture>>,
-    ) {
-        let js_app =
-            JsApp::build_specialized(handler, 1, user_code).expect("Failed to evaluate script");
-        crate::tokio_utils::run_in_single_thread_runtime(
-            js_app.warmup(), // async move { anyhow::Ok(()) },
-        )
-        .expect("Script failed to initialize");
-        let (runner, future) = runners::inline::InlineRunner::new_request_handler(js_app);
-        (Box::new(runner), Box::pin(future))
-    }
-
     SPECIALIZATION_STATE.store(
         SPECIALIZATION_STATE_SPECIALIZING,
         std::sync::atomic::Ordering::Relaxed,
@@ -88,15 +68,33 @@ fn initialize() {
     let user_code = UserCode::from_path(std::path::Path::new(&cmd.js_path), cmd.script)
         .expect("Failed to read user code");
 
-    RUNNER.with_borrow_mut(|runner_global| {
-        let (runner, mut runner_future) = match mode {
-            HandlerName::Cloudflare => build_runner(cloudflare::new_handler(), &user_code),
-            HandlerName::WinterCG => build_runner(wintercg::new_handler(), &user_code),
-        };
-        // if !cmd.warmup_urls.is_empty() {
-        //     run_warmup_requests(runner.as_ref(), &mut runner_future, &cmd.warmup_urls);
-        // }
-        runner_global.replace((runner, runner_future))
+    JS_APP.with_borrow_mut(|js_app| {
+        let app = match mode {
+            HandlerName::Cloudflare => {
+                JsApp::build_specialized(cloudflare::new_handler(), 1, &user_code)
+            }
+            HandlerName::WinterCG => {
+                JsApp::build_specialized(wintercg::new_handler(), 1, &user_code)
+            }
+        }
+        .expect("Failed to evaluate script");
+
+        let app_clone = app.clone();
+        crate::tokio_utils::run_in_single_thread_runtime(async move {
+            app_clone
+                .warmup()
+                .await
+                .expect("Script failed to initialize");
+            if !cmd.warmup_urls.is_empty() {
+                run_warmup_requests(&app_clone, &cmd.warmup_urls).await;
+            }
+
+            // Remove the SF runtime from the current tokio runtime, so
+            // we can later install it in a new runtime at resume time
+            app_clone.rt().remove_from_tokio_runtime();
+        });
+
+        js_app.replace(app)
     });
 
     SPECIALIZATION_STATE.store(
@@ -105,81 +103,95 @@ fn initialize() {
     );
 }
 
-fn run_warmup_requests(
-    runner: &dyn Runner,
-    runner_future: &mut Pin<Box<dyn runners::inline::InlineRunnerRequestHandlerFuture>>,
-    warmup_urls: &Vec<String>,
-) {
-    crate::tokio_utils::run_in_single_thread_runtime(async move {
-        for url in warmup_urls {
-            println!("Running warm-up request with URL '{}' ...", url);
+async fn run_warmup_requests(js_app: &JsApp, warmup_urls: &Vec<String>) {
+    let (runner, runner_future) = InlineRunner::new_request_handler(js_app.clone());
+    let mut runner_future = Box::pin(runner_future);
 
-            let (parts, body) = hyper::Request::builder()
-                .uri(url)
-                .body(hyper::Body::empty())
-                .context("Failed to build request")
-                .unwrap()
-                .into_parts();
+    for url in warmup_urls {
+        println!("Running warm-up request with URL '{}' ...", url);
 
-            let request_future = runner.handle(
-                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 80)),
-                parts,
-                body,
-            );
+        let (parts, body) = hyper::Request::builder()
+            .uri(url)
+            .body(hyper::Body::empty())
+            .context("Failed to build request")
+            .unwrap()
+            .into_parts();
 
-            select! {
-                response = request_future => {
-                    if response.status().is_client_error() || response.status().is_server_error() {
-                        panic!("Got error response {} from warmup URL", response.status())
-                    }
-                    println!("OK");
+        let request_future = runner.handle(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 80)),
+            parts,
+            body,
+        );
+
+        select! {
+            response = request_future => {
+                if response.status().is_client_error() || response.status().is_server_error() {
+                    panic!("Got error response {} from warmup URL", response.status())
                 }
-                _ = &mut *runner_future => {
-                    panic!("Request handler exited unexpectedly")
-                }
+                println!("OK");
+            }
+            _ = &mut runner_future => {
+                panic!("Request handler exited unexpectedly")
             }
         }
-    })
+    }
+
+    join!(runner.shutdown(None), runner_future);
+
+    js_app
+        .rt()
+        .run_event_loop()
+        .await
+        .map_err(|e| error_report_option_to_anyhow_error(js_app.cx(), e))
+        .expect("Failed to flush event loop");
+
+    if !js_app.rt().event_loop_is_empty() {
+        panic!("Internal error: event loop should be empty after warmup requests are sent");
+    }
 }
 
 // Called by main when SPECIALIZATION_STATE is equal to SPECIALIZATION_STATE_SPECIALIZED
 pub fn run_specialized() -> anyhow::Result<()> {
-    let Some((runner, runner_future)) = RUNNER.with_borrow_mut(|runner| runner.take()) else {
-        panic!("There is no pre-initialized runner");
-    };
+    crate::tokio_utils::run_in_single_thread_runtime(async move {
+        let Some(js_app) = JS_APP.with_borrow_mut(Option::take) else {
+            panic!("There is no pre-initialized app");
+        };
 
-    let args = match Args::try_parse() {
-        Ok(a) => a,
-        Err(e) => {
-            // Fall back to parsing the serve command for backwards compatibility.
+        js_app.rt().install_in_tokio_runtime();
 
-            match CmdServe::try_parse_from(std::env::args_os()) {
-                Ok(a) => Args { cmd: Cmd::Serve(a) },
-                Err(_) => {
-                    // Neither the main args nor the serve command args could be parsed.
-                    // Report the original error for full help.
-                    e.exit();
+        let (runner, runner_future) = runners::inline::InlineRunner::new_request_handler(js_app);
+
+        let args = match Args::try_parse() {
+            Ok(a) => a,
+            Err(e) => {
+                // Fall back to parsing the serve command for backwards compatibility.
+
+                match CmdServe::try_parse_from(std::env::args_os()) {
+                    Ok(a) => Args { cmd: Cmd::Serve(a) },
+                    Err(_) => {
+                        // Neither the main args nor the serve command args could be parsed.
+                        // Report the original error for full help.
+                        e.exit();
+                    }
                 }
             }
-        }
-    };
+        };
 
-    let Cmd::Serve(cmd) = args.cmd;
+        let Cmd::Serve(cmd) = args.cmd;
 
-    let interface = cmd
-        .ip
-        .unwrap_or_else(|| std::net::Ipv4Addr::UNSPECIFIED.into());
+        let interface = cmd
+            .ip
+            .unwrap_or_else(|| std::net::Ipv4Addr::UNSPECIFIED.into());
 
-    let port = cmd.port.unwrap_or(8080);
+        let port = cmd.port.unwrap_or(8080);
 
-    let addr: SocketAddr = (interface, port).into();
-    let config = crate::server::ServerConfig { addr };
+        let addr: SocketAddr = (interface, port).into();
+        let config = crate::server::ServerConfig { addr };
 
-    // The server code needs a signal receiver, but we don't ever actually use it under WASIX
-    let (_tx, rx) = tokio::sync::oneshot::channel();
+        // The server code needs a signal receiver, but we don't ever actually use it under WASIX
+        let (_tx, rx) = tokio::sync::oneshot::channel();
 
-    crate::tokio_utils::run_in_single_thread_runtime(async move {
-        let server_future = crate::server::run_server(config, runner, rx);
+        let server_future = crate::server::run_server(config, Box::new(runner), rx);
         let (result, ()) = join!(server_future, runner_future);
         result
     })
