@@ -649,6 +649,7 @@ dependencies = [
  "lock_api 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "once_cell",
  "parking_lot_core",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -1798,6 +1799,7 @@ dependencies = [
 [[package]]
 name = "ion"
 version = "0.1.0"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#7ea8ee999cb915c1b178b06103d34782878b5e55"
 dependencies = [
  "arrayvec",
  "async-stream",
@@ -1823,6 +1825,7 @@ dependencies = [
 [[package]]
 name = "ion-proc"
 version = "0.1.0"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#7ea8ee999cb915c1b178b06103d34782878b5e55"
 dependencies = [
  "convert_case",
  "prettyplease",
@@ -2044,6 +2047,7 @@ dependencies = [
 [[package]]
 name = "modules"
 version = "0.1.0"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#7ea8ee999cb915c1b178b06103d34782878b5e55"
 dependencies = [
  "bytes",
  "futures",
@@ -2239,6 +2243,7 @@ version = "0.12.1"
 source = "git+https://github.com/wasix-org/parking_lot.git?branch=master#6be7461cfebb826ba14e938718562117ce4ebff3"
 dependencies = [
  "lock_api 0.4.11 (git+https://github.com/wasix-org/parking_lot.git?branch=master)",
+ "parking_lot_core",
  "parking_lot_core",
 ]
 
@@ -2554,6 +2559,7 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
+source = "git+https://github.com/wasmerio/spiderfire.git?branch=feat/sm-127#7ea8ee999cb915c1b178b06103d34782878b5e55"
 dependencies = [
  "as-any",
  "async-recursion",
@@ -4310,6 +4316,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "parking_lot_core",
+ "parking_lot_core",
  "rand",
  "rand_core",
  "runtime",
@@ -4334,9 +4341,6 @@ dependencies = [
 [[package]]
 name = "wizex_macros"
 version = "0.1.0"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "write16"

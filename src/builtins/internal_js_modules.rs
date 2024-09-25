@@ -13,10 +13,7 @@
 use anyhow::{anyhow, Context as _};
 use clap::builder::OsStr;
 use include_dir::{include_dir, Dir, File};
-use ion::{
-    module::{Module, ModuleRequest},
-    Context,
-};
+use ion::{module::Module, Context};
 
 const MODULES_DIR: Dir = include_dir!("src/builtins/internal_js_modules");
 
@@ -67,9 +64,8 @@ fn compile_and_register(cx: &Context, script_file: &File) -> anyhow::Result<()> 
 
     match unsafe { &mut (*cx.get_inner_data().as_ptr()).module_loader } {
         Some(loader) => {
-            let request = ModuleRequest::new(cx, module_name);
             loader
-                .register(cx, module.module_object(), &request)
+                .register(cx, module.module_object(), module_name)
                 .map_err(|e| anyhow!("Failed to register internal module due to: {e}"))?;
             Ok(())
         }

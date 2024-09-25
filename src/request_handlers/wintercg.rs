@@ -55,22 +55,13 @@ impl NewRequestHandler for WinterCGRequestHandler<New> {
         cx: &Context,
         code: &UserCode,
     ) -> Result<Self::InitializedHandler> {
-        match code {
-            UserCode::Script { code, file_name } => {
-                sm_utils::evaluate_script(cx, code, file_name)?;
-            }
-            _ => bail!("Modules cannot be specialized yet"),
-        };
-
-        Ok(WinterCGRequestHandler::<Initialized> {
-            _state: PhantomData,
-        })
+        self.evaluate_scripts(cx, code)
     }
 }
 
 impl RequestHandler for WinterCGRequestHandler<Initialized> {
     fn start_handling_request(
-        &mut self,
+        &self,
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
@@ -78,7 +69,7 @@ impl RequestHandler for WinterCGRequestHandler<Initialized> {
     }
 
     fn finish_fulfilled_request(
-        &mut self,
+        &self,
         cx: Context,
         val: Value,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {

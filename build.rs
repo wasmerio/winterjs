@@ -9,22 +9,18 @@ fn main() {
     if profile == "debug" {
         // let builtins_dir = std::env::current_dir().unwrap().join("src/builtins");
 
-        // let dir = builtins_dir.join("internal_js_modules");
-        // assert!(Command::new("npx")
-        //     .arg("tsc")
-        //     .current_dir(dir)
-        //     .output()
-        //     .unwrap()
-        //     .status
-        //     .success());
+        let dir = builtins_dir.join("internal_js_modules");
+        Command::new("npx")
+            .arg("tsc")
+            .current_dir(dir)
+            .status()
+            .unwrap();
 
-        // let dir = builtins_dir.join("js_globals");
-        // assert!(Command::new("npx")
-        //     .arg("tsc")
-        //     .current_dir(dir)
-        //     .output()
-        //     .unwrap()
-        //     .status
-        //     .success());
+        let dir = builtins_dir.join("js_globals");
+        Command::new("npx")
+            .arg("tsc")
+            .current_dir(dir)
+            .status()
+            .unwrap();
     }
 }

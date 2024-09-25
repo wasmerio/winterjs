@@ -35,9 +35,10 @@ mod request_handlers;
 mod runners;
 mod server;
 mod sm_utils;
+#[cfg(feature = "weval")]
+mod specialized_mode;
 mod standalone_mode;
-// #[cfg(feature = "weval")]
-mod wizened_mode;
+mod tokio_utils;
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum HandlerName {
@@ -60,8 +61,8 @@ fn main() {
     }
 
     #[cfg(feature = "weval")]
-    match wizened_mode::WIZENING_STATE.load(std::sync::atomic::Ordering::Relaxed) {
-        wizened_mode::WIZENING_STATE_NONE => {
+    match specialized_mode::SPECIALIZATION_STATE.load(std::sync::atomic::Ordering::Relaxed) {
+        specialized_mode::SPECIALIZATION_STATE_NONE => {
             tracing::info!("Starting in standalone mode");
             if let Err(e) = standalone_mode::run_standalone() {
                 tracing::error!(?e);
@@ -69,16 +70,16 @@ fn main() {
             }
         }
 
-        wizened_mode::WIZENING_STATE_WIZENED => {
+        specialized_mode::SPECIALIZATION_STATE_SPECIALIZED => {
             tracing::info!("Starting from pre-initialized state");
-            if let Err(e) = wizened_mode::run_wizened() {
+            if let Err(e) = specialized_mode::run_specialized() {
                 tracing::error!(?e);
                 std::process::exit(-1);
             }
         }
 
         state => {
-            tracing::error!(state, "Invalid wizening state, cannot execute");
+            tracing::error!(state, "Invalid specialization state, cannot execute");
             std::process::exit(-1);
         }
     }

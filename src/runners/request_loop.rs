@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use futures::StreamExt;
 use ion::{Context, TracedHeap};
@@ -43,8 +45,8 @@ impl std::fmt::Debug for ControlMessage {
 // there really isn't anything we can do
 fn ignore_error<E>(_r: std::result::Result<(), E>) {}
 
-pub(super) async fn handle_requests<H: RequestHandler>(
-    js_app: JsApp<H>,
+pub(super) async fn handle_requests(
+    js_app: JsApp,
     mut recv: tokio::sync::mpsc::UnboundedReceiver<ControlMessage>,
 ) {
     let cx = js_app.cx();
@@ -52,16 +54,6 @@ pub(super) async fn handle_requests<H: RequestHandler>(
     let mut event_loop_stream = EventLoopStream {
         cx_rt: &js_app.context_and_runtime,
     };
-
-    // Wait for any promises resulting from running the script to be resolved, giving
-    // scripts a chance to initialize before accepting requests
-    // Note we will return the error here if one happens, since an error happening
-    // in this stage means the script didn't initialize successfully.
-
-    // TODO: MOVE THIS TO JS APP! -> JsApp::warmup() ?
-    // rt.run_event_loop()
-    //     .await
-    //     .map_err(|e| error_report_option_to_anyhow_error(cx, e))?;
 
     let mut request_queue = RequestQueue::new(cx);
 
@@ -90,7 +82,7 @@ pub(super) async fn handle_requests<H: RequestHandler>(
                         } else {
                             handle_new_request(
                                 cx,
-                                js_app.request_handler,
+                                &js_app.request_handler,
                                 &mut request_queue,
                                 req,
                                 resp_tx
@@ -125,10 +117,10 @@ pub(super) async fn handle_requests<H: RequestHandler>(
     }
 }
 
-fn handle_new_request<H: RequestHandler + Copy + Unpin>(
+fn handle_new_request(
     cx: &Context,
-    mut handler: H,
-    request_queue: &mut RequestQueue<RequestFinishedCallback<H>>,
+    handler: &Arc<dyn RequestHandler>,
+    request_queue: &mut RequestQueue<RequestFinishedCallback>,
     req: RequestData,
     resp_tx: oneshot::Sender<ResponseData>,
 ) {
@@ -145,7 +137,7 @@ fn handle_new_request<H: RequestHandler + Copy + Unpin>(
             pending,
             RequestFinishedCallback {
                 cx: cx.as_ptr(),
-                handler,
+                handler: handler.clone(),
                 resp_tx: Some(resp_tx),
             },
         ),
@@ -164,13 +156,13 @@ enum RequestCancelledReason {
     ServerShuttingDown,
 }
 
-struct RequestFinishedCallback<H: RequestHandler + Copy + Unpin> {
+struct RequestFinishedCallback {
     cx: *mut JSContext,
-    handler: H,
+    handler: Arc<dyn RequestHandler>,
     resp_tx: Option<oneshot::Sender<ResponseData>>,
 }
 
-impl<H: RequestHandler + Copy + Unpin> RequestFinishedCallback<H> {
+impl RequestFinishedCallback {
     fn get_resp_tx(&mut self) -> oneshot::Sender<ResponseData> {
         self.resp_tx
             .take()
@@ -178,7 +170,7 @@ impl<H: RequestHandler + Copy + Unpin> RequestFinishedCallback<H> {
     }
 }
 
-impl<H: RequestHandler + Copy + Unpin> RequestFinishedHandler for RequestFinishedCallback<H> {
+impl RequestFinishedHandler for RequestFinishedCallback {
     type CancelReason = RequestCancelledReason;
 
     fn request_finished(

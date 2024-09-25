@@ -16,7 +16,6 @@ use tokio::sync::mpsc;
 
 use crate::{
     js_app::JsApp,
-    request_handlers::RequestHandler,
     runners::{generate_error_response, generate_internal_error},
 };
 
@@ -36,9 +35,8 @@ pub trait InlineRunnerRequestHandlerFuture: Future<Output = ()> {}
 impl<T: Future<Output = ()>> InlineRunnerRequestHandlerFuture for T {}
 
 impl InlineRunner {
-    pub fn new_request_handler(
-        js_app: JsApp<impl RequestHandler>,
-    ) -> (Self, impl InlineRunnerRequestHandlerFuture) {
+    pub fn new_request_handler(js_app: JsApp) -> (Self, impl InlineRunnerRequestHandlerFuture) {
+        tracing::info!("Starting inline runner");
         let (tx, rx) = mpsc::unbounded_channel();
         let this = Self {
             channel: tx,

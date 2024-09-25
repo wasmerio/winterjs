@@ -151,37 +151,13 @@ impl NewRequestHandler for CloudflareRequestHandler<New> {
         cx: &Context,
         code: &UserCode,
     ) -> Result<Self::InitializedHandler> {
-        if unsafe { cx.get_private() }.app_data.is_some() {
-            bail!("Internal error: evaluate_scripts should only be called once");
-        }
-
-        let private = match code {
-            UserCode::Script { code, file_name } => {
-                sm_utils::evaluate_script(cx, code, file_name)?;
-                // Note: can't use exports in script mode, so the only option is
-                // an event handler
-                CloudflareRequestHandlerPrivate {
-                    mode: SingleSourceFile,
-                    modules: Default::default(),
-                    routes: None,
-                }
-            }
-
-            _ => bail!("Modules cannot be specialized yet"),
-        };
-
-        let private: Box<dyn std::any::Any> = Box::<CloudflareRequestHandlerPrivate>::new(private);
-        cx.set_app_data(private);
-
-        Ok(CloudflareRequestHandler::<Initialized> {
-            _state: PhantomData,
-        })
+        self.evaluate_scripts(cx, code)
     }
 }
 
 impl RequestHandler for CloudflareRequestHandler<Initialized> {
     fn start_handling_request(
-        &mut self,
+        &self,
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
@@ -218,7 +194,7 @@ impl RequestHandler for CloudflareRequestHandler<Initialized> {
     }
 
     fn finish_fulfilled_request(
-        &mut self,
+        &self,
         cx: Context,
         val: Value,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Parser;
-use tokio::{join, task::LocalSet};
+use tokio::join;
 
 use crate::{
     js_app::JsApp,
@@ -82,6 +82,8 @@ pub fn run_standalone() -> anyhow::Result<()> {
                 )> {
                     let js_app =
                         JsApp::build(handler, 1, user_code).context("Failed to evaluate script")?;
+                    crate::tokio_utils::run_in_single_thread_runtime(js_app.warmup())
+                        .context("Script failed to initialize")?;
                     let (runner, future) =
                         runners::inline::InlineRunner::new_request_handler(js_app);
                     Ok((Box::new(runner), Box::pin(future)))
@@ -164,21 +166,11 @@ pub fn run_standalone() -> anyhow::Result<()> {
                     .expect("Failed building the Runtime")
                     .block_on(crate::server::run_server(config, runner, rx)),
                 Either::Right((runner, runner_future)) => {
-                    tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("Failed building the Runtime")
-                        .block_on(async move {
-                            let local_set = LocalSet::new();
-                            local_set
-                                .run_until(async move {
-                                    let server_future =
-                                        crate::server::run_server(config, runner, rx);
-                                    let (result, ()) = join!(server_future, runner_future);
-                                    result
-                                })
-                                .await
-                        })
+                    crate::tokio_utils::run_in_single_thread_runtime(async move {
+                        let server_future = crate::server::run_server(config, runner, rx);
+                        let (result, ()) = join!(server_future, runner_future);
+                        result
+                    })
                 }
             }
         }
@@ -216,9 +208,6 @@ struct CmdServe {
     #[clap(long, default_value = "16", env = "WINTERJS_MAX_JS_THREADS")]
     max_js_threads: usize,
 
-    // /// Watch the Javascript file for changes and automatically reload.
-    // #[clap(short, long, env = "WINTERJS_WATCH")]
-    // watch: bool,
     /// Path to a Javascript file to serve.
     #[clap(env = "WINTERJS_PATH")]
     js_path: PathBuf,

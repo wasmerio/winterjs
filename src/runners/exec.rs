@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tokio::task::LocalSet;
 
 use crate::{
     builtins,
@@ -35,21 +34,5 @@ async fn exec_script_inner(path: impl AsRef<Path>, script_mode: bool) -> Result<
 }
 
 pub fn exec_script(path: PathBuf, script_mode: bool) -> Result<()> {
-    // The top-level tokio runtime is *not* single-threaded, so we
-    // need to spawn a new thread with a new single-threaded runtime
-    // to run the JS code.
-    std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async move {
-                let local_set = LocalSet::new();
-                local_set
-                    .run_until(exec_script_inner(path, script_mode))
-                    .await
-            })
-    })
-    .join()
-    .unwrap()
+    crate::tokio_utils::run_in_single_thread_runtime(exec_script_inner(path, script_mode))
 }
