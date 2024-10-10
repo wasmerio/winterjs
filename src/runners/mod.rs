@@ -3,6 +3,7 @@ use std::{net::SocketAddr, time::Duration};
 use async_trait::async_trait;
 
 mod event_loop_stream;
+#[cfg(not(feature = "weval"))]
 pub mod exec;
 pub mod inline;
 mod request_loop;
