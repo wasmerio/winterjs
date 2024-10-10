@@ -1,0 +1,10 @@
+[package]
+name = "generate-asyncify-response-file"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.89"
+clap = { version = "4.5.19", features = ["derive"] }
+fast-glob = "0.4.0"
+wasmparser = "0.218.0"

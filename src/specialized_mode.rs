@@ -28,13 +28,13 @@ pub const SPECIALIZATION_STATE_SPECIALIZED: u8 = 2; // WinterJS was specialized 
 
 pub static SPECIALIZATION_STATE: AtomicU8 = AtomicU8::new(SPECIALIZATION_STATE_NONE);
 
-#[cfg(target_os = "wasi")]
-wizex_macros::WIZEX_INIT!(crate::specialized_mode::initialize);
-
 // TODO: reduce duplication between this file and standalone_mode.rs
 
-#[cfg_attr(not(target_os = "wasi"), allow(unused))]
-fn initialize() {
+pub fn initialize() -> anyhow::Result<()> {
+    // Create a scoped subscriber without setting the default, which will interfere with
+    // the initialization logic in main()
+    let _log_guard = super::build_logging_subscriber(false);
+
     SPECIALIZATION_STATE.store(
         SPECIALIZATION_STATE_SPECIALIZING,
         std::sync::atomic::Ordering::Relaxed,
@@ -43,11 +43,13 @@ fn initialize() {
     // Args are separated by newline instead of the usual quoting that shells do. This is
     // meant to simplify parsing and prevent odd edge cases where WinterJS doesn't parse
     // exactly like a shell does.
-    let input = std::iter::once(std::ffi::OsString::from("winterjs")).chain(
-        std::io::stdin()
-            .lines()
-            .map(|l| std::ffi::OsString::from(l.context("Failed to read from stdin").unwrap())),
-    );
+    let input = std::iter::once(Ok(std::ffi::OsString::from("winterjs")))
+        .chain(std::io::stdin().lines().map(|l| {
+            Ok(std::ffi::OsString::from(
+                l.context("Failed to read from stdin")?,
+            ))
+        }))
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let cmd = CmdSpecialize::parse_from(input);
 
@@ -60,9 +62,10 @@ fn initialize() {
         None => HandlerName::WinterCG,
     };
 
-    println!(
+    tracing::info!(
         "Specializing with code at path {:?} in {:?} mode",
-        cmd.js_path, mode
+        cmd.js_path,
+        mode
     );
 
     let user_code = UserCode::from_path(std::path::Path::new(&cmd.js_path), cmd.script)
@@ -77,14 +80,14 @@ fn initialize() {
                 JsApp::build_specialized(wintercg::new_handler(), 1, &user_code)
             }
         }
-        .expect("Failed to evaluate script");
+        .context("Failed to evaluate script")?;
 
         let app_clone = app.clone();
         crate::tokio_utils::run_in_single_thread_runtime(async move {
             app_clone
                 .warmup()
                 .await
-                .expect("Script failed to initialize");
+                .context("Script failed to initialize")?;
             if !cmd.warmup_urls.is_empty() {
                 run_warmup_requests(&app_clone, &cmd.warmup_urls).await;
             }
@@ -92,15 +95,21 @@ fn initialize() {
             // Remove the SF runtime from the current tokio runtime, so
             // we can later install it in a new runtime at resume time
             app_clone.rt().remove_from_tokio_runtime();
-        });
 
-        js_app.replace(app)
-    });
+            anyhow::Ok(())
+        })?;
+
+        js_app.replace(app);
+
+        anyhow::Ok(())
+    })?;
 
     SPECIALIZATION_STATE.store(
         SPECIALIZATION_STATE_SPECIALIZED,
         std::sync::atomic::Ordering::Relaxed,
     );
+
+    Ok(())
 }
 
 async fn run_warmup_requests(js_app: &JsApp, warmup_urls: &Vec<String>) {
@@ -108,7 +117,7 @@ async fn run_warmup_requests(js_app: &JsApp, warmup_urls: &Vec<String>) {
     let mut runner_future = Box::pin(runner_future);
 
     for url in warmup_urls {
-        println!("Running warm-up request with URL '{}' ...", url);
+        tracing::info!("Running warm-up request with URL '{}' ...", url);
 
         let (parts, body) = hyper::Request::builder()
             .uri(url)
@@ -128,7 +137,7 @@ async fn run_warmup_requests(js_app: &JsApp, warmup_urls: &Vec<String>) {
                 if response.status().is_client_error() || response.status().is_server_error() {
                     panic!("Got error response {} from warmup URL", response.status())
                 }
-                println!("OK");
+                tracing::info!("OK");
             }
             _ = &mut runner_future => {
                 panic!("Request handler exited unexpectedly")

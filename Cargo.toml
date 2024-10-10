@@ -6,6 +6,9 @@ repository = "https://github.com/wasmerio/winterjs/"
 license = "MIT"
 edition = "2021"
 
+[workspace]
+exclude = ["crates/generate-asyncify-response-file"]
+
 [dependencies]
 lazy_static = "1.4.0"
 anyhow = "1.0.75"
@@ -47,7 +50,13 @@ libc = { version = "=0.2.152", git = "https://github.com/wasix-org/libc.git", br
 # libc = "=0.2.139"
 
 # NOTE: We need to pin and replace some dependencies to achieve wasix compatibility.
-tokio = { version = "=1.35.1", features = ["rt-multi-thread", "macros", "fs", "io-util", "signal"] }
+tokio = { version = "=1.35.1", features = [
+    "rt-multi-thread",
+    "macros",
+    "fs",
+    "io-util",
+    "signal",
+] }
 parking_lot = { version = "=0.12.1", features = ["nightly"] }
 parking_lot_core = { version = "=0.9.9", git = "https://github.com/wasix-org/parking_lot.git", branch = "master" }
 url = "2.4.1"
@@ -70,7 +79,7 @@ glob-match = "0.2.1"
 sys-locale = "0.3.1"
 
 [target.'cfg(target_os = "wasi")'.dependencies]
-wizex_macros = { path = "../wizex/crates/wizex_macros" }
+wizex_api = { path = "../wizex/crates/wizex_api" }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 ctrlc = "3.4.2"

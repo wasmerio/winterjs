@@ -1,0 +1,5 @@
+*wizex_with_threads*main*
+*main_void
+*backtrace*__rust_begin_short_backtrace*
+*rt*lang_start*
+*function*FnOnce*call_once*

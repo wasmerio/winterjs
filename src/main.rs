@@ -7,28 +7,6 @@ use clap::ValueEnum;
 #[macro_use]
 extern crate ion_proc;
 
-#[allow(unused_macros)]
-macro_rules! fail_msg {
-    ($cx:expr, $msg:expr) => {
-        $crate::run::report_js_error($cx, $msg);
-        return false;
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! js_try {
-    ($cx:expr, $expr:expr) => {
-        match $expr {
-            Ok(v) => v,
-            Err(e) => {
-                let msg = e.to_string();
-                $crate::run::report_js_error($cx, msg);
-                return false;
-            }
-        }
-    };
-}
-
 mod builtins;
 mod js_app;
 mod request_handlers;
@@ -37,6 +15,7 @@ mod server;
 mod sm_utils;
 #[cfg(feature = "weval")]
 mod specialized_mode;
+#[cfg(not(feature = "weval"))]
 mod standalone_mode;
 mod tokio_utils;
 
@@ -47,40 +26,47 @@ pub enum HandlerName {
 }
 
 fn main() {
-    // Initialize logging.
-    if std::env::var("RUST_LOG").is_err() {
-        // Set default log level.
-        std::env::set_var("RUST_LOG", "winterjs=info,warn");
-    }
-    tracing_subscriber::fmt::init();
+    let _log_guard = build_logging_subscriber(true);
 
     #[cfg(not(feature = "weval"))]
-    if let Err(e) = standalone_mode::run_standalone() {
-        tracing::error!(?e);
-        std::process::exit(-1);
-    }
-
-    #[cfg(feature = "weval")]
-    match specialized_mode::SPECIALIZATION_STATE.load(std::sync::atomic::Ordering::Relaxed) {
-        specialized_mode::SPECIALIZATION_STATE_NONE => {
-            tracing::info!("Starting in standalone mode");
-            if let Err(e) = standalone_mode::run_standalone() {
-                tracing::error!(?e);
-                std::process::exit(-1);
-            }
-        }
-
-        specialized_mode::SPECIALIZATION_STATE_SPECIALIZED => {
-            tracing::info!("Starting from pre-initialized state");
-            if let Err(e) = specialized_mode::run_specialized() {
-                tracing::error!(?e);
-                std::process::exit(-1);
-            }
-        }
-
-        state => {
-            tracing::error!(state, "Invalid specialization state, cannot execute");
+    {
+        if let Err(e) = standalone_mode::run_standalone() {
+            tracing::error!(?e);
             std::process::exit(-1);
         }
     }
+
+    #[cfg(feature = "weval")]
+    {
+        tracing::info!("Initializing");
+        if let Err(e) = specialized_mode::initialize() {
+            tracing::error!(?e);
+            std::process::exit(-1);
+        }
+
+        wizex_api::finalize_init();
+
+        if let Err(e) = specialized_mode::run_specialized() {
+            tracing::error!(?e);
+            std::process::exit(-1);
+        }
+    }
+}
+
+fn build_logging_subscriber(color: bool) -> tracing::subscriber::DefaultGuard {
+    use std::io::IsTerminal;
+
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "winterjs=info,warn");
+    }
+
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(true)
+        .with_ansi(std::io::stdout().is_terminal() && color)
+        .with_writer(std::io::stdout)
+        .compact()
+        .finish();
+
+    tracing::subscriber::set_default(subscriber)
 }

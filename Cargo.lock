@@ -4331,11 +4331,11 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid 1.5.0",
- "wizex_macros",
+ "wizex_api",
 ]
 
 [[package]]
-name = "wizex_macros"
+name = "wizex_api"
 version = "0.1.0"
 dependencies = [
  "cc",

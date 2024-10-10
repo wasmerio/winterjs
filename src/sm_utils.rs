@@ -40,16 +40,18 @@ pub fn evaluate_module(
     path: impl AsRef<Path>,
 ) -> anyhow::Result<ion::module::Module> {
     let path = path.as_ref();
+    let canonicalized_path = runtime::wasi_polyfills::canonicalize(path)?;
 
-    let file_name = path
+    let file_name = canonicalized_path
         .file_name()
         .ok_or(anyhow!("Failed to get file name from script path"))
         .map(|f| f.to_string_lossy().into_owned())?;
 
-    let code = std::fs::read_to_string(path).context("Failed to read script file")?;
+    let code =
+        std::fs::read_to_string(&canonicalized_path).context("Failed to read script file")?;
 
     Ok(
-        ion::module::Module::compile_and_evaluate(cx, &file_name, Some(path), &code)
+        ion::module::Module::compile_and_evaluate(cx, &file_name, Some(&canonicalized_path), &code)
             .map_err(|e| {
                 error_report_option_to_anyhow_error(cx, Some(e.report)).context(format!(
                     "Error while loading module during {:?} step",
