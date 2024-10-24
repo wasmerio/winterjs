@@ -133,6 +133,9 @@ impl JsApp {
         })
     }
 
+    // This function will be unused for non-weval builds, but rather than configure
+    // out the entire tree of things it calls, we just let it be unused
+    #[allow(unused)]
     pub fn build_specialized<NewHandler: NewRequestHandler>(
         new_handler: NewHandler,
         hardware_concurrency: u32,

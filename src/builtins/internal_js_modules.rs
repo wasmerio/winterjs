@@ -10,6 +10,8 @@
 //!
 //! Note: Files that don't have a .js extension will be ignored.
 
+use std::path::PathBuf;
+
 use anyhow::{anyhow, Context as _};
 use clap::builder::OsStr;
 use include_dir::{include_dir, Dir, File};
@@ -47,26 +49,41 @@ fn scan_dir(cx: &Context, dir: &Dir) -> anyhow::Result<()> {
 fn compile_and_register(cx: &Context, script_file: &File) -> anyhow::Result<()> {
     tracing::debug!("Registering internal module at {:?}", script_file.path());
 
-    let module_name = script_file
+    let file_path = script_file
         .path()
         .to_str()
-        .context("Failed to convert module path to string")?
+        .context("Failed to convert module path to string")?;
+
+    let file_path_no_suffix = file_path
         .strip_suffix(".js")
-        .context("Script file path must have a .js suffix")?
-        .replace('/', ":");
+        .context("Script file path must have a .js suffix")?;
+
+    let module_name = file_path
+        .starts_with("node")
+        .then(|| file_path_no_suffix.replacen('/', ":", 1));
+
+    let module_path = format!("$winterjs_internal$/{file_path}");
 
     let contents = script_file
         .contents_utf8()
         .context("Failed to convert file contents to UTF-8")?;
 
-    let module = Module::compile(cx, &module_name, None, contents)
-        .map_err(|e| anyhow::anyhow!("Module compilation failed: {e:?}"))?;
+    let module = Module::compile(
+        cx,
+        &module_path,
+        Some(&PathBuf::from(module_path.clone())),
+        contents,
+    )
+    .map_err(|e| anyhow::anyhow!("Module compilation failed: {e:?}"))?;
 
     match unsafe { &mut (*cx.get_inner_data().as_ptr()).module_loader } {
         Some(loader) => {
-            loader
-                .register(cx, module.module_object(), module_name)
-                .map_err(|e| anyhow!("Failed to register internal module due to: {e}"))?;
+            for name in [module_path].iter().chain(module_name.iter()) {
+                tracing::debug!(%name, "Registering internal module with name");
+                loader
+                    .register(cx, module.module_object(), name.clone())
+                    .map_err(|e| anyhow!("Failed to register internal module due to: {e}"))?;
+            }
             Ok(())
         }
         None => anyhow::bail!("No module loader present, cannot register internal module"),
