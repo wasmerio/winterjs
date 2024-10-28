@@ -1,4 +1,0 @@
-export const getPromiseState = ________winterjs_core_Internal______.getPromiseState;
-export const setPromiseHooks = ________winterjs_core_Internal______.setPromiseHooks;
-
-export default Object.freeze(________winterjs_core_Internal______);
