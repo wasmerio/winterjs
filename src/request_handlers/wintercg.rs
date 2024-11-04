@@ -57,6 +57,14 @@ impl NewRequestHandler for WinterCGRequestHandler<New> {
     ) -> Result<Self::InitializedHandler> {
         self.evaluate_scripts(cx, code)
     }
+
+    fn get_main_module_path(&self, code: &UserCode) -> Result<String> {
+        match code {
+            UserCode::Script { file_name, .. } => Ok(file_name.to_string_lossy().into_owned()),
+            UserCode::Module(path) => Ok(path.to_string_lossy().into_owned()),
+            UserCode::Directory(_) => bail!("WinterCG mode does not support directories"),
+        }
+    }
 }
 
 impl RequestHandler for WinterCGRequestHandler<Initialized> {

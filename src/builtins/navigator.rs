@@ -3,6 +3,7 @@ use ion::{class::Reflector, flags::PropertyFlags, ClassDefinition, Context, Resu
 use crate::ion_err;
 
 #[js_class]
+#[derive(Debug)]
 pub struct Navigator {
     reflector: Reflector,
 

@@ -7,11 +7,12 @@
   </a>
 </div>
 
-WinterJS is *blazing-fast* JavaScript server that runs Service Workers scripts according to the [Winter Community Group specification](https://wintercg.org/).
+WinterJS is _blazing-fast_ JavaScript server that runs Service Workers scripts according to the [Winter Community Group specification](https://wintercg.org/),
+and has partial support for Node.JS APIs.
 
 **WinterJS is able to handle up to 100,000 reqs/s in a single laptop** (see [Benchmark](./benchmark)).
 
-----
+---
 
 > Note: WinterJS is not officially endorsed by WinterCG, despite sharing "Winter" in their name. There are many [runtimes supporting WinterCG](https://runtime-keys.proposal.wintercg.org/), WinterJS being one among those.
 
@@ -28,8 +29,8 @@ wasmer run wasmer/winterjs --net --mapdir=tests:tests tests/simple.js
 Where `simple.js` is:
 
 ```js
-addEventListener('fetch', (req) => {
-  req.respondWith(new Response('hello'));
+addEventListener("fetch", (req) => {
+  req.respondWith(new Response("hello"));
 });
 ```
 
@@ -85,40 +86,48 @@ You can check a more detailed list here: https://runtime-compat.unjs.io/
 
 The following words are used to describe the status of an API:
 
-* ✅ Stable - The API is implemented and fully compliant with the spec. This does not account for potential undiscovered implementation errors in the native code.
-* 🔶 Partial - The API is implemented but not fully compliant with the spec and/or there are known limitations.
-* ❌ Pending - The API is not implemented yet.
+- ✅ Stable - The API is implemented and fully compliant with the spec. This does not account for potential undiscovered implementation errors in the native code.
+- 🔶 Partial - The API is implemented but not fully compliant with the spec and/or there are known limitations.
+- ❌ Pending - The API is not implemented yet.
 
-|API|Status|Notes|
-|:-:|:-:|:--|
-|`console`|✅ Stable|
-|`fetch`|✅ Stable|
-|`URL`|✅ Stable|
-|`URLSearchParams`|✅ Stable|
-|`Request`|✅ Stable|
-|`Headers`|✅ Stable|
-|`Response`|✅ Stable|
-|`Blob`|✅ Stable|
-|`File`|✅ Stable|
-|`FormData`|✅ Stable|
-|`TextDecoder`|✅ Stable|
-|`TextDecoderStream`|✅ Stable|
-|`TextEncoder`|✅ Stable|
-|`TextEncoderStream`|✅ Stable|
-|`ReadableStream` and supporting types|✅ Stable|
-|`WritableStream` and supporting types|✅ Stable|
-|`TransformStream` and supporting types|🔶 Partial|Back-pressure is not implemented
-|`atob`|✅ Stable|
-|`btoa`|✅ Stable|
-|`performance.now()`|✅ Stable|
-|`performance.timeOrigin`|✅ Stable|
-|`crypto`|✅ Stable|
-|`crypto.subtle`|🔶 Partial|Only HMAC, MD5 and SHA algorithms are supported
+|                  API                   |   Status   | Notes                                           |
+| :------------------------------------: | :--------: | :---------------------------------------------- |
+|               `console`                | ✅ Stable  |
+|                `fetch`                 | ✅ Stable  |
+|                 `URL`                  | ✅ Stable  |
+|           `URLSearchParams`            | ✅ Stable  |
+|               `Request`                | ✅ Stable  |
+|               `Headers`                | ✅ Stable  |
+|               `Response`               | ✅ Stable  |
+|                 `Blob`                 | ✅ Stable  |
+|                 `File`                 | ✅ Stable  |
+|               `FormData`               | ✅ Stable  |
+|             `TextDecoder`              | ✅ Stable  |
+|          `TextDecoderStream`           | ✅ Stable  |
+|             `TextEncoder`              | ✅ Stable  |
+|          `TextEncoderStream`           | ✅ Stable  |
+| `ReadableStream` and supporting types  | ✅ Stable  |
+| `WritableStream` and supporting types  | ✅ Stable  |
+| `TransformStream` and supporting types | 🔶 Partial | Back-pressure is not implemented                |
+|                 `atob`                 | ✅ Stable  |
+|                 `btoa`                 | ✅ Stable  |
+|          `performance.now()`           | ✅ Stable  |
+|        `performance.timeOrigin`        | ✅ Stable  |
+|                `crypto`                | ✅ Stable  |
+|            `crypto.subtle`             | 🔶 Partial | Only HMAC, MD5 and SHA algorithms are supported |
+
+# Node.JS API Compatibility
+
+WinterJS uses code from [Deno's stdlib](https://github.com/denoland/std) to provide Node.JS APIs.
+The Deno code uses a number of natively implemented internal functions. Some of these are implemented in WinterJS,
+while the rest are currently missing (see [#95](https://github.com/wasmerio/winterjs/issues/95) for more details).
+
+If you require some functionality which isn't implemented yet, feel free to open an issue or a PR!
 
 # Other supported APIs
 
 The following (non-WinterCG) APIs are implemented and accessible in WinterJS:
 
-|API|Status|Notes|
-|:-:|:-:|:--|
-|[Service Workers Caches API](https://www.w3.org/TR/service-workers/#cache-objects)|✅ Stable|Accessible via `caches`. `caches.default` (similar to [Cloudflare workers](https://developers.cloudflare.com/workers/runtime-apis/cache/#accessing-cache)) is also available.<br/>The current implementation is memory-backed, and cached responses will *not* persist between multiple runs of WinterJS.
+|                                        API                                         |  Status   | Notes                                                                                                                                                                                                                                                                                                     |
+| :--------------------------------------------------------------------------------: | :-------: | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Service Workers Caches API](https://www.w3.org/TR/service-workers/#cache-objects) | ✅ Stable | Accessible via `caches`. `caches.default` (similar to [Cloudflare workers](https://developers.cloudflare.com/workers/runtime-apis/cache/#accessing-cache)) is also available.<br/>The current implementation is memory-backed, and cached responses will _not_ persist between multiple runs of WinterJS. |

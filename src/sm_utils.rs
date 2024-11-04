@@ -1,7 +1,7 @@
 use std::{ffi::OsStr, path::Path};
 
 use anyhow::{anyhow, Context as _};
-use ion::{Context, ErrorReport};
+use ion::{module::ModuleRequest, Context, ErrorReport};
 use mozjs::rust::{JSEngine, JSEngineHandle};
 use runtime::module::StandardModules;
 
@@ -60,6 +60,24 @@ pub fn evaluate_module(
             })?
             .0,
     )
+}
+
+pub fn get_evaluated_known_module(
+    cx: &Context,
+    specifier: String,
+) -> ion::ResultExc<ion::module::Module> {
+    let module_loader = unsafe {
+        &mut (*cx.get_inner_data().as_ptr())
+            .module_loader
+            .as_mut()
+            .ok_or_else(|| ion_mk_err!("Module loader not registered", Normal))?
+    };
+    let module = module_loader.resolve(cx, None, &ModuleRequest::new(cx, specifier))?;
+    if !module.is_linked() {
+        module.instantiate(cx).map_err(|e| e.exception)?;
+        module.evaluate(cx).map_err(|e| e.exception)?;
+    }
+    Ok(module)
 }
 
 pub fn error_report_to_anyhow_error(cx: &Context, error_report: ErrorReport) -> anyhow::Error {

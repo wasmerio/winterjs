@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ion::{
     class::Reflector,
     conversions::{FromValue, ToValue},
@@ -9,7 +11,7 @@ use strum::{AsRefStr, EnumString};
 
 use crate::{enum_value, ion_err};
 
-#[derive(EnumString, AsRefStr, Clone, Copy)]
+#[derive(EnumString, AsRefStr, Clone, Copy, Debug)]
 #[strum(serialize_all = "camelCase")]
 pub enum KeyType {
     Public,
@@ -19,7 +21,7 @@ pub enum KeyType {
 
 enum_value!(KeyType);
 
-#[derive(EnumString, AsRefStr, Clone, Copy)]
+#[derive(EnumString, AsRefStr, Clone, Copy, Debug)]
 #[strum(serialize_all = "camelCase")]
 pub enum KeyUsage {
     Encrypt,
@@ -34,7 +36,7 @@ pub enum KeyUsage {
 
 enum_value!(KeyUsage);
 
-#[derive(EnumString, AsRefStr, Clone, Copy)]
+#[derive(EnumString, AsRefStr, Clone, Copy, Debug)]
 #[strum(serialize_all = "lowercase")]
 pub enum KeyFormat {
     Raw,
@@ -56,6 +58,12 @@ pub struct CryptoKey {
 
     #[trace(no_trace)]
     pub usages: Vec<KeyUsage>,
+}
+
+impl Debug for CryptoKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CryptoKey").finish()
+    }
 }
 
 impl CryptoKey {
@@ -118,6 +126,7 @@ impl CryptoKey {
 }
 
 #[js_class]
+#[derive(Debug)]
 pub struct KeyAlgorithm {
     pub reflector: Reflector,
 

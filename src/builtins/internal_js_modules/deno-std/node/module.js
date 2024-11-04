@@ -45,6 +45,7 @@ const CHAR_COLON = ":".charCodeAt(0);
 const relativeResolveCache = Object.create(null);
 let requireDepth = 0;
 let statCache = null;
+let nestedNodeModulesCache = new Map();
 // Returns 0 if the path refers to
 // a file, 1 when it's a directory or < 0 on error.
 function stat(filename) {
@@ -351,6 +352,33 @@ class Module {
     }
     return filename;
   }
+  // @wasmer
+  static _discoverNestedNodeModulesDirs(basePath) {
+    const cached = nestedNodeModulesCache.get(basePath);
+    if (cached !== undefined) return cached;
+
+    // Push subdirs to the end of this array to do a breadth-first search
+    let toScan = [[basePath, 0]];
+    let result = [];
+    for (let i = 0; i < toScan.length; i++) {
+      const [subPath, symlinkCount] = toScan[i];
+      for (const entry of Deno.readDirSync(subPath)) {
+        if (entry.isDirectory) {
+          if (entry.name === "node_modules") {
+            result.push(path.join(subPath, entry.name));
+          } else {
+            // Let's not traverse too many symlinks...
+            let newSymlinkCount = symlinkCount + (entry.isSymlink ? 1 : 0);
+            if (newSymlinkCount < 4) {
+              toScan.push([path.join(subPath, entry.name), newSymlinkCount]);
+            }
+          }
+        }
+      }
+    }
+    nestedNodeModulesCache.set(basePath, result);
+    return result;
+  }
   static _findPath(request, paths, isMain) {
     const absoluteRequest = path.isAbsolute(request);
     if (absoluteRequest) {
@@ -372,10 +400,17 @@ class Module {
       trailingSlash = /(?:^|\/)\.?\.$/.test(request);
     }
     // For each path
-    for (let i = 0; i < paths.length; i++) {
+    // @wasmer: also discover nested node_modules directories
+    const toScan = [...paths];
+    toScan.reverse();
+    while (toScan.length > 0) {
       // Don't search further if path doesn't exist
-      const curPath = paths[i];
+      const curPath = toScan.pop();
       if (curPath && stat(curPath) < 1) continue;
+      if (curPath.endsWith("node_modules")) {
+        let nested = Module._discoverNestedNodeModulesDirs(curPath);
+        toScan.push(...nested);
+      }
       const basePath = resolveExports(curPath, request, absoluteRequest);
       let filename;
       const rc = stat(basePath);

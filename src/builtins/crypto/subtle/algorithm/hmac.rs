@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Debug};
 
 use base64::Engine;
 use hmac::{digest::generic_array::ArrayLength, Mac};
@@ -52,6 +52,14 @@ pub struct HmacKeyAlgorithm {
     // a Vec<u8> and it'd be difficult to create a trait
     // or enum to cover all algorithms.
     key_data: Vec<u8>,
+}
+
+impl Debug for HmacKeyAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HmacKeyAlgorithm")
+            .field("algorithm", &self.base)
+            .finish()
+    }
 }
 
 impl HmacKeyAlgorithm {

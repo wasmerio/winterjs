@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ion::Heap;
 use ion::{class::Reflector, ClassDefinition, Context, Promise};
 use mozjs::jsapi::JSObject;
@@ -7,6 +9,12 @@ pub struct FetchEvent {
     reflector: Reflector,
     pub(crate) request: Heap<*mut JSObject>,
     pub(crate) response: Option<Heap<*mut JSObject>>,
+}
+
+impl Debug for FetchEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FetchEvent").finish()
+    }
 }
 
 impl FetchEvent {

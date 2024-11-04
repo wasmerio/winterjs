@@ -7,7 +7,7 @@ clean:
 
 build/winterjs-mt.wasm: $(SOURCES)
 	mkdir -p build/temp
-	cargo +wasix build --target wasm32-wasmer-wasi -r
+	cargo +wasix build --target wasm32-wasmer-wasi -r $(WINTERJS_BUILD_ARGS)
 	mv target/wasm32-wasmer-wasi/release/winterjs.wasm build/temp/x.wasm
 	wasm-opt build/temp/x.wasm -o $@ \
 		-O1 --enable-bulk-memory --enable-threads \
@@ -18,7 +18,7 @@ build/winterjs-mt.wasm: $(SOURCES)
 
 build/winterjs-mt-debug.wasm: $(SOURCES)
 	mkdir -p build/temp
-	cargo +wasix build --target wasm32-wasmer-wasi
+	cargo +wasix build --target wasm32-wasmer-wasi $(WINTERJS_BUILD_ARGS)
 	mv target/wasm32-wasmer-wasi/debug/winterjs.wasm build/temp/x.wasm
 	wasm-opt build/temp/x.wasm -o $@ \
 		-O1 --enable-bulk-memory --enable-threads \
@@ -29,7 +29,7 @@ build/winterjs-mt-debug.wasm: $(SOURCES)
 
 build/winterjs-st.wasm: $(SOURCES)
 	mkdir -p build/temp
-	cargo +wasix build --target wasm32-wasmer-wasi -r
+	cargo +wasix build --target wasm32-wasmer-wasi -r $(WINTERJS_BUILD_ARGS)
 	mv target/wasm32-wasmer-wasi/release/winterjs.wasm build/temp/x.wasm
 	wasm-opt build/temp/x.wasm -o $@ \
 		-O1 --enable-bulk-memory --enable-threads \
@@ -39,7 +39,7 @@ build/winterjs-st.wasm: $(SOURCES)
 
 build/winterjs-st-debug.wasm: $(SOURCES)
 	mkdir -p build/temp
-	cargo +wasix build --target wasm32-wasmer-wasi
+	cargo +wasix build --target wasm32-wasmer-wasi $(WINTERJS_BUILD_ARGS)
 	mv target/wasm32-wasmer-wasi/debug/winterjs.wasm build/temp/x.wasm
 	wasm-opt build/temp/x.wasm -o $@ \
 		-O1 --enable-bulk-memory --enable-threads \
@@ -53,7 +53,7 @@ build/generate-asyncify-response-file:
 	mv crates/generate-asyncify-response-file/target/release/generate-asyncify-response-file $@
 
 build/temp/winterjs-weval.wasm: $(SOURCES)
-	cargo +wasix build --target wasm32-wasmer-wasi -r -F weval
+	cargo +wasix build --target wasm32-wasmer-wasi -r -F weval $(WINTERJS_BUILD_ARGS)
 	mv target/wasm32-wasmer-wasi/release/winterjs.wasm $@
 
 build/asyncify-response.txt: build/generate-asyncify-response-file build/temp/winterjs-weval.wasm

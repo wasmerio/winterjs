@@ -1,36 +1,33 @@
 mod subtle;
 
 use ion::{
-    conversions::ToValue, function_spec, ClassDefinition, Context, Error, ErrorKind, Object, Result,
+    conversions::ToValue, function_spec, object::typedarray::ArrayBufferView, ClassDefinition,
+    Context, Error, ErrorKind, Object, Result,
 };
-use mozjs::{
-    jsapi::{
-        DataView_FixedLengthClassPtr, DataView_ResizableClassPtr, UnwrapFloat32Array,
-        UnwrapFloat64Array,
-    },
-    typedarray::ArrayBufferView,
+use mozjs::jsapi::{
+    DataView_FixedLengthClassPtr, DataView_ResizableClassPtr, UnwrapFloat32Array,
+    UnwrapFloat64Array,
 };
 use mozjs_sys::jsapi::{JSFunctionSpec, JSObject, JS_InstanceOf};
 use rand::RngCore;
 
 #[js_fn]
 fn get_random_values(cx: &Context, array: ArrayBufferView) -> Result<*mut JSObject> {
-    if array.len() > 65536 {
+    if array.byte_length() > 65536 {
         return Err(Error::new("Quota exceeded", ErrorKind::Normal));
     }
     unsafe {
-        let rooted = cx.root(*array.underlying_object());
-        if !UnwrapFloat32Array(*array.underlying_object()).is_null()
-            || !UnwrapFloat64Array(*array.underlying_object()).is_null()
+        if !UnwrapFloat32Array(array.get()).is_null()
+            || !UnwrapFloat64Array(array.get()).is_null()
             || JS_InstanceOf(
                 cx.as_ptr(),
-                rooted.handle().into(),
+                array.handle().into(),
                 DataView_FixedLengthClassPtr,
                 std::ptr::null_mut(),
             )
             || JS_InstanceOf(
                 cx.as_ptr(),
-                rooted.handle().into(),
+                array.handle().into(),
                 DataView_ResizableClassPtr,
                 std::ptr::null_mut(),
             )
@@ -39,13 +36,12 @@ fn get_random_values(cx: &Context, array: ArrayBufferView) -> Result<*mut JSObje
         }
     }
 
-    let mut array = array;
     let slice = unsafe { array.as_mut_slice() };
     rand::thread_rng().fill_bytes(slice);
 
     // We have to call underlying_object because ToValue is not
     // implemented for ArrayBufferView
-    Ok(unsafe { *array.underlying_object() })
+    Ok(array.get())
 }
 
 #[js_fn]

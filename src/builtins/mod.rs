@@ -1,9 +1,10 @@
 use ion::Context;
-use runtime::module::{init_global_module, init_module, StandardModules};
+use runtime::module::{init_global_module, StandardModules};
 
 pub mod cache;
 pub mod core;
 pub mod crypto;
+pub mod deno_native;
 pub mod internal_js_modules;
 pub mod js_globals;
 pub mod navigator;
@@ -13,6 +14,7 @@ pub mod process;
 pub struct Modules {
     pub include_internal: bool,
     pub hardware_concurrency: u32,
+    pub main_module: String,
 }
 
 impl Modules {
@@ -26,14 +28,14 @@ impl Modules {
             && crypto::define(cx, global)
             && cache::define(cx, global)
             && navigator::define(cx, global, self.hardware_concurrency)
+            && js_globals::define(cx)
+            && deno_native::define(cx, global, &self.main_module)
     }
 }
 
 impl StandardModules for Modules {
     fn init(self, cx: &Context, global: &ion::Object) -> bool {
-        let result = init_module::<core::CoreModule>(cx, global)
-            && self.define_common(cx, global)
-            && js_globals::define(cx);
+        let result = self.define_common(cx, global);
 
         if self.include_internal {
             result && internal_js_modules::define(cx)
@@ -50,6 +52,6 @@ impl StandardModules for Modules {
             return false;
         }
 
-        self.define_common(cx, global) && js_globals::define(cx)
+        self.define_common(cx, global)
     }
 }

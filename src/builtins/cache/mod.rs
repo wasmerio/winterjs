@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    fmt::Debug,
     ops::{Deref, DerefMut},
     rc::Rc,
 };
@@ -26,7 +27,7 @@ use self::cache_storage::CacheEntryList;
 
 mod cache_storage;
 
-#[derive(FromValue, Default)]
+#[derive(FromValue, Default, Debug)]
 pub struct CacheQueryOptions {
     pub ignore_search: Option<bool>,
     pub ignore_method: Option<bool>,
@@ -39,6 +40,12 @@ pub struct Cache {
 
     #[trace(no_trace)]
     entries: Rc<RefCell<CacheEntryList>>,
+}
+
+impl Debug for Cache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cache").finish()
+    }
 }
 
 impl Cache {
@@ -218,7 +225,7 @@ impl Cache {
             }
         }
 
-        let response_body = response_ref.take_body()?;
+        let response_body = response_ref.take_body(&cx)?;
         if let FetchBodyInner::Stream(ref body) = response_body.body {
             if body.is_locked(&cx) || body.is_disturbed(&cx) {
                 ion_err!(

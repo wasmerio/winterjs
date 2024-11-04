@@ -13,6 +13,7 @@ async fn exec_script_inner(path: impl AsRef<Path>, script_mode: bool) -> Result<
     let standard_modules = builtins::Modules {
         include_internal: !script_mode,
         hardware_concurrency: 1,
+        main_module: path.as_ref().to_string_lossy().into_owned(),
     };
 
     let cx_rt = JsAppContextAndRuntime::build(module_loader, Some(standard_modules));

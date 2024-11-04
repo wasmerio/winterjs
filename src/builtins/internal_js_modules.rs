@@ -13,7 +13,6 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context as _};
-use clap::builder::OsStr;
 use include_dir::{include_dir, Dir, File};
 use ion::{module::Module, Context};
 
@@ -34,7 +33,7 @@ pub(super) fn define(cx: &Context) -> bool {
 
 fn scan_dir(cx: &Context, dir: &Dir) -> anyhow::Result<()> {
     for file in dir.files() {
-        if file.path().extension() == Some(&OsStr::from("js")) {
+        if matches!(file.path().extension(), Some(x) if x.to_str().unwrap().ends_with("js")) {
             compile_and_register(cx, file)?;
         }
     }
@@ -54,9 +53,11 @@ fn compile_and_register(cx: &Context, script_file: &File) -> anyhow::Result<()> 
         .to_str()
         .context("Failed to convert module path to string")?;
 
-    let file_path_no_suffix = file_path
-        .strip_suffix(".js")
-        .context("Script file path must have a .js suffix")?;
+    let path_no_suffix = script_file.path().with_extension("");
+
+    let file_path_no_suffix = path_no_suffix
+        .to_str()
+        .context("Failed to convert module path to string")?;
 
     let module_name = file_path
         .starts_with("node")

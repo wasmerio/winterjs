@@ -104,6 +104,8 @@ pub trait NewRequestHandler: Clone + Copy + Send + Sync + Unpin + 'static {
         cx: &Context,
         code: &UserCode,
     ) -> Result<Self::InitializedHandler>;
+
+    fn get_main_module_path(&self, code: &UserCode) -> Result<String>;
 }
 
 pub trait RequestHandler: Send + Sync + Unpin + 'static {
@@ -287,7 +289,7 @@ fn build_response_from_fetch_response(
     }
 
     let body = response
-        .take_body()
+        .take_body(cx)
         .map_err(|e| anyhow!("Failed to read response body: {e:?}"))?;
 
     let (body, future) = body

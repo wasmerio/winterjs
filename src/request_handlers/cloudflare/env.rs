@@ -1,6 +1,8 @@
+use std::fmt::Debug;
+
 use ion::{
-    class::{NativeObject, Reflector},
-    ClassDefinition, Context, Exception, Heap, Object, Promise, Result, TracedHeap,
+    class::NativeObject, flags::PropertyFlags, ClassDefinition, Context, Exception, Object,
+    Promise, TracedHeap,
 };
 use mozjs_sys::jsapi::JSObject;
 use runtime::{
@@ -8,53 +10,9 @@ use runtime::{
     promise::future_to_promise,
 };
 
-use crate::{ion_err, ion_mk_err};
+use crate::ion_mk_err;
 
-#[js_class]
-pub struct Env {
-    reflector: Reflector,
-    assets: Heap<*mut JSObject>,
-}
-
-impl Env {
-    pub fn new_obj(cx: &Context) -> *mut JSObject {
-        let assets = EnvAssets::new_object(
-            cx,
-            Box::new(EnvAssets {
-                reflector: Default::default(),
-            }),
-        );
-        let env = Object::from(cx.root(Env::new_object(
-            cx,
-            Box::new(Env {
-                reflector: Default::default(),
-                assets: Heap::new(assets),
-            }),
-        )));
-
-        if !crate::builtins::process::populate_env_object(cx, &env) {
-            panic!("Failed to populate env object");
-        }
-
-        (*env).get()
-    }
-}
-
-#[js_class]
-impl Env {
-    #[ion(constructor)]
-    pub fn constructor() -> Result<Env> {
-        ion_err!("Cannot construct this type", Type)
-    }
-
-    #[allow(non_snake_case)]
-    #[ion(name = "ASSETS", get)]
-    pub fn get_assets(&self) -> *mut JSObject {
-        self.assets.get()
-    }
-}
-
-#[derive(FromValue)]
+#[derive(FromValue, Debug)]
 pub enum FetchInput<'cx> {
     #[ion(inherit)]
     Request(&'cx FetchRequest),
@@ -69,78 +27,90 @@ enum FetchInputHeap {
     Url(String),
 }
 
-#[js_class]
-pub struct EnvAssets {
-    reflector: Reflector,
-}
+#[js_fn]
+fn fetch_asset<'cx>(cx: &'cx Context, input: FetchInput<'cx>) -> Option<Promise> {
+    let input_heap = match input {
+        FetchInput::Request(req) => FetchInputHeap::Request(TracedHeap::new(req.reflector().get())),
+        FetchInput::Url(url) => FetchInputHeap::Url(url.to_string()),
+        FetchInput::String(url) => FetchInputHeap::Url(url),
+    };
 
-#[js_class]
-impl EnvAssets {
-    #[ion(constructor)]
-    pub fn constructor() -> Result<EnvAssets> {
-        ion_err!("Cannot construct this type", Type)
-    }
+    unsafe {
+        future_to_promise::<_, _, _, Exception>(cx, move |cx| async move {
+            let (cx, http_req) = match input_heap {
+                FetchInputHeap::Request(request_heap) => {
+                    let request =
+                        FetchRequest::get_mut_private(&cx, &request_heap.root(&cx).into()).unwrap();
 
-    pub fn fetch<'cx>(&self, cx: &'cx Context, input: FetchInput<'cx>) -> Option<Promise> {
-        let input_heap = match input {
-            FetchInput::Request(req) => {
-                FetchInputHeap::Request(TracedHeap::new(req.reflector().get()))
-            }
-            FetchInput::Url(url) => FetchInputHeap::Url(url.to_string()),
-            FetchInput::String(url) => FetchInputHeap::Url(url),
-        };
+                    let mut http_req = http::Request::builder()
+                        .uri(request.get_url())
+                        .method(request.method());
 
-        unsafe {
-            future_to_promise::<_, _, _, Exception>(cx, move |cx| async move {
-                let (cx, http_req) = match input_heap {
-                    FetchInputHeap::Request(request_heap) => {
-                        let request =
-                            FetchRequest::get_mut_private(&cx, &request_heap.root(&cx).into())
-                                .unwrap();
-
-                        let mut http_req = http::Request::builder()
-                            .uri(request.get_url())
-                            .method(request.method());
-
-                        for header in request.headers(&cx) {
-                            http_req = http_req.header(header.0.clone(), header.1.clone())
-                        }
-
-                        let request_body = request.take_body()?;
-                        let (cx, body_bytes) =
-                            cx.await_native_cx(|cx| request_body.into_bytes(cx)).await;
-                        let body_bytes = body_bytes?;
-                        let body = match body_bytes {
-                            Some(bytes) => hyper::Body::from(bytes),
-                            None => hyper::Body::empty(),
-                        };
-
-                        (cx, http_req.body(body)?)
+                    for header in request.headers(&cx) {
+                        http_req = http_req.header(header.0.clone(), header.1.clone())
                     }
-                    FetchInputHeap::Url(url) => (
+
+                    let request_body = request.take_body(&cx)?;
+                    let (cx, body_bytes) =
+                        cx.await_native_cx(|cx| request_body.into_bytes(cx)).await;
+                    let body = match body_bytes? {
+                        Some(bytes) => hyper::Body::from(bytes),
+                        None => hyper::Body::empty(),
+                    };
+
+                    (cx, http_req.body(body)?)
+                }
+                FetchInputHeap::Url(url) => {
+                    // Apparently, cloudflare is OK with malformed URLs
+                    let url = if url.starts_with("http:/") && url.chars().nth(6) != Some('/') {
+                        url.replacen("http:/", "http://", 1)
+                    } else if url.starts_with("https:/") && url.chars().nth(7) != Some('/') {
+                        url.replacen("https:/", "https://", 1)
+                    } else {
+                        url
+                    };
+
+                    (
                         cx,
                         http::Request::builder()
                             .uri(url)
                             .method(http::Method::GET)
                             .body(hyper::Body::empty())?,
-                    ),
-                };
+                    )
+                }
+            };
 
-                let (parts, body) = http_req.into_parts();
-                let request = super::super::Request { parts, body };
+            let (parts, body) = http_req.into_parts();
+            tracing::debug!(path = %parts.uri, "Serving static asset");
 
-                let url = url::Url::parse(request.parts.uri.to_string().as_str())?;
-                let (cx, response) = cx.await_native(super::serve_static_file(request)).await;
-                let response = response.map_err(|e| {
-                    ion_mk_err!(format!("Failed to fetch static asset due to {e}"), Normal)
-                })?;
-                let response = FetchResponse::from_hyper_response(&cx, response, url)?;
-                Ok(FetchResponse::new_object(&cx, Box::new(response)))
-            })
-        }
+            let request = super::super::Request { parts, body };
+
+            let url = url::Url::parse(request.parts.uri.to_string().as_str())?;
+            let (cx, response) = cx.await_native(super::serve_static_file(request)).await;
+            let response = response.map_err(|e| {
+                tracing::debug!(error = ?e, "Failed to serve static asset");
+                ion_mk_err!(format!("Failed to fetch static asset due to {e}"), Normal)
+            })?;
+
+            tracing::debug!(status = %response.status(), "Static asset served");
+            let response = FetchResponse::from_hyper_response(&cx, response, url)?;
+            Ok(FetchResponse::new_object(&cx, Box::new(response)))
+        })
     }
 }
 
-pub fn define(cx: &Context, global: &Object) -> bool {
-    Env::init_class(cx, global).0 && EnvAssets::init_class(cx, global).0
+pub fn new_env_object(cx: &Context) -> Object {
+    let assets = Object::new(cx);
+    assets.define_method(
+        cx,
+        "fetch",
+        fetch_asset,
+        1,
+        PropertyFlags::CONSTANT_ENUMERATED,
+    );
+
+    let env = Object::new(cx);
+    assert!(env.define_as(cx, "ASSETS", &assets, PropertyFlags::CONSTANT_ENUMERATED));
+
+    env
 }

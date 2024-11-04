@@ -3,6 +3,8 @@ use std::cell::RefCell;
 use ion::{function_spec, Context, ErrorReport, Function, Object, PermanentHeap, Value};
 use mozjs_sys::jsapi::{JSFunction, JSFunctionSpec};
 
+// TODO: move this to builtins, support event types from deno
+
 thread_local! {
     static EVENT_CALLBACK: RefCell<Option<PermanentHeap<*mut JSFunction>>> = const { RefCell::new(None) };
 }
@@ -10,10 +12,7 @@ thread_local! {
 #[js_fn]
 fn add_event_listener<'cx: 'f, 'f>(event: String, callback: Function<'f>) -> ion::Result<()> {
     if event != "fetch" {
-        return Err(ion::Error::new(
-            "Only the `fetch` event is supported",
-            ion::ErrorKind::Type,
-        ));
+        return Ok(());
     }
 
     EVENT_CALLBACK.with(|cb| {

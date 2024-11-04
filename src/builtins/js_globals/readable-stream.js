@@ -26,6 +26,14 @@
     return new ReadableStreamAsyncIterator(this);
   };
 
+  const originalPipeTo = globalThis.ReadableStream.prototype["pipeTo"];
+
+  globalThis.ReadableStream.prototype["pipeTo"] = function (dest, options) {
+    // The ReadableStream implementation doesn't support signals
+    options.signal = undefined;
+    return Reflect.apply(originalPipeTo, this, [dest, options]);
+  };
+
   globalThis.ReadableStream.from = function (iterable) {
     if (iterable[Symbol.iterator]) {
       const iterator = iterable[Symbol.iterator]();

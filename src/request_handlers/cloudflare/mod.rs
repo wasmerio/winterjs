@@ -18,6 +18,7 @@ use super::{
     RequestHandler, UserCode,
 };
 use anyhow::{bail, Context as _, Result};
+use http::Uri;
 use ion::{ClassDefinition, Context, Function, Object, Promise, TracedHeap, Value};
 use mozjs_sys::jsapi::JSFunction;
 use runtime::{globals::fetch::Response as FetchResponse, promise::future_to_promise, ContextExt};
@@ -67,6 +68,8 @@ struct CloudflareRequestHandlerPrivate {
     modules: HashMap<PathBuf, CloudflareCodeModule>,
 
     routes: Option<Routes>,
+
+    assets_dir_path: Option<PathBuf>,
 }
 
 struct CloudflareCodeModule {
@@ -102,16 +105,30 @@ impl NewRequestHandler for CloudflareRequestHandler<New> {
                     mode: SingleSourceFile,
                     modules: Default::default(),
                     routes: None,
+                    assets_dir_path: None,
                 };
             }
 
+            // TODO: I'm pretty sure more functionality needs to be shared between
+            // Module mode and Directory mode.
             UserCode::Module(path) => {
+                let dir_path = path.parent().expect("File path without a parent");
+                let assets_path = dir_path.join("assets");
+                let have_assets = std::fs::metadata(&assets_path).is_ok_and(|i| i.is_dir());
+
+                if have_assets {
+                    build_sws_request_handler(&assets_path);
+                } else {
+                    build_sws_request_handler(dir_path);
+                }
+
                 private = CloudflareRequestHandlerPrivate {
                     mode: SingleSourceFile,
                     modules: [(PathBuf::new(), eval_module(cx, path)?)]
                         .into_iter()
                         .collect(),
                     routes: None,
+                    assets_dir_path: if have_assets { Some(assets_path) } else { None },
                 };
             }
 
@@ -130,6 +147,7 @@ impl NewRequestHandler for CloudflareRequestHandler<New> {
                             .into_iter()
                             .collect(),
                         routes,
+                        assets_dir_path: None,
                     };
                 }
                 None => {
@@ -153,6 +171,17 @@ impl NewRequestHandler for CloudflareRequestHandler<New> {
     ) -> Result<Self::InitializedHandler> {
         self.evaluate_scripts(cx, code)
     }
+
+    fn get_main_module_path(&self, code: &UserCode) -> Result<String> {
+        match code {
+            UserCode::Script { file_name, .. } => Ok(file_name.to_string_lossy().into_owned()),
+            UserCode::Module(path) => Ok(path.to_string_lossy().into_owned()),
+            UserCode::Directory(path) => Ok(discover_worker_js(path)?
+                .context("Failed to discover worker file")?
+                .to_string_lossy()
+                .into_owned()),
+        }
+    }
 }
 
 impl RequestHandler for CloudflareRequestHandler<Initialized> {
@@ -161,33 +190,27 @@ impl RequestHandler for CloudflareRequestHandler<Initialized> {
         cx: Context,
         request: Request,
     ) -> Result<Either<PendingResponse, ReadyResponse>> {
-        let private = get_private(&cx)?;
-
-        if let Some(ref routes) = private.routes {
-            if !routes.should_route_to_function(request.parts.uri.path()) {
-                return Ok(Either::Left(PendingResponse {
-                    promise: unsafe {
-                        future_to_promise::<_, _, _, ion::Error>(&cx, move |cx| async move {
-                            let uri = super::build_request_uri(&request).map_err(|e| {
-                                ion_mk_err!(format!("Failed to parse request URI: {e}"), Normal)
-                            })?;
-                            let url = url::Url::parse(uri.to_string().as_str())?;
-                            let (cx, response) = cx.await_native(serve_static_file(request)).await;
-                            let response = response.map_err(|e| {
-                                ion_mk_err!(
-                                    format!("Failed to fetch static asset due to {e}"),
-                                    Normal
-                                )
-                            })?;
-                            let response = FetchResponse::from_hyper_response(&cx, response, url)?;
-                            Ok(FetchResponse::new_object(&cx, Box::new(response)))
-                        })
-                        .expect("Future queue must be initialized")
-                    },
-                }));
-            }
+        if !should_route_to_function(&cx, &request.parts.uri)? {
+            return Ok(Either::Left(PendingResponse {
+                promise: unsafe {
+                    future_to_promise::<_, _, _, ion::Error>(&cx, move |cx| async move {
+                        let uri = super::build_request_uri(&request).map_err(|e| {
+                            ion_mk_err!(format!("Failed to parse request URI: {e}"), Normal)
+                        })?;
+                        let url = url::Url::parse(uri.to_string().as_str())?;
+                        let (cx, response) = cx.await_native(serve_static_file(request)).await;
+                        let response = response.map_err(|e| {
+                            ion_mk_err!(format!("Failed to fetch static asset due to {e}"), Normal)
+                        })?;
+                        let response = FetchResponse::from_hyper_response(&cx, response, url)?;
+                        Ok(FetchResponse::new_object(&cx, Box::new(response)))
+                    })
+                    .expect("Future queue must be initialized")
+                },
+            }));
         }
 
+        let private = get_private(&cx)?;
         match private.mode {
             SingleSourceFile => start_request(&cx, request, private.modules.get(&PathBuf::new())),
         }
@@ -215,7 +238,6 @@ impl ByRefStandardModules for CloudflareStandardModules {
     fn init_globals(&self, cx: &Context, global: &Object) -> bool {
         global.set_as(cx, "self", &(**global).get())
             && super::service_workers::define(cx, global)
-            && self::env::define(cx, global)
             && self::context::define(cx, global)
     }
 }
@@ -274,6 +296,31 @@ fn eval_module(cx: &Context, path: impl AsRef<Path>) -> anyhow::Result<Cloudflar
     })
 }
 
+fn should_route_to_function(cx: &Context, uri: &Uri) -> Result<bool> {
+    let private = get_private(&cx)?;
+
+    if let Some(ref routes) = private.routes {
+        if !routes.should_route_to_function(uri.path()) {
+            return Ok(false);
+        }
+    }
+
+    if let Some(ref assets_path) = private.assets_dir_path {
+        // TODO: shouldn't use blocking call here
+        match std::fs::metadata(assets_path.join(
+            // Need to strip the initial / to make it a relative path
+            &uri.path()[1..],
+        )) {
+            Ok(m) if m.is_file() => return Ok(false),
+            Ok(_) => return Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Ok(true)
+}
+
 fn start_request(
     cx: &Context,
     request: Request,
@@ -285,7 +332,7 @@ fn start_request(
                 cx,
                 &cx.root(super::build_fetch_request(cx, request)?).into(),
             );
-            let env = Value::object(cx, &cx.root(env::Env::new_obj(cx)).into());
+            let env = Value::object(cx, &env::new_env_object(cx));
             let ctx = Value::object(cx, &cx.root(context::Context::new_obj(cx)).into());
             let result = Function::from(func.root(cx))
                 .call(cx, &Object::null(cx), &[request, env, ctx])
@@ -336,6 +383,7 @@ fn get_private(cx: &Context) -> anyhow::Result<&CloudflareRequestHandlerPrivate>
 }
 
 fn build_sws_request_handler(path: impl AsRef<Path>) {
+    tracing::debug!(path = ?path.as_ref(), "Building Static Web Server");
     SWS_OPTS.with(move |s| {
         s.get_or_init(|| {
             let path = path.as_ref().to_path_buf();

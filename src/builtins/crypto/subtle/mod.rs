@@ -2,7 +2,7 @@ pub(super) mod algorithm;
 pub(super) mod crypto_key;
 pub(super) mod jwk;
 
-use std::{borrow::Cow, marker::PhantomData};
+use std::{borrow::Cow, fmt::Debug, marker::PhantomData};
 
 use ion::{
     class::NativeObject, conversions::ToValue, function_spec, ClassDefinition, Context, Object,
@@ -33,6 +33,12 @@ pub enum BufferSource<'cx> {
     ArrayBufferView(mozjs::typedarray::ArrayBufferView, PhantomData<&'cx ()>),
 }
 
+impl<'a> Debug for BufferSource<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferSource").finish()
+    }
+}
+
 impl<'cx> BufferSource<'cx> {
     fn to_owned(&self) -> Vec<u8> {
         unsafe {
@@ -52,6 +58,12 @@ pub enum KeyData<'cx> {
     Jwk(Box<JsonWebKey>),
 }
 
+impl<'a> Debug for KeyData<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyData").finish()
+    }
+}
+
 impl<'cx> KeyData<'cx> {
     fn into_heap(self) -> HeapKeyData {
         match self {
@@ -66,7 +78,7 @@ pub enum HeapKeyData {
     Jwk(Box<JsonWebKey>),
 }
 
-#[derive(FromValue)]
+#[derive(FromValue, Debug)]
 pub enum AlgorithmIdentifier<'cx> {
     #[ion(inherit)]
     Object(Object<'cx>),

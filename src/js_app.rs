@@ -1,6 +1,7 @@
 use std::{rc::Rc, sync::Arc};
 
-use ion::{module::ModuleLoader, Context};
+use anyhow::{bail, Context as _};
+use ion::{flags::PropertyFlags, module::ModuleLoader, Context};
 use mozjs::{jsapi::ReadOnlyCompileOptions, rust::RealmOptions};
 use runtime::{
     module::{Loader, StandardModules},
@@ -101,28 +102,6 @@ pub struct JsApp {
 }
 
 impl JsApp {
-    pub async fn warmup(&self) -> anyhow::Result<()> {
-        // Wait for any promises resulting from running the script to be resolved, giving
-        // scripts a chance to initialize before accepting requests
-        // Note we will return the error here if one happens, since an error happening
-        // in this stage means the script didn't initialize successfully.
-        self.context_and_runtime
-            .rt()
-            .run_event_loop()
-            .await
-            .map_err(|e| error_report_option_to_anyhow_error(self.context_and_runtime.cx(), e))
-    }
-
-    pub fn cx(&self) -> &Context {
-        self.context_and_runtime.cx()
-    }
-
-    pub fn rt(&self) -> &Runtime {
-        self.context_and_runtime.rt()
-    }
-}
-
-impl JsApp {
     pub fn build<NewHandler: NewRequestHandler>(
         new_handler: NewHandler,
         hardware_concurrency: u32,
@@ -155,16 +134,75 @@ impl JsApp {
         code: &UserCode,
         evaluate_scripts: impl FnOnce(NewHandler, &Context, &UserCode) -> anyhow::Result<Handler>,
     ) -> anyhow::Result<Self> {
-        let modules =
-            JsAppModules::for_handler(&new_handler, code.is_module_mode(), hardware_concurrency);
+        let main_module_path = new_handler
+            .get_main_module_path(code)
+            .context("Failed to get main module path")?;
+        let modules = JsAppModules::for_handler(
+            &new_handler,
+            code.is_module_mode(),
+            hardware_concurrency,
+            main_module_path.clone(),
+        );
         let cx_and_rt =
             JsAppContextAndRuntime::build(modules.module_loader, Some(modules.standard_modules));
+
+        Self::define_global_require(&cx_and_rt, &main_module_path)?;
+
         let request_handler = evaluate_scripts(new_handler, cx_and_rt.cx(), code)?;
 
         Ok(Self {
             context_and_runtime: Rc::new(cx_and_rt),
             request_handler: Arc::new(request_handler),
         })
+    }
+
+    pub async fn warmup(&self) -> anyhow::Result<()> {
+        // Wait for any promises resulting from running the script to be resolved, giving
+        // scripts a chance to initialize before accepting requests
+        // Note we will return the error here if one happens, since an error happening
+        // in this stage means the script didn't initialize successfully.
+        self.context_and_runtime
+            .rt()
+            .run_event_loop()
+            .await
+            .map_err(|e| error_report_option_to_anyhow_error(self.context_and_runtime.cx(), e))?;
+
+        Ok(())
+    }
+
+    fn define_global_require(
+        cx_and_rt: &JsAppContextAndRuntime,
+        main_module_path: &str,
+    ) -> anyhow::Result<()> {
+        let cx = cx_and_rt.cx();
+        match crate::builtins::deno_native::create_require(cx, main_module_path) {
+            Ok(require) => {
+                if !cx_and_rt.rt().global().define_as(
+                    cx_and_rt.cx(),
+                    "require",
+                    &require,
+                    PropertyFlags::ENUMERATE,
+                ) {
+                    bail!("Failed to define root `require` function");
+                }
+            }
+            Err(exn) => {
+                bail!(
+                    "Failed to create root `require` function due to: {}",
+                    exn.format(cx)
+                )
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn cx(&self) -> &Context {
+        self.context_and_runtime.cx()
+    }
+
+    pub fn rt(&self) -> &Runtime {
+        self.context_and_runtime.rt()
     }
 }
 
@@ -181,12 +219,14 @@ impl JsAppModules {
         handler: &impl NewRequestHandler,
         is_module_mode: bool,
         hardware_concurrency: u32,
+        main_module: String,
     ) -> Self {
         let module_loader = is_module_mode.then(runtime::module::Loader::default);
         let standard_modules = AggregateStandardModules(
             crate::builtins::Modules {
                 include_internal: is_module_mode,
                 hardware_concurrency,
+                main_module,
             },
             handler.get_standard_modules(),
         );

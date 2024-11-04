@@ -7,6 +7,7 @@ use mozjs_sys::jsapi::JSObject;
 use crate::ion_err;
 
 #[js_class]
+#[derive(Debug)]
 pub struct Context {
     reflector: Reflector,
 }

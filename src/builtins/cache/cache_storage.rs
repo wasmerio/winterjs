@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 use ion::{
     class::Reflector,
@@ -21,7 +21,7 @@ lazy_static! {
             .expect("Should be able to create default cache key");
 }
 
-#[derive(FromValue)]
+#[derive(FromValue, Debug)]
 pub struct MultiCacheQueryOptions {
     ignore_search: Option<bool>,
     ignore_method: Option<bool>,
@@ -39,6 +39,12 @@ pub struct CacheStorage {
     // Note: The order of the caches is important, so we can't naively use a hashmap here
     #[trace(no_trace)]
     pub(super) caches: Vec<(ByteString<VerbatimBytes>, Rc<RefCell<CacheEntryList>>)>,
+}
+
+impl Debug for CacheStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CacheStorage").finish()
+    }
 }
 
 #[js_class]

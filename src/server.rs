@@ -53,5 +53,6 @@ async fn handle(
     req: Request<Body>,
 ) -> Result<Response<Body>, Infallible> {
     let (parts, body) = req.into_parts();
+    tracing::info!(url = %parts.uri, method = %parts.method, "Incoming request");
     Ok(context.runner.handle(addr, parts, body).await)
 }

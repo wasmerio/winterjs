@@ -9,10 +9,10 @@ use clap::builder::OsStr;
 use include_dir::{include_dir, Dir, File};
 use ion::{script::Script, Context};
 
-const MODULES_DIR: Dir = include_dir!("src/builtins/js_globals");
+const SCRIPTS_DIR: Dir = include_dir!("src/builtins/js_globals");
 
 pub(super) fn define(cx: &Context) -> bool {
-    match scan_dir(cx, &MODULES_DIR) {
+    match scan_dir(cx, &SCRIPTS_DIR) {
         Ok(()) => true,
         Err(e) => {
             tracing::error!(

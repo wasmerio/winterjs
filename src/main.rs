@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#![cfg_attr(target_vendor = "wasmer", feature(wasi_ext))]
+
 use clap::ValueEnum;
 
 #[macro_use]
@@ -64,6 +66,7 @@ fn build_logging_subscriber(color: bool) -> tracing::subscriber::DefaultGuard {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_target(true)
         .with_ansi(std::io::stdout().is_terminal() && color)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
         .with_writer(std::io::stdout)
         .compact()
         .finish();
