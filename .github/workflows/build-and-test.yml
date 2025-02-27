@@ -63,7 +63,7 @@ jobs:
         if: ${{ matrix.metadata.os == 'ubuntu-latest' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential python3.11 python3-distutils llvm-15 libclang-dev clang-15 wabt
+          sudo apt-get install -y build-essential python3.12 python3-distutils-extra llvm-15 libclang-dev clang-15 wabt
           npm i -g wasm-opt pnpm concurrently
           sudo rm /usr/bin/clang
           sudo rm /usr/bin/clang++
@@ -103,7 +103,7 @@ jobs:
           wasm-strip --version
           echo '####################'
           echo python
-          python3.11 -V
+          python3.12 -V
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -158,7 +158,7 @@ jobs:
           bash build.sh
 
       - name: Archive build
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.metadata.artifact-name }}
           path: ${{ matrix.metadata.bin-path }}

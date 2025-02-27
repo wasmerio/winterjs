@@ -80,6 +80,7 @@ tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.35.1
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.22.2" }
 hyper = { git = "https://github.com/wasix-org/hyper.git", branch = "v0.14.28" }
 h2 = { git = "https://github.com/wasix-org/h2", branch = "v0.3.23" }
+parking_lot_core = { git = "https://github.com/wasix-org/parking_lot.git", branch = "v0.12.1" }
 
 [profile.release-compact]
 inherits = "release"
